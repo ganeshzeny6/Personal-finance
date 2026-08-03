@@ -190,6 +190,49 @@
   .alloc-name{display:flex;align-items:center;gap:8px;}
   .swatch{width:9px;height:9px;border-radius:2px;flex-shrink:0;}
 
+  th.sortable{cursor:pointer;user-select:none;position:relative;}
+  th.sortable:hover{color:var(--text);}
+  th.sortable::after{
+    content:"";
+    display:inline-block;
+    margin-left:5px;
+    width:0; height:0;
+    border-left:3px solid transparent;
+    border-right:3px solid transparent;
+    opacity:.35;
+  }
+  th.sortable.sort-asc::after{border-bottom:4px solid var(--gold);opacity:1;}
+  th.sortable.sort-desc::after{border-top:4px solid var(--gold);opacity:1;}
+  th.sortable:not(.sort-asc):not(.sort-desc)::after{border-top:4px solid var(--text-faint);}
+
+  th.resizable{position:relative;}
+  .col-resizer{
+    position:absolute;
+    top:0; right:0; bottom:0;
+    width:6px;
+    cursor:col-resize;
+    z-index:2;
+  }
+  .col-resizer:hover, .col-resizer.resizing{background:var(--gold-soft);}
+  table.data-table{table-layout:fixed;width:100%;}
+  #panel-equity table.data-table{min-width:955px;}
+  #panel-debt table.data-table{min-width:1565px;}
+  #panel-mf table.data-table{min-width:1115px;}
+  #panel-gold table.data-table{min-width:1130px;}
+
+  .filter-input{
+    font-family:var(--font-body);
+    font-size:12.5px;
+    color:var(--text);
+    background:var(--surface-2);
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:7px 11px;
+    width:150px;
+  }
+  .filter-input::placeholder{color:var(--text-faint);}
+  .filter-input:focus{border-color:var(--gold);outline:none;}
+
   .ideal-input{
     width:56px;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;
     color:var(--text);font-family:var(--font-mono);font-size:12px;padding:4px 6px;text-align:right;
@@ -311,23 +354,30 @@
         <button class="btn" id="btnRefreshStocks">Refresh live prices</button>
         <label class="btn btn-ghost" for="importStockFile">Import from Excel</label>
         <input type="file" id="importStockFile" accept=".xlsx,.xls">
+        <input type="text" class="filter-input" id="equityFilter" placeholder="Filter...">
         <span class="status-tag" id="equityFetchStatus"></span>
       </div>
     </div>
 
     <div class="table-scroll">
-      <table>
+      <table class="data-table">
+        <colgroup>
+          <col id="col-eq-name" style="width:180px">
+          <col style="width:100px"><col style="width:80px"><col style="width:90px">
+          <col style="width:90px"><col style="width:110px"><col style="width:100px">
+          <col style="width:80px"><col style="width:80px"><col style="width:45px">
+        </colgroup>
         <thead>
           <tr>
-            <th class="left">Stock / Symbol</th>
-            <th>Invested Amt</th>
-            <th>Units</th>
-            <th>Avg Price</th>
-            <th>LTP</th>
-            <th>Current Value</th>
-            <th>P&amp;L</th>
-            <th>P&amp;L %</th>
-            <th>Alloc %</th>
+            <th class="left sortable resizable" data-col="name">Stock / Symbol<span class="col-resizer"></span></th>
+            <th class="sortable" data-col="invested">Invested Amt</th>
+            <th class="sortable" data-col="units">Units</th>
+            <th class="sortable" data-col="avgPrice">Avg Price</th>
+            <th class="sortable" data-col="ltp">LTP</th>
+            <th class="sortable" data-col="currentValue">Current Value</th>
+            <th class="sortable" data-col="pl">P&amp;L</th>
+            <th class="sortable" data-col="plPct">P&amp;L %</th>
+            <th class="sortable" data-col="allocPct">Alloc %</th>
             <th class="row-actions">—</th>
           </tr>
         </thead>
@@ -358,27 +408,35 @@
         <button class="btn btn-primary" id="btnAddDebt">+ Add entry</button>
         <label class="btn btn-ghost" for="importDebtFile">Import from Excel</label>
         <input type="file" id="importDebtFile" accept=".xlsx,.xls">
+        <input type="text" class="filter-input" id="debtFilter" placeholder="Filter...">
         <span class="status-tag" id="debtImportStatus"></span>
       </div>
     </div>
 
     <div class="table-scroll">
-      <table>
+      <table class="data-table">
+        <colgroup>
+          <col id="col-debt-name" style="width:160px">
+          <col style="width:110px"><col style="width:130px"><col style="width:120px">
+          <col style="width:110px"><col style="width:75px"><col style="width:115px">
+          <col style="width:100px"><col style="width:130px"><col style="width:130px">
+          <col style="width:95px"><col style="width:85px"><col style="width:160px"><col style="width:45px">
+        </colgroup>
         <thead>
           <tr>
-            <th class="left">Name</th>
-            <th class="left">Category</th>
-            <th class="left">Sub-category</th>
-            <th class="left">Account No.</th>
-            <th>Invested Amt</th>
-            <th>ROI %</th>
-            <th>Maturity Amt</th>
-            <th>Profit</th>
-            <th>Invested Date</th>
-            <th>Maturity Date</th>
-            <th>Tenure (Mo)</th>
-            <th>Tenure (Yr)</th>
-            <th class="left">Notes</th>
+            <th class="left sortable resizable" data-col="name">Name<span class="col-resizer"></span></th>
+            <th class="left sortable" data-col="category">Category</th>
+            <th class="left sortable" data-col="subcategory">Sub-category</th>
+            <th class="left sortable" data-col="account">Account No.</th>
+            <th class="sortable" data-col="invested">Invested Amt</th>
+            <th class="sortable" data-col="roi">ROI %</th>
+            <th class="sortable" data-col="maturityAmount">Maturity Amt</th>
+            <th class="sortable" data-col="profit">Profit</th>
+            <th class="sortable" data-col="investedDate">Invested Date</th>
+            <th class="sortable" data-col="maturityDate">Maturity Date</th>
+            <th class="sortable" data-col="tenureMonths">Tenure (Mo)</th>
+            <th class="sortable" data-col="tenureYears">Tenure (Yr)</th>
+            <th class="left sortable" data-col="notes">Notes</th>
             <th class="row-actions">—</th>
           </tr>
         </thead>
@@ -409,23 +467,30 @@
         <button class="btn" id="btnRefreshMF">Refresh live NAV</button>
         <label class="btn btn-ghost" for="importMFFile">Import from Excel</label>
         <input type="file" id="importMFFile" accept=".xlsx,.xls">
+        <input type="text" class="filter-input" id="mfFilter" placeholder="Filter...">
         <span class="status-tag" id="mfFetchStatus"></span>
       </div>
     </div>
 
     <div class="table-scroll">
-      <table>
+      <table class="data-table">
+        <colgroup>
+          <col id="col-mf-name" style="width:180px">
+          <col style="width:140px"><col style="width:110px"><col style="width:130px">
+          <col style="width:90px"><col style="width:80px"><col style="width:110px">
+          <col style="width:80px"><col style="width:150px"><col style="width:45px">
+        </colgroup>
         <thead>
           <tr>
-            <th class="left">Name</th>
-            <th class="left">Symbol</th>
-            <th class="left">Category</th>
-            <th class="left">Sub-category</th>
-            <th>NAV</th>
-            <th>Units</th>
-            <th>Amount</th>
-            <th>Alloc %</th>
-            <th class="left">Remarks</th>
+            <th class="left sortable resizable" data-col="name">Name<span class="col-resizer"></span></th>
+            <th class="left sortable" data-col="symbol">Symbol</th>
+            <th class="left sortable" data-col="category">Category</th>
+            <th class="left sortable" data-col="subcategory">Sub-category</th>
+            <th class="sortable" data-col="unitPrice">NAV</th>
+            <th class="sortable" data-col="units">Units</th>
+            <th class="sortable" data-col="amount">Amount</th>
+            <th class="sortable" data-col="allocPct">Alloc %</th>
+            <th class="left sortable" data-col="remarks">Remarks</th>
             <th class="row-actions">—</th>
           </tr>
         </thead>
@@ -454,24 +519,31 @@
         <button class="btn" id="btnRefreshGold">Refresh live prices</button>
         <label class="btn btn-ghost" for="importGoldFile">Import from Excel</label>
         <input type="file" id="importGoldFile" accept=".xlsx,.xls">
+        <input type="text" class="filter-input" id="goldFilter" placeholder="Filter...">
         <span class="status-tag" id="goldFetchStatus"></span>
       </div>
     </div>
 
     <div class="table-scroll">
-      <table>
+      <table class="data-table">
+        <colgroup>
+          <col id="col-gold-name" style="width:170px">
+          <col style="width:90px"><col style="width:100px"><col style="width:100px">
+          <col style="width:100px"><col style="width:100px"><col style="width:110px">
+          <col style="width:90px"><col style="width:75px"><col style="width:150px"><col style="width:45px">
+        </colgroup>
         <thead>
           <tr>
-            <th class="left">Name / Symbol</th>
-            <th class="left">Form</th>
-            <th>Weight / Units</th>
-            <th>Purchase Rate</th>
-            <th>Invested Amt</th>
-            <th>Current Rate</th>
-            <th>Current Value</th>
-            <th>P&amp;L</th>
-            <th>P&amp;L %</th>
-            <th class="left">Notes</th>
+            <th class="left sortable resizable" data-col="name">Name / Symbol<span class="col-resizer"></span></th>
+            <th class="left sortable" data-col="form">Form</th>
+            <th class="sortable" data-col="weight">Weight / Units</th>
+            <th class="sortable" data-col="purchaseRate">Purchase Rate</th>
+            <th class="sortable" data-col="invested">Invested Amt</th>
+            <th class="sortable" data-col="currentRate">Current Rate</th>
+            <th class="sortable" data-col="currentValue">Current Value</th>
+            <th class="sortable" data-col="pl">P&amp;L</th>
+            <th class="sortable" data-col="plPct">P&amp;L %</th>
+            <th class="left sortable" data-col="notes">Notes</th>
             <th class="row-actions">—</th>
           </tr>
         </thead>

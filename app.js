@@ -103,6 +103,135 @@ function plClass(n) {
 }
 
 /* ============================================================
+   TABLE UI: SORT / FILTER / COLUMN RESIZE
+   Shared by all four data tables (Equity, Debt, Mutual Funds,
+   Gold). Sorting and filtering only change which rows are
+   displayed and in what order — totals/footer figures always
+   come from the full underlying array, never the filtered view.
+   Filtering is a single free-text box per tab that matches
+   against every column's displayed value (not per-column
+   filters), so one search box covers "any column" as requested.
+   ============================================================ */
+
+const tableUI = {
+  equity: { sortCol: null, sortDir: 1, filter: "" },
+  debt:   { sortCol: null, sortDir: 1, filter: "" },
+  mf:     { sortCol: null, sortDir: 1, filter: "" },
+  gold:   { sortCol: null, sortDir: 1, filter: "" }
+};
+
+// Applies filter then sort to `rows`, given per-row lookup
+// functions for search text and sortable values. Returns a new
+// array — never mutates `rows` or state.
+function applySortFilter(tableKey, rows, getSearchText, getSortValue) {
+  const ui = tableUI[tableKey];
+  let result = rows;
+  if (ui.filter) {
+    const q = ui.filter.toLowerCase();
+    result = result.filter(row => getSearchText(row).toLowerCase().includes(q));
+  }
+  if (ui.sortCol) {
+    result = [...result].sort((a, b) => {
+      let va = getSortValue(a, ui.sortCol);
+      let vb = getSortValue(b, ui.sortCol);
+      if (typeof va === "string" || typeof vb === "string") {
+        va = String(va ?? "").toLowerCase();
+        vb = String(vb ?? "").toLowerCase();
+        return va < vb ? -ui.sortDir : va > vb ? ui.sortDir : 0;
+      }
+      return ((va || 0) - (vb || 0)) * ui.sortDir;
+    });
+  }
+  return result;
+}
+
+// Wires up click-to-sort on every `.sortable` header inside
+// `theadSelector`, and live-filtering on `filterInputId`. Call
+// once per table at init; re-render is the caller's job via
+// `onChange`.
+function setupSortAndFilter(tableKey, theadSelector, filterInputId, onChange) {
+  document.querySelectorAll(`${theadSelector} th.sortable`).forEach(th => {
+    th.addEventListener("click", () => {
+      const col = th.dataset.col;
+      const ui = tableUI[tableKey];
+      if (ui.sortCol === col) {
+        ui.sortDir = -ui.sortDir;
+      } else {
+        ui.sortCol = col;
+        ui.sortDir = 1;
+      }
+      document.querySelectorAll(`${theadSelector} th.sortable`).forEach(h => h.classList.remove("sort-asc", "sort-desc"));
+      th.classList.add(ui.sortDir === 1 ? "sort-asc" : "sort-desc");
+      onChange();
+    });
+  });
+  const filterInput = document.getElementById(filterInputId);
+  filterInput.addEventListener("input", () => {
+    tableUI[tableKey].filter = filterInput.value;
+    onChange();
+  });
+}
+
+// Lightweight drag-to-resize for one column, via its <col>
+// element (colId) and a resizer handle inside its header cell.
+function setupColumnResize(colId, resizerSelector) {
+  const col = document.getElementById(colId);
+  const resizer = document.querySelector(resizerSelector);
+  if (!col || !resizer) return;
+  let startX = 0, startWidth = 0, dragging = false;
+
+  function onMove(clientX) {
+    const delta = clientX - startX;
+    const newWidth = Math.max(90, startWidth + delta);
+    col.style.width = newWidth + "px";
+  }
+
+  resizer.addEventListener("mousedown", (e) => {
+    dragging = true;
+    startX = e.clientX;
+    startWidth = col.getBoundingClientRect().width;
+    resizer.classList.add("resizing");
+    e.preventDefault();
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (dragging) onMove(e.clientX);
+  });
+  window.addEventListener("mouseup", () => {
+    dragging = false;
+    resizer.classList.remove("resizing");
+  });
+
+  resizer.addEventListener("touchstart", (e) => {
+    dragging = true;
+    startX = e.touches[0].clientX;
+    startWidth = col.getBoundingClientRect().width;
+    resizer.classList.add("resizing");
+  }, { passive: true });
+  window.addEventListener("touchmove", (e) => {
+    if (dragging) onMove(e.touches[0].clientX);
+  }, { passive: true });
+  window.addEventListener("touchend", () => {
+    dragging = false;
+    resizer.classList.remove("resizing");
+  });
+}
+
+// Finds an existing row in `array` via `matchFn` and merges
+// `updateFields` into it (preserving id and any field not being
+// imported, e.g. a live-fetched price); otherwise pushes a new
+// row with a fresh id, `updateFields`, and `newExtraFields`
+// (defaults that only apply to brand-new rows, e.g. ltp: 0).
+function upsertRow(array, matchFn, updateFields, newExtraFields) {
+  const existing = array.find(matchFn);
+  if (existing) {
+    Object.assign(existing, updateFields);
+    return "updated";
+  }
+  array.push({ id: uid(), ...updateFields, ...(newExtraFields || {}) });
+  return "added";
+}
+
+/* ============================================================
    TAB SWITCHING
    ============================================================ */
 
@@ -142,18 +271,44 @@ function equityTotals() {
   return { invested, current, pl, plPct };
 }
 
+function equityGetSearchText(row) {
+  const d = equityDerived(row);
+  return [row.name, row.invested, row.units, d.avgPrice, row.ltp, d.currentValue, d.pl, d.plPct].join(" ");
+}
+
+function equityGetSortValue(row, col) {
+  const d = equityDerived(row);
+  switch (col) {
+    case "name": return row.name || "";
+    case "invested": return Number(row.invested) || 0;
+    case "units": return Number(row.units) || 0;
+    case "avgPrice": return d.avgPrice;
+    case "ltp": return Number(row.ltp) || 0;
+    case "currentValue": return d.currentValue;
+    case "pl": return d.pl;
+    case "plPct": return d.plPct;
+    case "allocPct": return Number(row.invested) || 0; // alloc% is invested-based, same sort order
+    default: return 0;
+  }
+}
+
 function renderEquity() {
   const tbody = document.getElementById("equityTableBody");
   tbody.innerHTML = "";
   const totals = equityTotals();
+  const displayRows = applySortFilter("equity", state.equity, equityGetSearchText, equityGetSortValue);
 
   if (state.equity.length === 0) {
     tbody.innerHTML = '<tr class="empty-row"><td colspan="10">No stocks added yet. Click "+ Add stock" to begin.</td></tr>';
+  } else if (displayRows.length === 0) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="10">No stocks match this filter.</td></tr>';
   }
 
-  state.equity.forEach(row => {
+  displayRows.forEach(row => {
     const d = equityDerived(row);
-    const allocPct = totals.current > 0 ? (d.currentValue / totals.current) * 100 : 0;
+    // Alloc % reflects each stock's share of total invested capital,
+    // not its share of current market value.
+    const allocPct = totals.invested > 0 ? (Number(row.invested) / totals.invested) * 100 : 0;
     const tr = document.createElement("tr");
     tr.dataset.id = row.id;
     tr.innerHTML = `
@@ -207,7 +362,7 @@ function updateEquityComputed() {
     const tr = tbody.querySelector(`tr[data-id="${row.id}"]`);
     if (!tr) return;
     const d = equityDerived(row);
-    const allocPct = totals.current > 0 ? (d.currentValue / totals.current) * 100 : 0;
+    const allocPct = totals.invested > 0 ? (Number(row.invested) / totals.invested) * 100 : 0;
     tr.querySelector(".c-avg").textContent = fmtNum(d.avgPrice);
     tr.querySelector(".c-cv").textContent = fmtNum(d.currentValue);
     const plCell = tr.querySelector(".c-pl");
@@ -348,15 +503,43 @@ function debtTotals() {
   return { invested, maturity, profit: maturity - invested };
 }
 
+function debtGetSearchText(row) {
+  const d = debtDerived(row);
+  return [row.name, row.category, row.subcategory, row.account, row.invested, row.roi, row.maturityAmount, d.profit, row.investedDate, row.maturityDate, row.tenureMonths, d.years, row.notes].join(" ");
+}
+
+function debtGetSortValue(row, col) {
+  const d = debtDerived(row);
+  switch (col) {
+    case "name": return row.name || "";
+    case "category": return row.category || "";
+    case "subcategory": return row.subcategory || "";
+    case "account": return row.account || "";
+    case "invested": return Number(row.invested) || 0;
+    case "roi": return Number(row.roi) || 0;
+    case "maturityAmount": return Number(row.maturityAmount) || 0;
+    case "profit": return d.profit;
+    case "investedDate": return row.investedDate || "";
+    case "maturityDate": return row.maturityDate || "";
+    case "tenureMonths": return Number(row.tenureMonths) || 0;
+    case "tenureYears": return d.years;
+    case "notes": return row.notes || "";
+    default: return 0;
+  }
+}
+
 function renderDebt() {
   const tbody = document.getElementById("debtTableBody");
   tbody.innerHTML = "";
+  const displayRows = applySortFilter("debt", state.debt, debtGetSearchText, debtGetSortValue);
 
   if (state.debt.length === 0) {
     tbody.innerHTML = '<tr class="empty-row"><td colspan="14">No debt / fixed-income entries yet. Click "+ Add entry" to begin.</td></tr>';
+  } else if (displayRows.length === 0) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="14">No entries match this filter.</td></tr>';
   }
 
-  state.debt.forEach(row => {
+  displayRows.forEach(row => {
     const d = debtDerived(row);
     const tr = document.createElement("tr");
     tr.dataset.id = row.id;
@@ -450,16 +633,40 @@ function mfTotals() {
   return { amount };
 }
 
+function mfGetSearchText(row) {
+  const d = mfDerived(row);
+  return [row.name, row.symbol, row.category, row.subcategory, row.unitPrice, row.units, d.amount, row.remarks].join(" ");
+}
+
+function mfGetSortValue(row, col) {
+  const d = mfDerived(row);
+  switch (col) {
+    case "name": return row.name || "";
+    case "symbol": return row.symbol || "";
+    case "category": return row.category || "";
+    case "subcategory": return row.subcategory || "";
+    case "unitPrice": return Number(row.unitPrice) || 0;
+    case "units": return Number(row.units) || 0;
+    case "amount": return d.amount;
+    case "allocPct": return d.amount;
+    case "remarks": return row.remarks || "";
+    default: return 0;
+  }
+}
+
 function renderMF() {
   const tbody = document.getElementById("mfTableBody");
   tbody.innerHTML = "";
   const totals = mfTotals();
+  const displayRows = applySortFilter("mf", state.mf, mfGetSearchText, mfGetSortValue);
 
   if (state.mf.length === 0) {
     tbody.innerHTML = '<tr class="empty-row"><td colspan="10">No mutual funds added yet. Click "+ Add fund" to begin.</td></tr>';
+  } else if (displayRows.length === 0) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="10">No funds match this filter.</td></tr>';
   }
 
-  state.mf.forEach(row => {
+  displayRows.forEach(row => {
     const d = mfDerived(row);
     const allocPct = totals.amount > 0 ? (d.amount / totals.amount) * 100 : 0;
     const tr = document.createElement("tr");
@@ -572,16 +779,41 @@ function goldTotals() {
   return { invested, current, pl, plPct };
 }
 
+function goldGetSearchText(row) {
+  const d = goldDerived(row);
+  return [row.name, row.form, row.weight, row.purchaseRate, row.invested, row.currentRate, d.currentValue, d.pl, d.plPct, row.notes].join(" ");
+}
+
+function goldGetSortValue(row, col) {
+  const d = goldDerived(row);
+  switch (col) {
+    case "name": return row.name || "";
+    case "form": return row.form || "";
+    case "weight": return Number(row.weight) || 0;
+    case "purchaseRate": return Number(row.purchaseRate) || 0;
+    case "invested": return Number(row.invested) || 0;
+    case "currentRate": return Number(row.currentRate) || 0;
+    case "currentValue": return d.currentValue;
+    case "pl": return d.pl;
+    case "plPct": return d.plPct;
+    case "notes": return row.notes || "";
+    default: return 0;
+  }
+}
+
 function renderGold() {
   const tbody = document.getElementById("goldTableBody");
   tbody.innerHTML = "";
   const totals = goldTotals();
+  const displayRows = applySortFilter("gold", state.gold, goldGetSearchText, goldGetSortValue);
 
   if (state.gold.length === 0) {
     tbody.innerHTML = '<tr class="empty-row"><td colspan="11">No gold holdings yet. Click "+ Add holding" to begin.</td></tr>';
+  } else if (displayRows.length === 0) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="11">No holdings match this filter.</td></tr>';
   }
 
-  state.gold.forEach(row => {
+  displayRows.forEach(row => {
     const d = goldDerived(row);
     const tr = document.createElement("tr");
     tr.dataset.id = row.id;
@@ -849,17 +1081,23 @@ document.getElementById("importStockFile").addEventListener("change", async (e) 
   if (!file) return;
   try {
     const rows = (await readWorkbookRows(file)).slice(1);
-    let count = 0;
+    let added = 0, updated = 0;
     rows.forEach(r => {
       const name = String(r[0] ?? "").trim();
       if (!name) return;
-      state.equity.push({ id: uid(), name, invested: parseFloat(r[1]) || 0, units: parseFloat(r[2]) || 0, ltp: 0 });
-      count++;
+      const fields = { name, invested: parseFloat(r[1]) || 0, units: parseFloat(r[2]) || 0 };
+      const result = upsertRow(
+        state.equity,
+        row => (row.name || "").trim().toUpperCase() === name.toUpperCase(),
+        fields,
+        { ltp: 0 }
+      );
+      result === "added" ? added++ : updated++;
     });
     saveState();
     renderEquity();
     renderDashboard();
-    statusEl.textContent = `Imported ${count} stock row(s) from Excel.`;
+    statusEl.textContent = `Imported: ${added} new, ${updated} updated.`;
   } catch (err) {
     alert("Could not read that Excel file. Expected columns: Name/Symbol, Invested Amount, Units.");
   }
@@ -873,25 +1111,32 @@ document.getElementById("importMFFile").addEventListener("change", async (e) => 
   if (!file) return;
   try {
     const rows = (await readWorkbookRows(file)).slice(1);
-    let count = 0;
+    let added = 0, updated = 0;
     rows.forEach(r => {
       const name = String(r[0] ?? "").trim();
       if (!name) return;
-      state.mf.push({
-        id: uid(), name,
-        symbol: String(r[1] ?? "").trim(),
+      const symbol = String(r[1] ?? "").trim();
+      const fields = {
+        name, symbol,
         category: String(r[2] ?? "").trim(),
         subcategory: String(r[3] ?? "").trim(),
-        unitPrice: 0,
         units: parseFloat(r[4]) || 0,
         remarks: String(r[5] ?? "").trim()
-      });
-      count++;
+      };
+      const result = upsertRow(
+        state.mf,
+        row => symbol
+          ? (row.symbol || "").trim().toUpperCase() === symbol.toUpperCase()
+          : (row.name || "").trim().toUpperCase() === name.toUpperCase(),
+        fields,
+        { unitPrice: 0 }
+      );
+      result === "added" ? added++ : updated++;
     });
     saveState();
     renderMF();
     renderDashboard();
-    statusEl.textContent = `Imported ${count} fund row(s) from Excel.`;
+    statusEl.textContent = `Imported: ${added} new, ${updated} updated.`;
   } catch (err) {
     alert("Could not read that Excel file. Expected columns: Name, Symbol, Category, Sub-category, Units, Remarks.");
   }
@@ -905,26 +1150,31 @@ document.getElementById("importGoldFile").addEventListener("change", async (e) =
   if (!file) return;
   try {
     const rows = (await readWorkbookRows(file)).slice(1);
-    let count = 0;
+    let added = 0, updated = 0;
     rows.forEach(r => {
       const name = String(r[0] ?? "").trim();
       if (!name) return;
       const form = String(r[1] ?? "Physical").trim();
-      state.gold.push({
-        id: uid(), name,
+      const fields = {
+        name,
         form: ["Physical", "Digital", "SGB", "ETF"].includes(form) ? form : "ETF",
         weight: parseFloat(r[2]) || 0,
         purchaseRate: parseFloat(r[3]) || 0,
         invested: parseFloat(r[4]) || 0,
-        currentRate: 0,
         notes: String(r[5] ?? "").trim()
-      });
-      count++;
+      };
+      const result = upsertRow(
+        state.gold,
+        row => (row.name || "").trim().toUpperCase() === name.toUpperCase(),
+        fields,
+        { currentRate: 0 }
+      );
+      result === "added" ? added++ : updated++;
     });
     saveState();
     renderGold();
     renderDashboard();
-    statusEl.textContent = `Imported ${count} gold row(s) from Excel.`;
+    statusEl.textContent = `Imported: ${added} new, ${updated} updated.`;
   } catch (err) {
     alert("Could not read that Excel file. Expected columns: Name/Symbol, Form, Weight/Units, Purchase Rate, Invested Amount, Notes.");
   }
@@ -1069,6 +1319,16 @@ function renderAll() {
   const tag = document.getElementById("lastUpdatedTag");
   tag.textContent = state.lastSaved ? "Saved " + new Date(state.lastSaved).toLocaleTimeString() : "Not saved yet";
 }
+
+setupSortAndFilter("equity", "#panel-equity thead", "equityFilter", () => { renderEquity(); });
+setupSortAndFilter("debt", "#panel-debt thead", "debtFilter", () => { renderDebt(); });
+setupSortAndFilter("mf", "#panel-mf thead", "mfFilter", () => { renderMF(); });
+setupSortAndFilter("gold", "#panel-gold thead", "goldFilter", () => { renderGold(); });
+
+setupColumnResize("col-eq-name", "#panel-equity .col-resizer");
+setupColumnResize("col-debt-name", "#panel-debt .col-resizer");
+setupColumnResize("col-mf-name", "#panel-mf .col-resizer");
+setupColumnResize("col-gold-name", "#panel-gold .col-resizer");
 
 renderAll();
 maybeRunWeeklyBackup();
