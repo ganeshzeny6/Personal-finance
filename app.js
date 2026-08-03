@@ -1,0 +1,1074 @@
+/* ============================================================
+   Ganesh's Net Worth & Allocation Tracker
+   All data lives in localStorage under key "ledger_data_v1".
+
+   Live prices come from a Google Apps Script Web App deployed on
+   Ganesh's own Sheet (Stocks / Mutual Funds / ETF tabs), kept
+   fresh by a time-driven trigger. The Web App returns JSON, which
+   sidesteps a known CORS gap in Google Sheets' "Publish to web ->
+   CSV" links (that endpoint doesn't reliably send the header
+   browsers require for cross-origin fetches). If a fetch fails,
+   prices simply stay at their last saved value — edit them by
+   hand as a fallback.
+
+   To point this at a different deployment, just replace the URL
+   below with your own Apps Script Web App /exec URL.
+   ============================================================ */
+
+const STORAGE_KEY = "ledger_data_v1";
+
+// Apps Script Web App endpoint. doGet() on the Sheet's script
+// returns { stocks: [...], mf: [...], gold: [...] }, each row
+// keyed by that tab's actual header text (e.g. "Stock Name",
+// "Symbol", "Live Price").
+const PRICE_API_URL = "https://script.google.com/macros/s/AKfycbxT5Mgu9hhXdIA6kbfRfT_RhyWJNb6UYbbWBjte0jWh-9Zk4QmyiTLNJveQYLeUoTNBHw/exec";
+
+const DEFAULT_IDEAL = { cash: 5, debt: 30, mf: 30, equity: 25, gold: 10 };
+
+const ASSET_COLORS = {
+  cash:   "#6f93c9",
+  debt:   "#4bbf9c",
+  mf:     "#c9a44c",
+  equity: "#e0667a",
+  gold:   "#e0b04b"
+};
+
+let state = loadState();
+let pieChart = null;
+
+// chartjs-plugin-datalabels draws permanent on-slice labels (no hover
+// needed), which also means it works identically on touch/mobile.
+if (typeof ChartDataLabels !== "undefined") {
+  Chart.register(ChartDataLabels);
+}
+
+function uid() {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+function blankState() {
+  return {
+    cash: 0,
+    ideal: { ...DEFAULT_IDEAL },
+    equity: [],
+    debt: [],
+    mf: [],
+    gold: [],
+    lastSaved: null,
+    lastBackup: null
+  };
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return blankState();
+    const parsed = JSON.parse(raw);
+    return { ...blankState(), ...parsed, ideal: { ...DEFAULT_IDEAL, ...(parsed.ideal || {}) } };
+  } catch (e) {
+    console.error("Failed to load saved data, starting fresh.", e);
+    return blankState();
+  }
+}
+
+function saveState() {
+  state.lastSaved = new Date().toISOString();
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  const tag = document.getElementById("lastUpdatedTag");
+  if (tag) tag.textContent = "Saved " + new Date(state.lastSaved).toLocaleTimeString();
+}
+
+/* ---------------- number formatting ---------------- */
+
+function fmtINR(n) {
+  n = Number(n) || 0;
+  const sign = n < 0 ? "-" : "";
+  n = Math.abs(n);
+  const str = n.toLocaleString("en-IN", { maximumFractionDigits: 0 });
+  return sign + "\u20B9" + str;
+}
+
+function fmtNum(n, decimals = 2) {
+  n = Number(n) || 0;
+  return n.toLocaleString("en-IN", { maximumFractionDigits: decimals, minimumFractionDigits: decimals });
+}
+
+function fmtPct(n) {
+  n = Number(n) || 0;
+  return (n >= 0 ? "" : "") + n.toFixed(2) + "%";
+}
+
+function plClass(n) {
+  return n > 0 ? "pos" : n < 0 ? "neg" : "muted";
+}
+
+/* ============================================================
+   TAB SWITCHING
+   ============================================================ */
+
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById("panel-" + btn.dataset.tab).classList.add("active");
+    if (btn.dataset.tab === "dashboard") renderDashboard();
+  });
+});
+
+/* ============================================================
+   EQUITY TAB
+   ============================================================ */
+
+function equityDerived(row) {
+  const invested = Number(row.invested) || 0;
+  const units = Number(row.units) || 0;
+  const ltp = Number(row.ltp) || 0;
+  const avgPrice = units > 0 ? invested / units : 0;
+  const currentValue = units * ltp;
+  const pl = currentValue - invested;
+  const plPct = invested > 0 ? (pl / invested) * 100 : 0;
+  return { avgPrice, currentValue, pl, plPct };
+}
+
+function equityTotals() {
+  let invested = 0, current = 0;
+  state.equity.forEach(r => {
+    invested += Number(r.invested) || 0;
+    current += equityDerived(r).currentValue;
+  });
+  const pl = current - invested;
+  const plPct = invested > 0 ? (pl / invested) * 100 : 0;
+  return { invested, current, pl, plPct };
+}
+
+function renderEquity() {
+  const tbody = document.getElementById("equityTableBody");
+  tbody.innerHTML = "";
+  const totals = equityTotals();
+
+  if (state.equity.length === 0) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="10">No stocks added yet. Click "+ Add stock" to begin.</td></tr>';
+  }
+
+  state.equity.forEach(row => {
+    const d = equityDerived(row);
+    const allocPct = totals.current > 0 ? (d.currentValue / totals.current) * 100 : 0;
+    const tr = document.createElement("tr");
+    tr.dataset.id = row.id;
+    tr.innerHTML = `
+      <td class="left"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" placeholder="e.g. TCS.NS"></td>
+      <td><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested"></td>
+      <td><input type="number" step="any" value="${row.units ?? ""}" data-field="units"></td>
+      <td class="c-avg">${fmtNum(d.avgPrice)}</td>
+      <td><input type="number" step="any" value="${row.ltp ?? ""}" data-field="ltp"></td>
+      <td class="c-cv">${fmtNum(d.currentValue)}</td>
+      <td class="c-pl ${plClass(d.pl)}">${fmtNum(d.pl)}</td>
+      <td class="c-plpct ${plClass(d.pl)}">${fmtPct(d.plPct)}</td>
+      <td class="c-alloc">${fmtNum(allocPct)}%</td>
+      <td class="row-actions"><button class="icon-btn" title="Remove">✕</button></td>
+    `;
+    tr.querySelectorAll("input").forEach(inp => {
+      inp.addEventListener("change", () => {
+        const field = inp.dataset.field;
+        row[field] = field === "name" ? inp.value : parseFloat(inp.value) || 0;
+        saveState();
+        updateEquityComputed();
+        renderDashboard();
+      });
+    });
+    tr.querySelector(".icon-btn").addEventListener("click", () => {
+      state.equity = state.equity.filter(r => r.id !== row.id);
+      saveState();
+      renderEquity();
+      renderDashboard();
+    });
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById("eqTotalInvested").textContent = fmtINR(totals.invested);
+  document.getElementById("eqTotalCurrent").textContent = fmtINR(totals.current);
+  const plCell = document.getElementById("eqTotalPL");
+  plCell.textContent = fmtINR(totals.pl);
+  plCell.className = plClass(totals.pl);
+  const plPctCell = document.getElementById("eqTotalPLPct");
+  plPctCell.textContent = fmtPct(totals.plPct);
+  plPctCell.className = plClass(totals.pl);
+}
+
+// Lightweight refresh used on every keystroke-commit (input `change`):
+// updates only the read-only derived cells and footer totals, and never
+// touches the <input> elements themselves — so focus/Tab order across
+// fields in the same row (and across rows) is never disturbed.
+function updateEquityComputed() {
+  const tbody = document.getElementById("equityTableBody");
+  const totals = equityTotals();
+  state.equity.forEach(row => {
+    const tr = tbody.querySelector(`tr[data-id="${row.id}"]`);
+    if (!tr) return;
+    const d = equityDerived(row);
+    const allocPct = totals.current > 0 ? (d.currentValue / totals.current) * 100 : 0;
+    tr.querySelector(".c-avg").textContent = fmtNum(d.avgPrice);
+    tr.querySelector(".c-cv").textContent = fmtNum(d.currentValue);
+    const plCell = tr.querySelector(".c-pl");
+    plCell.textContent = fmtNum(d.pl);
+    plCell.className = "c-pl " + plClass(d.pl);
+    const plPctCell = tr.querySelector(".c-plpct");
+    plPctCell.textContent = fmtPct(d.plPct);
+    plPctCell.className = "c-plpct " + plClass(d.pl);
+    tr.querySelector(".c-alloc").textContent = fmtNum(allocPct) + "%";
+  });
+  document.getElementById("eqTotalInvested").textContent = fmtINR(totals.invested);
+  document.getElementById("eqTotalCurrent").textContent = fmtINR(totals.current);
+  const plCell = document.getElementById("eqTotalPL");
+  plCell.textContent = fmtINR(totals.pl);
+  plCell.className = plClass(totals.pl);
+  const plPctCell = document.getElementById("eqTotalPLPct");
+  plPctCell.textContent = fmtPct(totals.plPct);
+  plPctCell.className = plClass(totals.pl);
+}
+
+document.getElementById("btnAddStock").addEventListener("click", () => {
+  state.equity.push({ id: uid(), name: "", invested: 0, units: 0, ltp: 0 });
+  saveState();
+  renderEquity();
+  renderDashboard();
+});
+
+/* ---- live price fetch: shared Google Sheet CSV helpers ----
+   All three asset classes (Stocks, Mutual Funds, Gold ETFs) use
+   the same mechanism: one JSON fetch to Ganesh's Apps Script Web
+   App (kept fresh by its own time-driven trigger), which returns
+   { stocks: [...], mf: [...], gold: [...] } — each row keyed by
+   that tab's actual header text. Rows are matched flexibly: a
+   price gets indexed under every identifier column found (e.g.
+   both "Stock Name" = WIPRO and "Symbol" = NSE:WIPRO), so typing
+   either into the app's Name/Symbol field will find it. */
+
+// Turns a tagged error into a message that actually points at the
+// cause, instead of one generic string for every kind of failure.
+function sheetErrorMessage(e) {
+  return "Could not update: " + (e && e.message ? e.message : "unknown error");
+}
+
+async function fetchPriceData() {
+  let res;
+  try {
+    res = await fetch(PRICE_API_URL, { cache: "no-store" });
+  } catch (networkErr) {
+    const e = new Error("Network/CORS: the browser blocked or couldn't complete this request.");
+    e.kind = "network";
+    throw e;
+  }
+  if (!res.ok) {
+    const e = new Error(`Price API returned HTTP ${res.status}. Check the Apps Script Web App deployment is still active and set to "Anyone" access.`);
+    e.kind = "http";
+    throw e;
+  }
+  let json;
+  try {
+    json = await res.json();
+  } catch (parseErr) {
+    const e = new Error("The Price API didn't return valid JSON — check the doGet() script for errors (try opening the /exec URL directly in a browser tab).");
+    e.kind = "parse";
+    throw e;
+  }
+  return json;
+}
+
+// Builds a Map from every identifier column found (uppercased,
+// trimmed) to the parsed price, so a stock can be matched by
+// either its plain name or its Google Finance-style symbol.
+function buildPriceMap(rows, idCandidates, priceCandidates) {
+  const map = new Map();
+  if (!Array.isArray(rows)) return map;
+  rows.forEach(obj => {
+    const keys = Object.keys(obj);
+    const priceKey = keys.find(k => priceCandidates.some(c => c.toLowerCase() === k.trim().toLowerCase()));
+    if (!priceKey) return;
+    const price = parseFloat(obj[priceKey]);
+    if (isNaN(price)) return;
+    idCandidates.forEach(idName => {
+      const idKey = keys.find(k => k.trim().toLowerCase() === idName.toLowerCase());
+      if (!idKey) return;
+      const idVal = String(obj[idKey] || "").trim().toUpperCase();
+      if (idVal) map.set(idVal, price);
+    });
+  });
+  return map;
+}
+
+/* ---- live price fetch: stocks ---- */
+
+document.getElementById("btnRefreshStocks").addEventListener("click", async () => {
+  const statusEl = document.getElementById("equityFetchStatus");
+  if (state.equity.length === 0) {
+    statusEl.textContent = "No stocks to refresh.";
+    return;
+  }
+  statusEl.textContent = "Fetching...";
+  let ok = 0, fail = 0;
+  try {
+    const data = await fetchPriceData();
+    const priceMap = buildPriceMap(data.stocks, ["Stock Name", "Symbol"], ["Live Price", "Price"]);
+    state.equity.forEach(row => {
+      const key = (row.name || "").trim().toUpperCase();
+      if (key && priceMap.has(key)) { row.ltp = priceMap.get(key); ok++; }
+      else fail++;
+    });
+  } catch (e) {
+    statusEl.textContent = sheetErrorMessage(e);
+    return;
+  }
+  saveState();
+  renderEquity();
+  renderDashboard();
+  statusEl.textContent = `Updated ${ok} of ${ok + fail}. ${fail > 0 ? "Failed rows: check symbol format (e.g. RELIANCE.NS) or edit LTP manually." : ""}`;
+});
+
+/* ============================================================
+   DEBT TAB
+   ============================================================ */
+
+function debtDerived(row) {
+  const invested = Number(row.invested) || 0;
+  const maturity = Number(row.maturityAmount) || 0;
+  const profit = maturity - invested;
+  const months = Number(row.tenureMonths) || 0;
+  const years = months / 12;
+  return { profit, years };
+}
+
+function debtTotals() {
+  let invested = 0, maturity = 0;
+  state.debt.forEach(r => {
+    invested += Number(r.invested) || 0;
+    maturity += Number(r.maturityAmount) || 0;
+  });
+  return { invested, maturity, profit: maturity - invested };
+}
+
+function renderDebt() {
+  const tbody = document.getElementById("debtTableBody");
+  tbody.innerHTML = "";
+
+  if (state.debt.length === 0) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="14">No debt / fixed-income entries yet. Click "+ Add entry" to begin.</td></tr>';
+  }
+
+  state.debt.forEach(row => {
+    const d = debtDerived(row);
+    const tr = document.createElement("tr");
+    tr.dataset.id = row.id;
+    tr.innerHTML = `
+      <td class="left"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name"></td>
+      <td class="left"><input type="text" value="${escapeAttr(row.category || "")}" data-field="category"></td>
+      <td class="left"><input type="text" value="${escapeAttr(row.subcategory || "")}" data-field="subcategory"></td>
+      <td class="left"><input type="text" value="${escapeAttr(row.account || "")}" data-field="account"></td>
+      <td><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested"></td>
+      <td><input type="number" step="any" value="${row.roi ?? ""}" data-field="roi"></td>
+      <td><input type="number" step="any" value="${row.maturityAmount ?? ""}" data-field="maturityAmount"></td>
+      <td class="c-profit ${plClass(d.profit)}">${fmtNum(d.profit)}</td>
+      <td><input type="date" value="${row.investedDate || ""}" data-field="investedDate"></td>
+      <td><input type="date" value="${row.maturityDate || ""}" data-field="maturityDate"></td>
+      <td><input type="number" step="any" value="${row.tenureMonths ?? ""}" data-field="tenureMonths"></td>
+      <td class="c-years">${fmtNum(d.years, 1)}</td>
+      <td class="left"><input type="text" value="${escapeAttr(row.notes || "")}" data-field="notes"></td>
+      <td class="row-actions"><button class="icon-btn" title="Remove">✕</button></td>
+    `;
+    tr.querySelectorAll("input").forEach(inp => {
+      inp.addEventListener("change", () => {
+        const field = inp.dataset.field;
+        const numericFields = ["invested", "roi", "maturityAmount", "tenureMonths"];
+        row[field] = numericFields.includes(field) ? (parseFloat(inp.value) || 0) : inp.value;
+        saveState();
+        updateDebtComputed();
+        renderDashboard();
+      });
+    });
+    tr.querySelector(".icon-btn").addEventListener("click", () => {
+      state.debt = state.debt.filter(r => r.id !== row.id);
+      saveState();
+      renderDebt();
+      renderDashboard();
+    });
+    tbody.appendChild(tr);
+  });
+
+  const totals = debtTotals();
+  document.getElementById("debtTotalInvested").textContent = fmtINR(totals.invested);
+  document.getElementById("debtTotalMaturity").textContent = fmtINR(totals.maturity);
+  const profitCell = document.getElementById("debtTotalProfit");
+  profitCell.textContent = fmtINR(totals.profit);
+  profitCell.className = plClass(totals.profit);
+}
+
+function updateDebtComputed() {
+  const tbody = document.getElementById("debtTableBody");
+  state.debt.forEach(row => {
+    const tr = tbody.querySelector(`tr[data-id="${row.id}"]`);
+    if (!tr) return;
+    const d = debtDerived(row);
+    const profitCell = tr.querySelector(".c-profit");
+    profitCell.textContent = fmtNum(d.profit);
+    profitCell.className = "c-profit " + plClass(d.profit);
+    tr.querySelector(".c-years").textContent = fmtNum(d.years, 1);
+  });
+  const totals = debtTotals();
+  document.getElementById("debtTotalInvested").textContent = fmtINR(totals.invested);
+  document.getElementById("debtTotalMaturity").textContent = fmtINR(totals.maturity);
+  const totalProfitCell = document.getElementById("debtTotalProfit");
+  totalProfitCell.textContent = fmtINR(totals.profit);
+  totalProfitCell.className = plClass(totals.profit);
+}
+
+document.getElementById("btnAddDebt").addEventListener("click", () => {
+  state.debt.push({
+    id: uid(), name: "", category: "", subcategory: "", account: "",
+    invested: 0, roi: 0, maturityAmount: 0, investedDate: "", maturityDate: "",
+    tenureMonths: 0, notes: ""
+  });
+  saveState();
+  renderDebt();
+  renderDashboard();
+});
+
+/* ============================================================
+   MUTUAL FUNDS TAB
+   ============================================================ */
+
+function mfDerived(row) {
+  const unitPrice = Number(row.unitPrice) || 0;
+  const units = Number(row.units) || 0;
+  const amount = unitPrice * units;
+  return { amount };
+}
+
+function mfTotals() {
+  let amount = 0;
+  state.mf.forEach(r => { amount += mfDerived(r).amount; });
+  return { amount };
+}
+
+function renderMF() {
+  const tbody = document.getElementById("mfTableBody");
+  tbody.innerHTML = "";
+  const totals = mfTotals();
+
+  if (state.mf.length === 0) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="10">No mutual funds added yet. Click "+ Add fund" to begin.</td></tr>';
+  }
+
+  state.mf.forEach(row => {
+    const d = mfDerived(row);
+    const allocPct = totals.amount > 0 ? (d.amount / totals.amount) * 100 : 0;
+    const tr = document.createElement("tr");
+    tr.dataset.id = row.id;
+    tr.innerHTML = `
+      <td class="left"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name"></td>
+      <td class="left"><input type="text" value="${escapeAttr(row.symbol || "")}" data-field="symbol" placeholder="Symbol"></td>
+      <td class="left"><input type="text" value="${escapeAttr(row.category || "")}" data-field="category"></td>
+      <td class="left"><input type="text" value="${escapeAttr(row.subcategory || "")}" data-field="subcategory"></td>
+      <td><input type="number" step="any" value="${row.unitPrice ?? ""}" data-field="unitPrice"></td>
+      <td><input type="number" step="any" value="${row.units ?? ""}" data-field="units"></td>
+      <td class="c-amount">${fmtNum(d.amount)}</td>
+      <td class="c-alloc">${fmtNum(allocPct)}%</td>
+      <td class="left"><input type="text" value="${escapeAttr(row.remarks || "")}" data-field="remarks"></td>
+      <td class="row-actions"><button class="icon-btn" title="Remove">✕</button></td>
+    `;
+    tr.querySelectorAll("input").forEach(inp => {
+      inp.addEventListener("change", () => {
+        const field = inp.dataset.field;
+        const numericFields = ["unitPrice", "units"];
+        row[field] = numericFields.includes(field) ? (parseFloat(inp.value) || 0) : inp.value;
+        saveState();
+        updateMFComputed();
+        renderDashboard();
+      });
+    });
+    tr.querySelector(".icon-btn").addEventListener("click", () => {
+      state.mf = state.mf.filter(r => r.id !== row.id);
+      saveState();
+      renderMF();
+      renderDashboard();
+    });
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById("mfTotalAmount").textContent = fmtINR(totals.amount);
+}
+
+function updateMFComputed() {
+  const tbody = document.getElementById("mfTableBody");
+  const totals = mfTotals();
+  state.mf.forEach(row => {
+    const tr = tbody.querySelector(`tr[data-id="${row.id}"]`);
+    if (!tr) return;
+    const d = mfDerived(row);
+    const allocPct = totals.amount > 0 ? (d.amount / totals.amount) * 100 : 0;
+    tr.querySelector(".c-amount").textContent = fmtNum(d.amount);
+    tr.querySelector(".c-alloc").textContent = fmtNum(allocPct) + "%";
+  });
+  document.getElementById("mfTotalAmount").textContent = fmtINR(totals.amount);
+}
+
+document.getElementById("btnAddMF").addEventListener("click", () => {
+  state.mf.push({ id: uid(), name: "", symbol: "", category: "", subcategory: "", unitPrice: 0, units: 0, remarks: "" });
+  saveState();
+  renderMF();
+  renderDashboard();
+});
+
+/* ---- live NAV fetch: mutual funds (Google Sheet, refreshed by Apps Script) ---- */
+
+document.getElementById("btnRefreshMF").addEventListener("click", async () => {
+  const statusEl = document.getElementById("mfFetchStatus");
+  if (state.mf.length === 0) {
+    statusEl.textContent = "No funds to refresh.";
+    return;
+  }
+  statusEl.textContent = "Fetching...";
+  let ok = 0, fail = 0;
+  try {
+    const data = await fetchPriceData();
+    const navMap = buildPriceMap(data.mf, ["MF Name", "Symbol"], ["Live Price", "NAV", "Price"]);
+    state.mf.forEach(row => {
+      const key = (row.symbol || "").trim().toUpperCase();
+      if (key && navMap.has(key)) { row.unitPrice = navMap.get(key); ok++; }
+      else fail++;
+    });
+  } catch (e) {
+    statusEl.textContent = sheetErrorMessage(e);
+    return;
+  }
+  saveState();
+  renderMF();
+  renderDashboard();
+  statusEl.textContent = `Updated ${ok} of ${ok + fail}. ${fail > 0 ? "Unmatched rows: check the Symbol matches your sheet exactly, or edit NAV manually." : ""}`;
+});
+
+/* ============================================================
+   GOLD TAB
+   ============================================================ */
+
+function goldDerived(row) {
+  const invested = Number(row.invested) || 0;
+  const weight = Number(row.weight) || 0;
+  const currentRate = Number(row.currentRate) || 0;
+  const currentValue = weight * currentRate;
+  const pl = currentValue - invested;
+  const plPct = invested > 0 ? (pl / invested) * 100 : 0;
+  return { currentValue, pl, plPct };
+}
+
+function goldTotals() {
+  let invested = 0, current = 0;
+  state.gold.forEach(r => {
+    invested += Number(r.invested) || 0;
+    current += goldDerived(r).currentValue;
+  });
+  const pl = current - invested;
+  const plPct = invested > 0 ? (pl / invested) * 100 : 0;
+  return { invested, current, pl, plPct };
+}
+
+function renderGold() {
+  const tbody = document.getElementById("goldTableBody");
+  tbody.innerHTML = "";
+  const totals = goldTotals();
+
+  if (state.gold.length === 0) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="11">No gold holdings yet. Click "+ Add holding" to begin.</td></tr>';
+  }
+
+  state.gold.forEach(row => {
+    const d = goldDerived(row);
+    const tr = document.createElement("tr");
+    tr.dataset.id = row.id;
+    tr.innerHTML = `
+      <td class="left"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" placeholder="e.g. GOLDBEES.NS"></td>
+      <td class="left">
+        <select data-field="form">
+          <option value="Physical" ${row.form === "Physical" ? "selected" : ""}>Physical</option>
+          <option value="Digital" ${row.form === "Digital" ? "selected" : ""}>Digital</option>
+          <option value="SGB" ${row.form === "SGB" ? "selected" : ""}>SGB</option>
+          <option value="ETF" ${row.form === "ETF" ? "selected" : ""}>ETF</option>
+        </select>
+      </td>
+      <td><input type="number" step="any" value="${row.weight ?? ""}" data-field="weight"></td>
+      <td><input type="number" step="any" value="${row.purchaseRate ?? ""}" data-field="purchaseRate"></td>
+      <td><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested"></td>
+      <td><input type="number" step="any" value="${row.currentRate ?? ""}" data-field="currentRate"></td>
+      <td class="c-cv">${fmtNum(d.currentValue)}</td>
+      <td class="c-pl ${plClass(d.pl)}">${fmtNum(d.pl)}</td>
+      <td class="c-plpct ${plClass(d.pl)}">${fmtPct(d.plPct)}</td>
+      <td class="left"><input type="text" value="${escapeAttr(row.notes || "")}" data-field="notes"></td>
+      <td class="row-actions"><button class="icon-btn" title="Remove">✕</button></td>
+    `;
+    tr.querySelectorAll("input, select").forEach(inp => {
+      inp.addEventListener("change", () => {
+        const field = inp.dataset.field;
+        const numericFields = ["weight", "purchaseRate", "invested", "currentRate"];
+        row[field] = numericFields.includes(field) ? (parseFloat(inp.value) || 0) : inp.value;
+        saveState();
+        updateGoldComputed();
+        renderDashboard();
+      });
+    });
+    tr.querySelector(".icon-btn").addEventListener("click", () => {
+      state.gold = state.gold.filter(r => r.id !== row.id);
+      saveState();
+      renderGold();
+      renderDashboard();
+    });
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById("goldTotalInvested").textContent = fmtINR(totals.invested);
+  document.getElementById("goldTotalCurrent").textContent = fmtINR(totals.current);
+  const plCell = document.getElementById("goldTotalPL");
+  plCell.textContent = fmtINR(totals.pl);
+  plCell.className = plClass(totals.pl);
+  const plPctCell = document.getElementById("goldTotalPLPct");
+  plPctCell.textContent = fmtPct(totals.plPct);
+  plPctCell.className = plClass(totals.pl);
+}
+
+function updateGoldComputed() {
+  const tbody = document.getElementById("goldTableBody");
+  state.gold.forEach(row => {
+    const tr = tbody.querySelector(`tr[data-id="${row.id}"]`);
+    if (!tr) return;
+    const d = goldDerived(row);
+    tr.querySelector(".c-cv").textContent = fmtNum(d.currentValue);
+    const plCell = tr.querySelector(".c-pl");
+    plCell.textContent = fmtNum(d.pl);
+    plCell.className = "c-pl " + plClass(d.pl);
+    const plPctCell = tr.querySelector(".c-plpct");
+    plPctCell.textContent = fmtPct(d.plPct);
+    plPctCell.className = "c-plpct " + plClass(d.pl);
+  });
+  const totals = goldTotals();
+  document.getElementById("goldTotalInvested").textContent = fmtINR(totals.invested);
+  document.getElementById("goldTotalCurrent").textContent = fmtINR(totals.current);
+  const plCell = document.getElementById("goldTotalPL");
+  plCell.textContent = fmtINR(totals.pl);
+  plCell.className = plClass(totals.pl);
+  const plPctCell = document.getElementById("goldTotalPLPct");
+  plPctCell.textContent = fmtPct(totals.plPct);
+  plPctCell.className = plClass(totals.pl);
+}
+
+document.getElementById("btnAddGold").addEventListener("click", () => {
+  state.gold.push({ id: uid(), name: "", form: "ETF", weight: 0, purchaseRate: 0, invested: 0, currentRate: 0, notes: "" });
+  saveState();
+  renderGold();
+  renderDashboard();
+});
+
+/* ---- live price fetch: gold ETFs (Google Sheet — ETFs trade like stocks) ---- */
+
+document.getElementById("btnRefreshGold").addEventListener("click", async () => {
+  const statusEl = document.getElementById("goldFetchStatus");
+  if (state.gold.length === 0) {
+    statusEl.textContent = "No holdings to refresh.";
+    return;
+  }
+  statusEl.textContent = "Fetching...";
+  let ok = 0, fail = 0;
+  try {
+    const data = await fetchPriceData();
+    const priceMap = buildPriceMap(data.gold, ["Stock Name", "Symbol"], ["Live Price", "Price"]);
+    state.gold.forEach(row => {
+      const key = (row.name || "").trim().toUpperCase();
+      if (key && priceMap.has(key)) { row.currentRate = priceMap.get(key); ok++; }
+      else fail++;
+    });
+  } catch (e) {
+    statusEl.textContent = sheetErrorMessage(e);
+    return;
+  }
+  saveState();
+  renderGold();
+  renderDashboard();
+  statusEl.textContent = `Updated ${ok} of ${ok + fail}. ${fail > 0 ? "Unmatched rows: check the Symbol matches your sheet exactly (e.g. GOLDBEES.NS)." : ""}`;
+});
+
+/* ============================================================
+   DASHBOARD
+   ============================================================ */
+
+function renderDashboard() {
+  const cashInput = document.getElementById("cashInput");
+  if (document.activeElement !== cashInput) cashInput.value = state.cash || "";
+
+  const eq = equityTotals();
+  const debt = debtTotals();
+  const mf = mfTotals();
+  const gold = goldTotals();
+  const cash = Number(state.cash) || 0;
+
+  const classes = [
+    { key: "cash",   label: "Cash",                     current: cash,          invested: cash },
+    { key: "debt",   label: "Debt / Fixed Investments",  current: debt.invested, invested: debt.invested },
+    { key: "mf",     label: "Equity Mutual Funds",       current: mf.amount,     invested: mf.amount },
+    { key: "equity", label: "Equity Stocks",             current: eq.current,    invested: eq.invested },
+    { key: "gold",   label: "Gold",                      current: gold.current,  invested: gold.invested }
+  ];
+
+  const netWorth = classes.reduce((s, c) => s + c.current, 0);
+  const totalInvested = debt.invested + mf.amount + eq.invested + gold.invested; // cash excluded from "invested"
+  const overallPL = eq.pl + gold.pl; // debt/mf/cash don't have a live mark-to-market P&L here
+  const overallPLBase = eq.invested + gold.invested;
+  const overallPLPct = overallPLBase > 0 ? (overallPL / overallPLBase) * 100 : 0;
+
+  document.getElementById("statNetWorth").textContent = fmtINR(netWorth);
+  document.getElementById("statTotalInvested").textContent = fmtINR(totalInvested);
+  const plEl = document.getElementById("statOverallPL");
+  plEl.textContent = fmtINR(overallPL);
+  plEl.className = "value " + plClass(overallPL);
+  const plPctEl = document.getElementById("statOverallPLPct");
+  plPctEl.textContent = fmtPct(overallPLPct) + " (Equity + Gold only)";
+
+  // allocation table
+  const idealTotal = Object.values(state.ideal).reduce((a, b) => a + (Number(b) || 0), 0);
+  const tbody = document.getElementById("allocTableBody");
+  tbody.innerHTML = "";
+  classes.forEach(c => {
+    const currentPct = netWorth > 0 ? (c.current / netWorth) * 100 : 0;
+    const idealPct = Number(state.ideal[c.key]) || 0;
+    const diffPct = currentPct - idealPct;
+    const diffAmount = (diffPct / 100) * netWorth;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="left"><div class="alloc-name"><span class="swatch" style="background:${ASSET_COLORS[c.key]}"></span>${c.label}</div></td>
+      <td>${fmtINR(c.current)}</td>
+      <td>${fmtNum(currentPct)}%</td>
+      <td><input class="ideal-input" type="number" step="any" value="${idealPct}" data-key="${c.key}"></td>
+      <td class="${plClass(diffPct)}">${diffPct >= 0 ? "+" : ""}${fmtNum(diffPct)}%</td>
+      <td class="${plClass(diffAmount)}">${diffAmount >= 0 ? "+" : ""}${fmtINR(diffAmount)}</td>
+    `;
+    tr.querySelector(".ideal-input").addEventListener("change", (e) => {
+      state.ideal[c.key] = parseFloat(e.target.value) || 0;
+      saveState();
+      renderDashboard();
+    });
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById("allocTotalValue").textContent = fmtINR(netWorth);
+  document.getElementById("allocTotalCurrentPct").textContent = "100%";
+  document.getElementById("allocTotalIdealPct").textContent = fmtNum(idealTotal) + "%";
+
+  renderPieChart(classes, netWorth);
+}
+
+function renderPieChart(classes, netWorth) {
+  const ctx = document.getElementById("allocPie");
+  const labels = classes.map(c => c.label);
+  const data = classes.map(c => netWorth > 0 ? +(c.current / netWorth * 100).toFixed(2) : 0);
+  const colors = classes.map(c => ASSET_COLORS[c.key]);
+
+  if (pieChart) {
+    pieChart.data.labels = labels;
+    pieChart.data.datasets[0].data = data;
+    pieChart.data.datasets[0].backgroundColor = colors;
+    pieChart.update();
+    return;
+  }
+
+  pieChart = new Chart(ctx, {
+    type: "doughnut",
+    data: {
+      labels,
+      datasets: [{ data, backgroundColor: colors, borderColor: "#121b2c", borderWidth: 2 }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: "bottom",
+          labels: { color: "#8b98b5", font: { family: "Inter", size: 11 }, padding: 12, boxWidth: 10 }
+        },
+        tooltip: {
+          callbacks: { label: (ctx) => `${ctx.label}: ${ctx.parsed}%` }
+        },
+        datalabels: {
+          display: (ctx) => ctx.dataset.data[ctx.dataIndex] > 3, // hide clutter on near-zero slivers
+          color: "#0c1220",
+          backgroundColor: "#ffffffcc",
+          borderRadius: 4,
+          padding: { top: 3, bottom: 3, left: 5, right: 5 },
+          font: { family: "JetBrains Mono", size: 11, weight: "600" },
+          formatter: (value) => value.toFixed(1) + "%"
+        }
+      },
+      cutout: "62%"
+    }
+  });
+}
+
+document.getElementById("cashInput").addEventListener("change", (e) => {
+  state.cash = parseFloat(e.target.value) || 0;
+  saveState();
+  renderDashboard();
+});
+
+/* ============================================================
+   EXCEL IMPORT — Stocks, Mutual Funds, Gold
+   Reads the file entirely in the browser via SheetJS (xlsx.js).
+   Uses the first sheet in the workbook, treats row 1 as a
+   header (skipped), and appends new rows to whatever's already
+   in that tab — existing entries are never overwritten.
+   ============================================================ */
+
+async function readWorkbookRows(file) {
+  const data = await file.arrayBuffer();
+  const wb = XLSX.read(data, { type: "array", cellDates: true });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "" });
+  return rows.filter(r => r.some(c => String(c).trim() !== ""));
+}
+
+// Normalizes a cell that might be a JS Date (from a date-formatted
+// Excel cell), a plain "YYYY-MM-DD" string, or empty, into the
+// yyyy-mm-dd format the app's <input type="date"> fields expect.
+function toDateInputValue(v) {
+  if (v instanceof Date && !isNaN(v)) {
+    return v.toISOString().slice(0, 10);
+  }
+  const s = String(v ?? "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : "";
+}
+
+// Stocks: Name/Symbol, Invested Amount, Units
+document.getElementById("importStockFile").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  const statusEl = document.getElementById("equityFetchStatus");
+  if (!file) return;
+  try {
+    const rows = (await readWorkbookRows(file)).slice(1);
+    let count = 0;
+    rows.forEach(r => {
+      const name = String(r[0] ?? "").trim();
+      if (!name) return;
+      state.equity.push({ id: uid(), name, invested: parseFloat(r[1]) || 0, units: parseFloat(r[2]) || 0, ltp: 0 });
+      count++;
+    });
+    saveState();
+    renderEquity();
+    renderDashboard();
+    statusEl.textContent = `Imported ${count} stock row(s) from Excel.`;
+  } catch (err) {
+    alert("Could not read that Excel file. Expected columns: Name/Symbol, Invested Amount, Units.");
+  }
+  e.target.value = "";
+});
+
+// Mutual Funds: Name, Symbol, Category, Sub-category, Units, Remarks
+document.getElementById("importMFFile").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  const statusEl = document.getElementById("mfFetchStatus");
+  if (!file) return;
+  try {
+    const rows = (await readWorkbookRows(file)).slice(1);
+    let count = 0;
+    rows.forEach(r => {
+      const name = String(r[0] ?? "").trim();
+      if (!name) return;
+      state.mf.push({
+        id: uid(), name,
+        symbol: String(r[1] ?? "").trim(),
+        category: String(r[2] ?? "").trim(),
+        subcategory: String(r[3] ?? "").trim(),
+        unitPrice: 0,
+        units: parseFloat(r[4]) || 0,
+        remarks: String(r[5] ?? "").trim()
+      });
+      count++;
+    });
+    saveState();
+    renderMF();
+    renderDashboard();
+    statusEl.textContent = `Imported ${count} fund row(s) from Excel.`;
+  } catch (err) {
+    alert("Could not read that Excel file. Expected columns: Name, Symbol, Category, Sub-category, Units, Remarks.");
+  }
+  e.target.value = "";
+});
+
+// Gold: Name/Symbol, Form, Weight/Units, Purchase Rate, Invested Amount, Notes
+document.getElementById("importGoldFile").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  const statusEl = document.getElementById("goldFetchStatus");
+  if (!file) return;
+  try {
+    const rows = (await readWorkbookRows(file)).slice(1);
+    let count = 0;
+    rows.forEach(r => {
+      const name = String(r[0] ?? "").trim();
+      if (!name) return;
+      const form = String(r[1] ?? "Physical").trim();
+      state.gold.push({
+        id: uid(), name,
+        form: ["Physical", "Digital", "SGB", "ETF"].includes(form) ? form : "ETF",
+        weight: parseFloat(r[2]) || 0,
+        purchaseRate: parseFloat(r[3]) || 0,
+        invested: parseFloat(r[4]) || 0,
+        currentRate: 0,
+        notes: String(r[5] ?? "").trim()
+      });
+      count++;
+    });
+    saveState();
+    renderGold();
+    renderDashboard();
+    statusEl.textContent = `Imported ${count} gold row(s) from Excel.`;
+  } catch (err) {
+    alert("Could not read that Excel file. Expected columns: Name/Symbol, Form, Weight/Units, Purchase Rate, Invested Amount, Notes.");
+  }
+  e.target.value = "";
+});
+
+// Debt / Fixed Income: Name, Category, Sub-category, Account No.,
+// Invested Amount, ROI, Maturity Amount, Invested Date, Maturity
+// Date, Tenure Months, Notes (Profit and Tenure Years are always
+// calculated, never imported).
+document.getElementById("importDebtFile").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  const statusEl = document.getElementById("debtImportStatus");
+  if (!file) return;
+  try {
+    const rows = (await readWorkbookRows(file)).slice(1);
+    let count = 0;
+    rows.forEach(r => {
+      const name = String(r[0] ?? "").trim();
+      if (!name) return;
+      state.debt.push({
+        id: uid(), name,
+        category: String(r[1] ?? "").trim(),
+        subcategory: String(r[2] ?? "").trim(),
+        account: String(r[3] ?? "").trim(),
+        invested: parseFloat(r[4]) || 0,
+        roi: parseFloat(r[5]) || 0,
+        maturityAmount: parseFloat(r[6]) || 0,
+        investedDate: toDateInputValue(r[7]),
+        maturityDate: toDateInputValue(r[8]),
+        tenureMonths: parseFloat(r[9]) || 0,
+        notes: String(r[10] ?? "").trim()
+      });
+      count++;
+    });
+    saveState();
+    renderDebt();
+    renderDashboard();
+    statusEl.textContent = `Imported ${count} debt row(s) from Excel.`;
+  } catch (err) {
+    alert("Could not read that Excel file. Expected columns: Name, Category, Sub-category, Account No., Invested Amount, ROI, Maturity Amount, Invested Date, Maturity Date, Tenure Months, Notes.");
+  }
+  e.target.value = "";
+});
+
+/* ============================================================
+   EXPORT / IMPORT (full JSON backup)
+   ============================================================ */
+
+function downloadBackup() {
+  const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `networth-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+document.getElementById("btnExport").addEventListener("click", () => {
+  downloadBackup();
+  state.lastBackup = new Date().toISOString();
+  saveState();
+});
+
+document.getElementById("importFile").addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const parsed = JSON.parse(reader.result);
+      state = { ...blankState(), ...parsed, ideal: { ...DEFAULT_IDEAL, ...(parsed.ideal || {}) } };
+      saveState();
+      renderAll();
+    } catch (err) {
+      alert("Could not read that file — make sure it's a JSON backup exported from this app.");
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = "";
+});
+
+/* ============================================================
+   WEEKLY AUTO-BACKUP
+   A static page can't run anything while it's closed, so this
+   can only check "has it been a while?" at the moment the app
+   is actually opened — not on a true unattended schedule. If
+   it's Sunday, or 7+ days have passed since the last backup,
+   a JSON download triggers automatically on load.
+   ============================================================ */
+
+function maybeRunWeeklyBackup() {
+  const hasData = state.equity.length || state.debt.length || state.mf.length || state.gold.length || state.cash;
+  if (!hasData) return;
+  const now = new Date();
+  const isSunday = now.getDay() === 0;
+  const daysSinceLastBackup = state.lastBackup
+    ? (now - new Date(state.lastBackup)) / (1000 * 60 * 60 * 24)
+    : Infinity;
+  const due = isSunday || daysSinceLastBackup >= 7;
+  if (!due) return;
+  // Avoid re-triggering multiple times on the same day if the
+  // page is reloaded repeatedly.
+  const today = now.toDateString();
+  if (state.lastBackup && new Date(state.lastBackup).toDateString() === today) return;
+  downloadBackup();
+  state.lastBackup = now.toISOString();
+  saveState();
+}
+
+/* ---- Google Drive: placeholder wiring ----
+   A full OAuth + Drive API integration needs a Google Cloud
+   project (client ID) that only you can create, so it can't be
+   pre-wired here. This button explains that and falls back to
+   the JSON export/import above, which you can point at a Drive-
+   synced folder (Google Drive for Desktop / Backup and Sync) to
+   get the same result with zero setup. */
+document.getElementById("btnSaveDrive").addEventListener("click", () => {
+  alert(
+    "Google Drive sync needs a one-time setup with your own Google Cloud OAuth client ID, " +
+    "so it isn't wired up out of the box.\n\n" +
+    "Easiest workaround: use Export JSON, and save the file directly into a Google Drive " +
+    "desktop-synced folder — it'll sync automatically, and you can Import JSON on any device."
+  );
+});
+
+/* ============================================================
+   INIT
+   ============================================================ */
+
+function escapeAttr(str) {
+  return String(str).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+function renderAll() {
+  renderEquity();
+  renderDebt();
+  renderMF();
+  renderGold();
+  renderDashboard();
+  const tag = document.getElementById("lastUpdatedTag");
+  tag.textContent = state.lastSaved ? "Saved " + new Date(state.lastSaved).toLocaleTimeString() : "Not saved yet";
+}
+
+renderAll();
+maybeRunWeeklyBackup();
