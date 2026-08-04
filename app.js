@@ -1574,29 +1574,69 @@ function scheduleCloudSync() {
 
 // Runs once per sign-in event (fresh popup login, or a restored
 // session on page load). Resolves local-vs-cloud by recency.
+function isStateEmpty(s) {
+  return (!s.equity || s.equity.length === 0) &&
+         (!s.debt || s.debt.length === 0) &&
+         (!s.mf || s.mf.length === 0) &&
+         (!s.gold || s.gold.length === 0) &&
+         (!s.cash || Number(s.cash) === 0);
+}
+
+// Compares two states ignoring volatile bookkeeping fields
+// (lastSaved/lastBackup change on every save and don't reflect
+// an actual data difference).
+function stateContentEqual(a, b) {
+  const strip = s => { const { lastSaved, lastBackup, ...rest } = s; return rest; };
+  return JSON.stringify(strip(a)) === JSON.stringify(strip(b));
+}
+
 async function resolveCloudSync() {
   if (!cloudUser || !fbDb) return;
   setCloudStatus("Checking cloud data…");
   try {
     const snap = await fbDb.collection("portfolios").doc(cloudUser.uid).get();
-    if (!snap.exists) {
-      // First time this account has connected — seed the cloud
-      // copy from whatever's on this device right now.
+    if (!snap.exists || !snap.data().state) {
+      // No cloud copy yet at all — seed it from this device, whatever it has.
       await pushToCloud();
       return;
     }
     const cloudData = snap.data();
-    const cloudUpdatedAt = cloudData.updatedAt && cloudData.updatedAt.toMillis ? cloudData.updatedAt.toMillis() : 0;
-    const localUpdatedAt = state.lastSaved ? new Date(state.lastSaved).getTime() : 0;
-    if (cloudUpdatedAt > localUpdatedAt && cloudData.state) {
-      state = {
-        ...blankState(),
-        ...cloudData.state,
-        ideal: { ...DEFAULT_IDEAL, ...(cloudData.state.ideal || {}) }
-      };
+    const cloudState = cloudData.state;
+    const cloudIsEmpty = isStateEmpty(cloudState);
+    const localIsEmpty = isStateEmpty(state);
+
+    // Directions where nothing can be lost: safe to do automatically,
+    // no confirmation needed.
+    if (cloudIsEmpty && !localIsEmpty) { await pushToCloud(); return; }
+    if (localIsEmpty && !cloudIsEmpty) {
+      state = { ...blankState(), ...cloudState, ideal: { ...DEFAULT_IDEAL, ...(cloudState.ideal || {}) } };
       saveState();
       renderAll();
-      setCloudStatus("Loaded newer cloud data");
+      setCloudStatus("Loaded data from cloud");
+      return;
+    }
+    if (localIsEmpty && cloudIsEmpty) { setCloudStatus("Cloud sync on"); return; }
+
+    // Both sides have real data. If they already match, there's
+    // nothing to resolve — don't bother the user.
+    if (stateContentEqual(state, cloudState)) { setCloudStatus("Cloud sync on"); return; }
+
+    // They genuinely differ — never silently pick one. Ask.
+    const cloudUpdatedAt = cloudData.updatedAt && cloudData.updatedAt.toMillis ? cloudData.updatedAt.toMillis() : 0;
+    const localUpdatedAt = state.lastSaved ? new Date(state.lastSaved).getTime() : 0;
+    const cloudLooksNewer = cloudUpdatedAt > localUpdatedAt;
+    const loadCloud = confirm(
+      (cloudLooksNewer
+        ? "Cloud data looks newer than what's on this device."
+        : "This device's data looks newer than the cloud copy.") +
+      "\n\nClick OK to LOAD the cloud version (replacing this device's data), " +
+      "or Cancel to KEEP this device's data and push it to the cloud instead."
+    );
+    if (loadCloud) {
+      state = { ...blankState(), ...cloudState, ideal: { ...DEFAULT_IDEAL, ...(cloudState.ideal || {}) } };
+      saveState();
+      renderAll();
+      setCloudStatus("Loaded cloud data");
     } else {
       await pushToCloud();
     }
