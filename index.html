@@ -9,6 +9,9 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <style>
   :root{
     --bg:#0c1220;
@@ -262,7 +265,11 @@
     <button class="btn btn-ghost" id="btnExport">Export JSON</button>
     <label class="btn btn-ghost" for="importFile">Import JSON</label>
     <input type="file" id="importFile" accept="application/json">
-    <button class="btn btn-primary" id="btnSaveDrive">Connect Google Drive</button>
+    <button class="btn btn-ghost" id="btnExportExcel">Export to Excel</button>
+    <label class="btn btn-ghost" for="restoreExcelFile">Restore from Excel</label>
+    <input type="file" id="restoreExcelFile" accept=".xlsx,.xls">
+    <span class="status-tag" id="cloudSyncStatus"></span>
+    <button class="btn btn-primary" id="btnCloudSignIn">Sign in with Google</button>
   </div>
 </div>
 

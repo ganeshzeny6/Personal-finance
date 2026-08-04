@@ -76,6 +76,7 @@ function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   const tag = document.getElementById("lastUpdatedTag");
   if (tag) tag.textContent = "Saved " + new Date(state.lastSaved).toLocaleTimeString();
+  scheduleCloudSync();
 }
 
 /* ---------------- number formatting ---------------- */
@@ -1259,6 +1260,215 @@ document.getElementById("importFile").addEventListener("change", (e) => {
 });
 
 /* ============================================================
+   EXPORT TO EXCEL (full human-readable backup)
+   Builds a multi-sheet workbook entirely in the browser via
+   SheetJS (already loaded for the Import from Excel feature).
+   Dashboard Summary is informational only — Settings is what
+   actually round-trips cash/ideal-allocation on restore.
+   ============================================================ */
+
+function sheetFromRows(headerRow, dataRows, colWidths) {
+  const ws = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows]);
+  if (colWidths) ws["!cols"] = colWidths.map(w => ({ wch: w }));
+  return ws;
+}
+
+function buildBackupWorkbook() {
+  const wb = XLSX.utils.book_new();
+  const eq = equityTotals(), debt = debtTotals(), mf = mfTotals(), gold = goldTotals();
+  const cash = Number(state.cash) || 0;
+  const netWorth = cash + debt.invested + mf.amount + eq.current + gold.current;
+
+  // --- Dashboard Summary ---
+  const classes = [
+    { label: "Cash", current: cash },
+    { label: "Debt / Fixed Investments", current: debt.invested },
+    { label: "Equity Mutual Funds", current: mf.amount },
+    { label: "Equity Stocks", current: eq.current },
+    { label: "Gold", current: gold.current }
+  ];
+  const summaryRows = [
+    ["Net Worth", netWorth],
+    ["Total Amount Invested", debt.invested + mf.amount + eq.invested + gold.invested],
+    ["Overall Profit/Loss (Equity + Gold)", eq.pl + gold.pl],
+    ["Cash on Hand", cash],
+    ["Last Saved", state.lastSaved ? new Date(state.lastSaved).toLocaleString() : ""],
+    [],
+    ["Asset Class", "Current Value", "Current %", "Ideal %", "Diff %", "Diff Amount"],
+    ...classes.map(c => {
+      const currentPct = netWorth > 0 ? (c.current / netWorth) * 100 : 0;
+      const idealPct = Number(state.ideal[c.label === "Cash" ? "cash" : c.label.includes("Debt") ? "debt" : c.label.includes("Mutual") ? "mf" : c.label.includes("Stocks") ? "equity" : "gold"]) || 0;
+      const diffPct = currentPct - idealPct;
+      return [c.label, c.current, +currentPct.toFixed(2), idealPct, +diffPct.toFixed(2), +((diffPct / 100) * netWorth).toFixed(2)];
+    })
+  ];
+  const summaryWs = XLSX.utils.aoa_to_sheet(summaryRows);
+  summaryWs["!cols"] = [{ wch: 30 }, { wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 14 }];
+  XLSX.utils.book_append_sheet(wb, summaryWs, "Dashboard Summary");
+
+  // --- Stock Holdings ---
+  const eqRows = state.equity.map(r => {
+    const d = equityDerived(r);
+    return [r.name, r.invested, r.units, +d.avgPrice.toFixed(2), r.ltp, +d.currentValue.toFixed(2), +d.pl.toFixed(2), +d.plPct.toFixed(2), eq.invested > 0 ? +((r.invested / eq.invested) * 100).toFixed(2) : 0];
+  });
+  XLSX.utils.book_append_sheet(wb, sheetFromRows(
+    ["Name/Symbol", "Invested Amount", "Units", "Avg Price", "LTP", "Current Value", "P&L", "P&L %", "Alloc % (Invested)"],
+    eqRows, [16, 14, 8, 10, 10, 14, 12, 10, 16]
+  ), "Stock Holdings");
+
+  // --- Mutual Funds ---
+  const mfRows = state.mf.map(r => {
+    const d = mfDerived(r);
+    return [r.name, r.symbol, r.category, r.subcategory, r.unitPrice, r.units, +d.amount.toFixed(2), mf.amount > 0 ? +((d.amount / mf.amount) * 100).toFixed(2) : 0, r.remarks];
+  });
+  XLSX.utils.book_append_sheet(wb, sheetFromRows(
+    ["Name", "Symbol", "Category", "Sub-category", "NAV", "Units", "Amount", "Alloc %", "Remarks"],
+    mfRows, [22, 16, 12, 14, 10, 10, 12, 10, 20]
+  ), "Mutual Funds");
+
+  // --- Gold ---
+  const goldRows = state.gold.map(r => {
+    const d = goldDerived(r);
+    return [r.name, r.form, r.weight, r.purchaseRate, r.invested, r.currentRate, +d.currentValue.toFixed(2), +d.pl.toFixed(2), +d.plPct.toFixed(2), r.notes];
+  });
+  XLSX.utils.book_append_sheet(wb, sheetFromRows(
+    ["Name/Symbol", "Form", "Weight/Units", "Purchase Rate", "Invested Amount", "Current Rate", "Current Value", "P&L", "P&L %", "Notes"],
+    goldRows, [16, 10, 12, 12, 14, 12, 14, 12, 10, 20]
+  ), "Gold");
+
+  // --- Debt / Fixed Income ---
+  const debtRows = state.debt.map(r => {
+    const d = debtDerived(r);
+    return [r.name, r.category, r.subcategory, r.account, r.invested, r.roi, r.maturityAmount, +d.profit.toFixed(2), r.investedDate, r.maturityDate, r.tenureMonths, +d.years.toFixed(1), r.notes];
+  });
+  XLSX.utils.book_append_sheet(wb, sheetFromRows(
+    ["Name", "Category", "Sub-category", "Account No.", "Invested Amount", "ROI %", "Maturity Amount", "Profit", "Invested Date", "Maturity Date", "Tenure (Mo)", "Tenure (Yr)", "Notes"],
+    debtRows, [18, 12, 14, 14, 14, 8, 14, 12, 14, 14, 10, 10, 20]
+  ), "Debt");
+
+  // --- Settings (round-trips on restore) ---
+  const settingsRows = [
+    ["Cash on Hand", cash],
+    [],
+    ["Ideal Allocation %", ""],
+    ["Cash", state.ideal.cash],
+    ["Debt", state.ideal.debt],
+    ["Mutual Funds", state.ideal.mf],
+    ["Equity", state.ideal.equity],
+    ["Gold", state.ideal.gold]
+  ];
+  XLSX.utils.book_append_sheet(wb, sheetFromRows(["Setting", "Value"], settingsRows, [22, 14]), "Settings");
+
+  return wb;
+}
+
+document.getElementById("btnExportExcel").addEventListener("click", () => {
+  const wb = buildBackupWorkbook();
+  XLSX.writeFile(wb, `networth-backup-${new Date().toISOString().slice(0, 10)}.xlsx`);
+});
+
+/* ---- Restore from Excel: full-state rebuild from a backup workbook ----
+   This REPLACES all current holdings/settings — unlike the per-tab
+   Import from Excel (which appends/upserts), this is meant for
+   disaster recovery: rebuilding everything from one backup file. */
+
+function sheetRows(wb, name) {
+  const sheet = wb.Sheets[name];
+  if (!sheet) return null;
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "" });
+  return rows.filter(r => r.some(c => String(c).trim() !== ""));
+}
+
+document.getElementById("restoreExcelFile").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const proceed = confirm(
+    "This will REPLACE all current holdings and settings with the contents of this Excel file. " +
+    "This cannot be undone (though your last JSON export, if any, would still be safe). Continue?"
+  );
+  if (!proceed) { e.target.value = ""; return; }
+
+  try {
+    const data = await file.arrayBuffer();
+    const wb = XLSX.read(data, { type: "array", cellDates: true });
+
+    const newState = blankState();
+
+    const eqRows = sheetRows(wb, "Stock Holdings");
+    if (eqRows) {
+      eqRows.slice(1).forEach(r => {
+        const name = String(r[0] ?? "").trim();
+        if (!name) return;
+        newState.equity.push({ id: uid(), name, invested: parseFloat(r[1]) || 0, units: parseFloat(r[2]) || 0, ltp: parseFloat(r[4]) || 0 });
+      });
+    }
+
+    const mfRows = sheetRows(wb, "Mutual Funds");
+    if (mfRows) {
+      mfRows.slice(1).forEach(r => {
+        const name = String(r[0] ?? "").trim();
+        if (!name) return;
+        newState.mf.push({
+          id: uid(), name, symbol: String(r[1] ?? "").trim(), category: String(r[2] ?? "").trim(),
+          subcategory: String(r[3] ?? "").trim(), unitPrice: parseFloat(r[4]) || 0, units: parseFloat(r[5]) || 0,
+          remarks: String(r[8] ?? "").trim()
+        });
+      });
+    }
+
+    const goldRows = sheetRows(wb, "Gold");
+    if (goldRows) {
+      goldRows.slice(1).forEach(r => {
+        const name = String(r[0] ?? "").trim();
+        if (!name) return;
+        const form = String(r[1] ?? "ETF").trim();
+        newState.gold.push({
+          id: uid(), name, form: ["Physical", "Digital", "SGB", "ETF"].includes(form) ? form : "ETF",
+          weight: parseFloat(r[2]) || 0, purchaseRate: parseFloat(r[3]) || 0, invested: parseFloat(r[4]) || 0,
+          currentRate: parseFloat(r[5]) || 0, notes: String(r[9] ?? "").trim()
+        });
+      });
+    }
+
+    const debtRows = sheetRows(wb, "Debt");
+    if (debtRows) {
+      debtRows.slice(1).forEach(r => {
+        const name = String(r[0] ?? "").trim();
+        if (!name) return;
+        newState.debt.push({
+          id: uid(), name, category: String(r[1] ?? "").trim(), subcategory: String(r[2] ?? "").trim(),
+          account: String(r[3] ?? "").trim(), invested: parseFloat(r[4]) || 0, roi: parseFloat(r[5]) || 0,
+          maturityAmount: parseFloat(r[6]) || 0, investedDate: toDateInputValue(r[8]), maturityDate: toDateInputValue(r[9]),
+          tenureMonths: parseFloat(r[10]) || 0, notes: String(r[12] ?? "").trim()
+        });
+      });
+    }
+
+    const settingsRows = sheetRows(wb, "Settings");
+    if (settingsRows) {
+      settingsRows.forEach(r => {
+        const label = String(r[0] ?? "").trim();
+        const val = parseFloat(r[1]);
+        if (label === "Cash on Hand" && !isNaN(val)) newState.cash = val;
+        if (label === "Cash") newState.ideal.cash = isNaN(val) ? newState.ideal.cash : val;
+        if (label === "Debt") newState.ideal.debt = isNaN(val) ? newState.ideal.debt : val;
+        if (label === "Mutual Funds") newState.ideal.mf = isNaN(val) ? newState.ideal.mf : val;
+        if (label === "Equity") newState.ideal.equity = isNaN(val) ? newState.ideal.equity : val;
+        if (label === "Gold") newState.ideal.gold = isNaN(val) ? newState.ideal.gold : val;
+      });
+    }
+
+    state = newState;
+    saveState();
+    renderAll();
+    alert("Restore complete — all holdings and settings were rebuilt from this Excel file.");
+  } catch (err) {
+    alert("Could not restore from that file. Make sure it's a backup produced by 'Export to Excel' from this app.");
+  }
+  e.target.value = "";
+});
+
+/* ============================================================
    WEEKLY AUTO-BACKUP
    A static page can't run anything while it's closed, so this
    can only check "has it been a while?" at the moment the app
@@ -1286,21 +1496,139 @@ function maybeRunWeeklyBackup() {
   saveState();
 }
 
-/* ---- Google Drive: placeholder wiring ----
-   A full OAuth + Drive API integration needs a Google Cloud
-   project (client ID) that only you can create, so it can't be
-   pre-wired here. This button explains that and falls back to
-   the JSON export/import above, which you can point at a Drive-
-   synced folder (Google Drive for Desktop / Backup and Sync) to
-   get the same result with zero setup. */
-document.getElementById("btnSaveDrive").addEventListener("click", () => {
-  alert(
-    "Google Drive sync needs a one-time setup with your own Google Cloud OAuth client ID, " +
-    "so it isn't wired up out of the box.\n\n" +
-    "Easiest workaround: use Export JSON, and save the file directly into a Google Drive " +
-    "desktop-synced folder — it'll sync automatically, and you can Import JSON on any device."
-  );
+/* ============================================================
+   CLOUD SYNC — Firebase Auth (Google Sign-In) + Firestore
+   One document per signed-in user (keyed by their Google uid)
+   holds the full app state, mirroring the localStorage shape.
+   localStorage stays the instant local cache — every UI action
+   still reads/writes it exactly as before — and a debounced
+   background push mirrors changes to Firestore whenever signed
+   in. Conflict handling is recency-based, not a true merge: on
+   sign-in (including a restored session on page load), whichever
+   copy — local or cloud — was saved more recently wins and gets
+   loaded. This is a known, disclosed tradeoff for a single-user
+   tool, not a full multi-device merge.
+   ============================================================ */
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDhaP5WPnVHD5PXTg3O6wJeJOlG51NJ6xI",
+  authDomain: "networth-tracker-f101b.firebaseapp.com",
+  projectId: "networth-tracker-f101b",
+  storageBucket: "networth-tracker-f101b.firebasestorage.app",
+  messagingSenderId: "638244383857",
+  appId: "1:638244383857:web:84431ad971b2fee7e47fd0"
+};
+
+let fbAuth = null, fbDb = null, cloudUser = null, cloudSyncTimer = null;
+
+function initFirebase() {
+  try {
+    firebase.initializeApp(firebaseConfig);
+    fbAuth = firebase.auth();
+    fbDb = firebase.firestore();
+  } catch (err) {
+    console.error("Firebase failed to initialize:", err);
+    const statusEl = document.getElementById("cloudSyncStatus");
+    if (statusEl) statusEl.textContent = "Cloud sync unavailable";
+  }
+}
+
+function setCloudStatus(text) {
+  const el = document.getElementById("cloudSyncStatus");
+  if (el) el.textContent = text;
+}
+
+function updateCloudButton() {
+  const btn = document.getElementById("btnCloudSignIn");
+  if (!btn) return;
+  if (cloudUser) {
+    btn.textContent = "Sign out (" + (cloudUser.displayName || cloudUser.email || "account") + ")";
+  } else {
+    btn.textContent = "Sign in with Google";
+    setCloudStatus("");
+  }
+}
+
+async function pushToCloud() {
+  if (!cloudUser || !fbDb) return;
+  setCloudStatus("Syncing…");
+  try {
+    await fbDb.collection("portfolios").doc(cloudUser.uid).set({
+      state,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    setCloudStatus("Synced " + new Date().toLocaleTimeString());
+  } catch (err) {
+    console.error("Cloud push failed:", err);
+    setCloudStatus("Cloud sync error — will retry on next change");
+  }
+}
+
+// Called from saveState() on every local change. Debounced so
+// rapid edits (e.g. typing) don't fire a write per keystroke.
+function scheduleCloudSync() {
+  if (!cloudUser) return;
+  clearTimeout(cloudSyncTimer);
+  cloudSyncTimer = setTimeout(pushToCloud, 2000);
+}
+
+// Runs once per sign-in event (fresh popup login, or a restored
+// session on page load). Resolves local-vs-cloud by recency.
+async function resolveCloudSync() {
+  if (!cloudUser || !fbDb) return;
+  setCloudStatus("Checking cloud data…");
+  try {
+    const snap = await fbDb.collection("portfolios").doc(cloudUser.uid).get();
+    if (!snap.exists) {
+      // First time this account has connected — seed the cloud
+      // copy from whatever's on this device right now.
+      await pushToCloud();
+      return;
+    }
+    const cloudData = snap.data();
+    const cloudUpdatedAt = cloudData.updatedAt && cloudData.updatedAt.toMillis ? cloudData.updatedAt.toMillis() : 0;
+    const localUpdatedAt = state.lastSaved ? new Date(state.lastSaved).getTime() : 0;
+    if (cloudUpdatedAt > localUpdatedAt && cloudData.state) {
+      state = {
+        ...blankState(),
+        ...cloudData.state,
+        ideal: { ...DEFAULT_IDEAL, ...(cloudData.state.ideal || {}) }
+      };
+      saveState();
+      renderAll();
+      setCloudStatus("Loaded newer cloud data");
+    } else {
+      await pushToCloud();
+    }
+  } catch (err) {
+    console.error("Cloud sync check failed:", err);
+    setCloudStatus("Cloud sync error");
+  }
+}
+
+document.getElementById("btnCloudSignIn").addEventListener("click", () => {
+  if (!fbAuth) {
+    alert("Cloud sync isn't available right now — check your internet connection and reload.");
+    return;
+  }
+  if (cloudUser) {
+    fbAuth.signOut();
+    return;
+  }
+  const provider = new firebase.auth.GoogleAuthProvider();
+  fbAuth.signInWithPopup(provider).catch(err => {
+    alert("Sign-in failed: " + err.message);
+  });
 });
+
+initFirebase();
+if (fbAuth) {
+  fbAuth.onAuthStateChanged(user => {
+    cloudUser = user;
+    updateCloudButton();
+    if (user) resolveCloudSync();
+  });
+}
 
 /* ============================================================
    INIT
