@@ -300,11 +300,11 @@ function updateLockButton() {
   if (state.portfolioLocked) {
     btn.textContent = "🔒 Locked";
     btn.classList.add("locked");
-    btn.title = "Portfolio locked — Quantity/Units and Average Price/Invested can only change via Import Holdings. Click to unlock.";
+    btn.title = "Portfolio locked — Equity/Debt/Mutual Funds/Gold fields, Cash on hand, and Ideal % are read-only until unlocked (or, for Equity/MF/Gold Units & Invested, via Import Holdings). Click to unlock.";
   } else {
     btn.textContent = "🔓 Unlocked";
     btn.classList.remove("locked");
-    btn.title = "When locked, Quantity and Average Price can only change via Import Holdings";
+    btn.title = "Click to lock all data fields (Equity, Debt, Mutual Funds, Gold, Cash, Ideal %) against accidental edits.";
   }
 }
 
@@ -316,6 +316,7 @@ document.getElementById("btnLockPortfolio").addEventListener("click", () => {
   renderDebt();
   renderMF();
   renderGold();
+  renderDashboard();
 });
 
 /* ============================================================
@@ -1169,6 +1170,7 @@ document.getElementById("btnRefreshGold").addEventListener("click", () => {
 function renderDashboard() {
   const cashInput = document.getElementById("cashInput");
   if (document.activeElement !== cashInput) cashInput.value = state.cash || "";
+  cashInput.disabled = state.portfolioLocked;
 
   const eq = equityTotals();
   const debt = debtTotals();
@@ -1205,6 +1207,7 @@ function renderDashboard() {
   const idealTotal = Object.values(state.ideal).reduce((a, b) => a + (Number(b) || 0), 0);
   const tbody = document.getElementById("allocTableBody");
   tbody.innerHTML = "";
+  const locked = state.portfolioLocked;
   classes.forEach(c => {
     const currentPct = netWorth > 0 ? (c.current / netWorth) * 100 : 0;
     const idealPct = Number(state.ideal[c.key]) || 0;
@@ -1215,7 +1218,7 @@ function renderDashboard() {
       <td class="left"><div class="alloc-name"><span class="swatch" style="background:${ASSET_COLORS[c.key]}"></span>${c.label}</div></td>
       <td>${fmtINR(c.current)}</td>
       <td>${fmtNum(currentPct)}%</td>
-      <td><input class="ideal-input" type="number" step="any" value="${idealPct}" data-key="${c.key}"></td>
+      <td><input class="ideal-input" type="number" step="any" value="${idealPct}" data-key="${c.key}" ${locked ? "disabled" : ""}></td>
       <td class="${plClass(diffPct)}">${diffPct >= 0 ? "+" : ""}${fmtNum(diffPct)}%</td>
       <td class="${plClass(diffAmount)}">${diffAmount >= 0 ? "+" : ""}${fmtINR(diffAmount)}</td>
     `;
