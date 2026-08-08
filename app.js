@@ -55,7 +55,12 @@ function blankState() {
     mf: [],
     gold: [],
     lastSaved: null,
-    lastBackup: null
+    lastBackup: null,
+    // When true, Quantity/Units and Average Price/Invested fields on
+    // Equity, Mutual Funds and Gold are read-only in the UI and can
+    // only change via "Import Zerodha Holdings". Everything else
+    // (name, notes, remarks, category, add/remove row) stays editable.
+    portfolioLocked: false
   };
 }
 
@@ -76,7 +81,7 @@ function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   const tag = document.getElementById("lastUpdatedTag");
   if (tag) tag.textContent = "Saved " + new Date(state.lastSaved).toLocaleTimeString();
-  scheduleCloudSync();
+  scheduleCloudPush();
 }
 
 /* ---------------- number formatting ---------------- */
@@ -102,6 +107,41 @@ function fmtPct(n) {
 function plClass(n) {
   return n > 0 ? "pos" : n < 0 ? "neg" : "muted";
 }
+
+/* ============================================================
+   MODAL HELPER
+   One generic modal, reused for the Zerodha import preview and
+   the post-import "new investments" reminder. Content is built
+   as an HTML string by the caller and injected here.
+   ============================================================ */
+
+const modalOverlay = document.getElementById("modalOverlay");
+const modalTitleEl = document.getElementById("modalTitle");
+const modalBodyEl = document.getElementById("modalBody");
+const modalFooterEl = document.getElementById("modalFooter");
+
+// buttons: [{ label, primary?, onClick }]
+function openModal(title, bodyHTML, buttons) {
+  modalTitleEl.textContent = title;
+  modalBodyEl.innerHTML = bodyHTML;
+  modalFooterEl.innerHTML = "";
+  (buttons || []).forEach(b => {
+    const btn = document.createElement("button");
+    btn.className = "btn" + (b.primary ? " btn-primary" : " btn-ghost");
+    btn.textContent = b.label;
+    btn.addEventListener("click", () => b.onClick && b.onClick());
+    modalFooterEl.appendChild(btn);
+  });
+  modalOverlay.classList.add("open");
+}
+
+function closeModal() {
+  modalOverlay.classList.remove("open");
+}
+
+modalOverlay.addEventListener("click", (e) => {
+  if (e.target === modalOverlay) closeModal();
+});
 
 /* ============================================================
    TABLE UI: SORT / FILTER / COLUMN RESIZE
@@ -247,6 +287,37 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
 });
 
 /* ============================================================
+   PORTFOLIO LOCK
+   Locks manual editing of Quantity/Units and Average Price/
+   Invested on Equity, Mutual Funds and Gold — those three fields
+   are exactly what Import Zerodha Holdings overwrites, so locking
+   forces updates to go through that one path. Name, notes,
+   remarks, category, and add/remove row stay editable either way.
+   ============================================================ */
+
+function updateLockButton() {
+  const btn = document.getElementById("btnLockPortfolio");
+  if (state.portfolioLocked) {
+    btn.textContent = "🔒 Locked";
+    btn.classList.add("locked");
+    btn.title = "Portfolio locked — Quantity/Units and Average Price/Invested can only change via Import Holdings. Click to unlock.";
+  } else {
+    btn.textContent = "🔓 Unlocked";
+    btn.classList.remove("locked");
+    btn.title = "When locked, Quantity and Average Price can only change via Import Holdings";
+  }
+}
+
+document.getElementById("btnLockPortfolio").addEventListener("click", () => {
+  state.portfolioLocked = !state.portfolioLocked;
+  saveState();
+  updateLockButton();
+  renderEquity();
+  renderMF();
+  renderGold();
+});
+
+/* ============================================================
    EQUITY TAB
    ============================================================ */
 
@@ -305,19 +376,21 @@ function renderEquity() {
     tbody.innerHTML = '<tr class="empty-row"><td colspan="10">No stocks match this filter.</td></tr>';
   }
 
+  const locked = state.portfolioLocked;
   displayRows.forEach(row => {
     const d = equityDerived(row);
     // Alloc % reflects each stock's share of total invested capital,
     // not its share of current market value.
     const allocPct = totals.invested > 0 ? (Number(row.invested) / totals.invested) * 100 : 0;
+    const pendingBadge = row.livePricePending ? '<span class="pending-badge">Pending</span>' : "";
     const tr = document.createElement("tr");
     tr.dataset.id = row.id;
     tr.innerHTML = `
-      <td class="left"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" placeholder="e.g. TCS.NS"></td>
-      <td><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested"></td>
-      <td><input type="number" step="any" value="${row.units ?? ""}" data-field="units"></td>
+      <td class="left"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" placeholder="e.g. TCS.NS" ${locked ? "disabled" : ""}></td>
+      <td><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
+      <td><input type="number" step="any" value="${row.units ?? ""}" data-field="units" ${locked ? "disabled" : ""}></td>
       <td class="c-avg">${fmtNum(d.avgPrice)}</td>
-      <td><input type="number" step="any" value="${row.ltp ?? ""}" data-field="ltp"></td>
+      <td><div class="price-cell"><input type="number" step="any" value="${row.ltp ?? ""}" data-field="ltp" ${locked ? "disabled" : ""}>${pendingBadge}</div></td>
       <td class="c-cv">${fmtNum(d.currentValue)}</td>
       <td class="c-pl ${plClass(d.pl)}">${fmtNum(d.pl)}</td>
       <td class="c-plpct ${plClass(d.pl)}">${fmtPct(d.plPct)}</td>
@@ -454,32 +527,108 @@ function buildPriceMap(rows, idCandidates, priceCandidates) {
   return map;
 }
 
+// Builds a Map from fund name (uppercased, trimmed) to whatever
+// Symbol/Category/Sub-category the live-price sheet's Mutual Funds
+// tab has for that fund. Column matching is flexible on the
+// sub-category header specifically, since the sheet has a known
+// typo ("Sub-cateogry") — matches either spelling.
+function buildMFCategoryMap(rows) {
+  const map = new Map();
+  if (!Array.isArray(rows)) return map;
+  rows.forEach(obj => {
+    const keys = Object.keys(obj);
+    const findVal = (candidates) => {
+      const k = keys.find(k => candidates.some(c => c.toLowerCase() === k.trim().toLowerCase()));
+      return k ? String(obj[k] ?? "").trim() : "";
+    };
+    const name = findVal(["MF Name", "Name"]);
+    if (!name) return;
+    map.set(name.toUpperCase(), {
+      symbol: findVal(["Symbol"]),
+      category: findVal(["Category"]),
+      subcategory: findVal(["Sub-category", "Sub-cateogry", "Subcategory", "Sub category"])
+    });
+  });
+  return map;
+}
+
 /* ---- live price fetch: stocks ---- */
 
-document.getElementById("btnRefreshStocks").addEventListener("click", async () => {
-  const statusEl = document.getElementById("equityFetchStatus");
+// Renders a small panel of per-row refresh failures under a tab's
+// toolbar — investment name, asset type, the key that was looked
+// up, and a suggested fix — so a failed refresh points at what to
+// check instead of just a "3 failed" count.
+function renderFailPanel(panelId, assetType, failedRows) {
+  const panel = document.getElementById(panelId);
+  if (!failedRows || failedRows.length === 0) {
+    panel.style.display = "none";
+    panel.innerHTML = "";
+    return;
+  }
+  panel.style.display = "block";
+  panel.innerHTML = `
+    <h4>Live Price Refresh — ${failedRows.length} symbol(s) not matched</h4>
+    <table>
+      <thead><tr><th class="left">Name</th><th class="left">Asset Type</th><th class="left">Lookup Key Used</th><th class="left">Suggested Action</th></tr></thead>
+      <tbody>
+        ${failedRows.map(f => `
+          <tr>
+            <td class="left">${escapeAttr(f.name)}</td>
+            <td class="left">${assetType}</td>
+            <td class="left">${escapeAttr(f.key || "(blank)")}</td>
+            <td class="left">Verify the Google Finance ticker or update the symbol mapping in your Apps Script sheet.</td>
+          </tr>`).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+// Shared worker: fetches prices and applies them to state.equity.
+// Returns { ok, fail, failedRows } so both the button handler and
+// the on-load auto-refresh can use the same logic and reporting.
+async function refreshEquityPrices() {
+  if (state.equity.length === 0) return { ok: 0, fail: 0, failedRows: [], skipped: true };
+  const data = await fetchPriceData();
+  const priceMap = buildPriceMap(data.stocks, ["Stock Name", "Symbol"], ["Live Price", "Price"]);
+  let ok = 0;
+  const failedRows = [];
+  state.equity.forEach(row => {
+    const key = (row.name || "").trim().toUpperCase();
+    if (key && priceMap.has(key)) {
+      row.ltp = priceMap.get(key);
+      row.livePricePending = false;
+      ok++;
+    } else {
+      failedRows.push({ name: row.name || "(unnamed)", key });
+    }
+  });
+  saveState();
+  return { ok, fail: failedRows.length, failedRows };
+}
+
+async function runEquityRefresh(statusEl) {
   if (state.equity.length === 0) {
     statusEl.textContent = "No stocks to refresh.";
+    renderFailPanel("equityFailPanel", "Equity", []);
     return;
   }
   statusEl.textContent = "Fetching...";
-  let ok = 0, fail = 0;
+  let result;
   try {
-    const data = await fetchPriceData();
-    const priceMap = buildPriceMap(data.stocks, ["Stock Name", "Symbol"], ["Live Price", "Price"]);
-    state.equity.forEach(row => {
-      const key = (row.name || "").trim().toUpperCase();
-      if (key && priceMap.has(key)) { row.ltp = priceMap.get(key); ok++; }
-      else fail++;
-    });
+    result = await refreshEquityPrices();
   } catch (e) {
     statusEl.textContent = sheetErrorMessage(e);
     return;
   }
-  saveState();
   renderEquity();
   renderDashboard();
-  statusEl.textContent = `Updated ${ok} of ${ok + fail}. ${fail > 0 ? "Failed rows: check symbol format (e.g. RELIANCE.NS) or edit LTP manually." : ""}`;
+  renderFailPanel("equityFailPanel", "Equity", result.failedRows);
+  statusEl.textContent = `Updated ${result.ok} of ${result.ok + result.fail}.` +
+    (result.fail > 0 ? " See details below." : "");
+}
+
+document.getElementById("btnRefreshStocks").addEventListener("click", () => {
+  runEquityRefresh(document.getElementById("equityFetchStatus"));
 });
 
 /* ============================================================
@@ -621,22 +770,35 @@ document.getElementById("btnAddDebt").addEventListener("click", () => {
    MUTUAL FUNDS TAB
    ============================================================ */
 
+// Mirrors equityDerived(): invested + units are the source of
+// truth (editable, or overwritten wholesale by Zerodha import),
+// Avg Price is derived from them exactly like Equity's Avg Price,
+// so it can never drift out of sync with Invested/Units.
 function mfDerived(row) {
-  const unitPrice = Number(row.unitPrice) || 0;
+  const invested = Number(row.invested) || 0;
   const units = Number(row.units) || 0;
-  const amount = unitPrice * units;
-  return { amount };
+  const unitPrice = Number(row.unitPrice) || 0;
+  const avgPrice = units > 0 ? invested / units : 0;
+  const currentValue = units * unitPrice;
+  const pl = currentValue - invested;
+  const plPct = invested > 0 ? (pl / invested) * 100 : 0;
+  return { avgPrice, currentValue, pl, plPct };
 }
 
 function mfTotals() {
-  let amount = 0;
-  state.mf.forEach(r => { amount += mfDerived(r).amount; });
-  return { amount };
+  let invested = 0, current = 0;
+  state.mf.forEach(r => {
+    invested += Number(r.invested) || 0;
+    current += mfDerived(r).currentValue;
+  });
+  const pl = current - invested;
+  const plPct = invested > 0 ? (pl / invested) * 100 : 0;
+  return { invested, current, pl, plPct };
 }
 
 function mfGetSearchText(row) {
   const d = mfDerived(row);
-  return [row.name, row.symbol, row.category, row.subcategory, row.unitPrice, row.units, d.amount, row.remarks].join(" ");
+  return [row.name, row.symbol, row.category, row.subcategory, row.invested, row.units, d.avgPrice, row.unitPrice, d.currentValue, d.pl, d.plPct, row.remarks].join(" ");
 }
 
 function mfGetSortValue(row, col) {
@@ -646,10 +808,14 @@ function mfGetSortValue(row, col) {
     case "symbol": return row.symbol || "";
     case "category": return row.category || "";
     case "subcategory": return row.subcategory || "";
-    case "unitPrice": return Number(row.unitPrice) || 0;
+    case "invested": return Number(row.invested) || 0;
     case "units": return Number(row.units) || 0;
-    case "amount": return d.amount;
-    case "allocPct": return d.amount;
+    case "avgPrice": return d.avgPrice;
+    case "unitPrice": return Number(row.unitPrice) || 0;
+    case "currentValue": return d.currentValue;
+    case "pl": return d.pl;
+    case "plPct": return d.plPct;
+    case "allocPct": return d.currentValue;
     case "remarks": return row.remarks || "";
     default: return 0;
   }
@@ -662,32 +828,38 @@ function renderMF() {
   const displayRows = applySortFilter("mf", state.mf, mfGetSearchText, mfGetSortValue);
 
   if (state.mf.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="10">No mutual funds added yet. Click "+ Add fund" to begin.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="13">No mutual funds added yet. Click "+ Add fund" to begin.</td></tr>';
   } else if (displayRows.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="10">No funds match this filter.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="13">No funds match this filter.</td></tr>';
   }
 
+  const locked = state.portfolioLocked;
   displayRows.forEach(row => {
     const d = mfDerived(row);
-    const allocPct = totals.amount > 0 ? (d.amount / totals.amount) * 100 : 0;
+    const allocPct = totals.current > 0 ? (d.currentValue / totals.current) * 100 : 0;
+    const pendingBadge = row.livePricePending ? '<span class="pending-badge">Pending</span>' : "";
     const tr = document.createElement("tr");
     tr.dataset.id = row.id;
     tr.innerHTML = `
-      <td class="left"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name"></td>
-      <td class="left"><input type="text" value="${escapeAttr(row.symbol || "")}" data-field="symbol" placeholder="Symbol"></td>
-      <td class="left"><input type="text" value="${escapeAttr(row.category || "")}" data-field="category"></td>
-      <td class="left"><input type="text" value="${escapeAttr(row.subcategory || "")}" data-field="subcategory"></td>
-      <td><input type="number" step="any" value="${row.unitPrice ?? ""}" data-field="unitPrice"></td>
-      <td><input type="number" step="any" value="${row.units ?? ""}" data-field="units"></td>
-      <td class="c-amount">${fmtNum(d.amount)}</td>
+      <td class="left"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" ${locked ? "disabled" : ""}></td>
+      <td class="left"><input type="text" value="${escapeAttr(row.symbol || "")}" data-field="symbol" placeholder="Symbol" ${locked ? "disabled" : ""}></td>
+      <td class="left"><input type="text" value="${escapeAttr(row.category || "")}" data-field="category" ${locked ? "disabled" : ""}></td>
+      <td class="left"><input type="text" value="${escapeAttr(row.subcategory || "")}" data-field="subcategory" ${locked ? "disabled" : ""}></td>
+      <td><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
+      <td><input type="number" step="any" value="${row.units ?? ""}" data-field="units" ${locked ? "disabled" : ""}></td>
+      <td class="c-avg">${fmtNum(d.avgPrice)}</td>
+      <td><div class="price-cell"><input type="number" step="any" value="${row.unitPrice ?? ""}" data-field="unitPrice" ${locked ? "disabled" : ""}>${pendingBadge}</div></td>
+      <td class="c-cv">${fmtNum(d.currentValue)}</td>
+      <td class="c-pl ${plClass(d.pl)}">${fmtNum(d.pl)}</td>
+      <td class="c-plpct ${plClass(d.pl)}">${fmtPct(d.plPct)}</td>
       <td class="c-alloc">${fmtNum(allocPct)}%</td>
-      <td class="left"><input type="text" value="${escapeAttr(row.remarks || "")}" data-field="remarks"></td>
+      <td class="left"><input type="text" value="${escapeAttr(row.remarks || "")}" data-field="remarks" ${locked ? "disabled" : ""}></td>
       <td class="row-actions"><button class="icon-btn" title="Remove">✕</button></td>
     `;
     tr.querySelectorAll("input").forEach(inp => {
       inp.addEventListener("change", () => {
         const field = inp.dataset.field;
-        const numericFields = ["unitPrice", "units"];
+        const numericFields = ["invested", "units", "unitPrice"];
         row[field] = numericFields.includes(field) ? (parseFloat(inp.value) || 0) : inp.value;
         saveState();
         updateMFComputed();
@@ -703,7 +875,14 @@ function renderMF() {
     tbody.appendChild(tr);
   });
 
-  document.getElementById("mfTotalAmount").textContent = fmtINR(totals.amount);
+  document.getElementById("mfTotalInvested").textContent = fmtINR(totals.invested);
+  document.getElementById("mfTotalCurrent").textContent = fmtINR(totals.current);
+  const plCell = document.getElementById("mfTotalPL");
+  plCell.textContent = fmtINR(totals.pl);
+  plCell.className = plClass(totals.pl);
+  const plPctCell = document.getElementById("mfTotalPLPct");
+  plPctCell.textContent = fmtPct(totals.plPct);
+  plPctCell.className = plClass(totals.pl);
 }
 
 function updateMFComputed() {
@@ -713,15 +892,29 @@ function updateMFComputed() {
     const tr = tbody.querySelector(`tr[data-id="${row.id}"]`);
     if (!tr) return;
     const d = mfDerived(row);
-    const allocPct = totals.amount > 0 ? (d.amount / totals.amount) * 100 : 0;
-    tr.querySelector(".c-amount").textContent = fmtNum(d.amount);
+    const allocPct = totals.current > 0 ? (d.currentValue / totals.current) * 100 : 0;
+    tr.querySelector(".c-avg").textContent = fmtNum(d.avgPrice);
+    tr.querySelector(".c-cv").textContent = fmtNum(d.currentValue);
+    const plCell = tr.querySelector(".c-pl");
+    plCell.textContent = fmtNum(d.pl);
+    plCell.className = "c-pl " + plClass(d.pl);
+    const plPctCell = tr.querySelector(".c-plpct");
+    plPctCell.textContent = fmtPct(d.plPct);
+    plPctCell.className = "c-plpct " + plClass(d.pl);
     tr.querySelector(".c-alloc").textContent = fmtNum(allocPct) + "%";
   });
-  document.getElementById("mfTotalAmount").textContent = fmtINR(totals.amount);
+  document.getElementById("mfTotalInvested").textContent = fmtINR(totals.invested);
+  document.getElementById("mfTotalCurrent").textContent = fmtINR(totals.current);
+  const plCell = document.getElementById("mfTotalPL");
+  plCell.textContent = fmtINR(totals.pl);
+  plCell.className = plClass(totals.pl);
+  const plPctCell = document.getElementById("mfTotalPLPct");
+  plPctCell.textContent = fmtPct(totals.plPct);
+  plPctCell.className = plClass(totals.pl);
 }
 
 document.getElementById("btnAddMF").addEventListener("click", () => {
-  state.mf.push({ id: uid(), name: "", symbol: "", category: "", subcategory: "", unitPrice: 0, units: 0, remarks: "" });
+  state.mf.push({ id: uid(), name: "", symbol: "", category: "", subcategory: "", invested: 0, units: 0, unitPrice: 0, remarks: "" });
   saveState();
   renderMF();
   renderDashboard();
@@ -729,30 +922,49 @@ document.getElementById("btnAddMF").addEventListener("click", () => {
 
 /* ---- live NAV fetch: mutual funds (Google Sheet, refreshed by Apps Script) ---- */
 
-document.getElementById("btnRefreshMF").addEventListener("click", async () => {
-  const statusEl = document.getElementById("mfFetchStatus");
+async function refreshMFPrices() {
+  if (state.mf.length === 0) return { ok: 0, fail: 0, failedRows: [], skipped: true };
+  const data = await fetchPriceData();
+  const navMap = buildPriceMap(data.mf, ["MF Name", "Symbol"], ["Live Price", "NAV", "Price"]);
+  let ok = 0;
+  const failedRows = [];
+  state.mf.forEach(row => {
+    const key = (row.symbol || "").trim().toUpperCase();
+    if (key && navMap.has(key)) {
+      row.unitPrice = navMap.get(key);
+      row.livePricePending = false;
+      ok++;
+    } else {
+      failedRows.push({ name: row.name || "(unnamed)", key });
+    }
+  });
+  saveState();
+  return { ok, fail: failedRows.length, failedRows };
+}
+
+async function runMFRefresh(statusEl) {
   if (state.mf.length === 0) {
     statusEl.textContent = "No funds to refresh.";
+    renderFailPanel("mfFailPanel", "Mutual Fund", []);
     return;
   }
   statusEl.textContent = "Fetching...";
-  let ok = 0, fail = 0;
+  let result;
   try {
-    const data = await fetchPriceData();
-    const navMap = buildPriceMap(data.mf, ["MF Name", "Symbol"], ["Live Price", "NAV", "Price"]);
-    state.mf.forEach(row => {
-      const key = (row.symbol || "").trim().toUpperCase();
-      if (key && navMap.has(key)) { row.unitPrice = navMap.get(key); ok++; }
-      else fail++;
-    });
+    result = await refreshMFPrices();
   } catch (e) {
     statusEl.textContent = sheetErrorMessage(e);
     return;
   }
-  saveState();
   renderMF();
   renderDashboard();
-  statusEl.textContent = `Updated ${ok} of ${ok + fail}. ${fail > 0 ? "Unmatched rows: check the Symbol matches your sheet exactly, or edit NAV manually." : ""}`;
+  renderFailPanel("mfFailPanel", "Mutual Fund", result.failedRows);
+  statusEl.textContent = `Updated ${result.ok} of ${result.ok + result.fail}.` +
+    (result.fail > 0 ? " See details below." : "");
+}
+
+document.getElementById("btnRefreshMF").addEventListener("click", () => {
+  runMFRefresh(document.getElementById("mfFetchStatus"));
 });
 
 /* ============================================================
@@ -814,28 +1026,30 @@ function renderGold() {
     tbody.innerHTML = '<tr class="empty-row"><td colspan="11">No holdings match this filter.</td></tr>';
   }
 
+  const locked = state.portfolioLocked;
   displayRows.forEach(row => {
     const d = goldDerived(row);
+    const pendingBadge = row.livePricePending ? '<span class="pending-badge">Pending</span>' : "";
     const tr = document.createElement("tr");
     tr.dataset.id = row.id;
     tr.innerHTML = `
-      <td class="left"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" placeholder="e.g. GOLDBEES.NS"></td>
+      <td class="left"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" placeholder="e.g. GOLDBEES.NS" ${locked ? "disabled" : ""}></td>
       <td class="left">
-        <select data-field="form">
+        <select data-field="form" ${locked ? "disabled" : ""}>
           <option value="Physical" ${row.form === "Physical" ? "selected" : ""}>Physical</option>
           <option value="Digital" ${row.form === "Digital" ? "selected" : ""}>Digital</option>
           <option value="SGB" ${row.form === "SGB" ? "selected" : ""}>SGB</option>
           <option value="ETF" ${row.form === "ETF" ? "selected" : ""}>ETF</option>
         </select>
       </td>
-      <td><input type="number" step="any" value="${row.weight ?? ""}" data-field="weight"></td>
-      <td><input type="number" step="any" value="${row.purchaseRate ?? ""}" data-field="purchaseRate"></td>
-      <td><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested"></td>
-      <td><input type="number" step="any" value="${row.currentRate ?? ""}" data-field="currentRate"></td>
+      <td><input type="number" step="any" value="${row.weight ?? ""}" data-field="weight" ${locked ? "disabled" : ""}></td>
+      <td><input type="number" step="any" value="${row.purchaseRate ?? ""}" data-field="purchaseRate" ${locked ? "disabled" : ""}></td>
+      <td><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
+      <td><div class="price-cell"><input type="number" step="any" value="${row.currentRate ?? ""}" data-field="currentRate" ${locked ? "disabled" : ""}>${pendingBadge}</div></td>
       <td class="c-cv">${fmtNum(d.currentValue)}</td>
       <td class="c-pl ${plClass(d.pl)}">${fmtNum(d.pl)}</td>
       <td class="c-plpct ${plClass(d.pl)}">${fmtPct(d.plPct)}</td>
-      <td class="left"><input type="text" value="${escapeAttr(row.notes || "")}" data-field="notes"></td>
+      <td class="left"><input type="text" value="${escapeAttr(row.notes || "")}" data-field="notes" ${locked ? "disabled" : ""}></td>
       <td class="row-actions"><button class="icon-btn" title="Remove">✕</button></td>
     `;
     tr.querySelectorAll("input, select").forEach(inp => {
@@ -901,30 +1115,49 @@ document.getElementById("btnAddGold").addEventListener("click", () => {
 
 /* ---- live price fetch: gold ETFs (Google Sheet — ETFs trade like stocks) ---- */
 
-document.getElementById("btnRefreshGold").addEventListener("click", async () => {
-  const statusEl = document.getElementById("goldFetchStatus");
+async function refreshGoldPrices() {
+  if (state.gold.length === 0) return { ok: 0, fail: 0, failedRows: [], skipped: true };
+  const data = await fetchPriceData();
+  const priceMap = buildPriceMap(data.gold, ["Stock Name", "Symbol"], ["Live Price", "Price"]);
+  let ok = 0;
+  const failedRows = [];
+  state.gold.forEach(row => {
+    const key = (row.name || "").trim().toUpperCase();
+    if (key && priceMap.has(key)) {
+      row.currentRate = priceMap.get(key);
+      row.livePricePending = false;
+      ok++;
+    } else {
+      failedRows.push({ name: row.name || "(unnamed)", key });
+    }
+  });
+  saveState();
+  return { ok, fail: failedRows.length, failedRows };
+}
+
+async function runGoldRefresh(statusEl) {
   if (state.gold.length === 0) {
     statusEl.textContent = "No holdings to refresh.";
+    renderFailPanel("goldFailPanel", "Gold", []);
     return;
   }
   statusEl.textContent = "Fetching...";
-  let ok = 0, fail = 0;
+  let result;
   try {
-    const data = await fetchPriceData();
-    const priceMap = buildPriceMap(data.gold, ["Stock Name", "Symbol"], ["Live Price", "Price"]);
-    state.gold.forEach(row => {
-      const key = (row.name || "").trim().toUpperCase();
-      if (key && priceMap.has(key)) { row.currentRate = priceMap.get(key); ok++; }
-      else fail++;
-    });
+    result = await refreshGoldPrices();
   } catch (e) {
     statusEl.textContent = sheetErrorMessage(e);
     return;
   }
-  saveState();
   renderGold();
   renderDashboard();
-  statusEl.textContent = `Updated ${ok} of ${ok + fail}. ${fail > 0 ? "Unmatched rows: check the Symbol matches your sheet exactly (e.g. GOLDBEES.NS)." : ""}`;
+  renderFailPanel("goldFailPanel", "Gold", result.failedRows);
+  statusEl.textContent = `Updated ${result.ok} of ${result.ok + result.fail}.` +
+    (result.fail > 0 ? " See details below." : "");
+}
+
+document.getElementById("btnRefreshGold").addEventListener("click", () => {
+  runGoldRefresh(document.getElementById("goldFetchStatus"));
 });
 
 /* ============================================================
@@ -944,15 +1177,18 @@ function renderDashboard() {
   const classes = [
     { key: "cash",   label: "Cash",                     current: cash,          invested: cash },
     { key: "debt",   label: "Debt / Fixed Investments",  current: debt.invested, invested: debt.invested },
-    { key: "mf",     label: "Equity Mutual Funds",       current: mf.amount,     invested: mf.amount },
+    { key: "mf",     label: "Equity Mutual Funds",       current: mf.current,    invested: mf.invested },
     { key: "equity", label: "Equity Stocks",             current: eq.current,    invested: eq.invested },
     { key: "gold",   label: "Gold",                      current: gold.current,  invested: gold.invested }
   ];
 
   const netWorth = classes.reduce((s, c) => s + c.current, 0);
-  const totalInvested = debt.invested + mf.amount + eq.invested + gold.invested; // cash excluded from "invested"
-  const overallPL = eq.pl + gold.pl; // debt/mf/cash don't have a live mark-to-market P&L here
-  const overallPLBase = eq.invested + gold.invested;
+  const totalInvested = debt.invested + mf.invested + eq.invested + gold.invested; // cash excluded from "invested"
+  // Debt/cash don't have a live mark-to-market P&L (FDs are valued
+  // at invested amount, not fluctuating day-to-day) — Equity, MF
+  // and Gold all now carry real invested-vs-current P&L.
+  const overallPL = eq.pl + mf.pl + gold.pl;
+  const overallPLBase = eq.invested + mf.invested + gold.invested;
   const overallPLPct = overallPLBase > 0 ? (overallPL / overallPLBase) * 100 : 0;
 
   document.getElementById("statNetWorth").textContent = fmtINR(netWorth);
@@ -961,7 +1197,7 @@ function renderDashboard() {
   plEl.textContent = fmtINR(overallPL);
   plEl.className = "value " + plClass(overallPL);
   const plPctEl = document.getElementById("statOverallPLPct");
-  plPctEl.textContent = fmtPct(overallPLPct) + " (Equity + Gold only)";
+  plPctEl.textContent = fmtPct(overallPLPct) + " (Equity + MF + Gold)";
 
   // allocation table
   const idealTotal = Object.values(state.ideal).reduce((a, b) => a + (Number(b) || 0), 0);
@@ -1064,6 +1300,15 @@ async function readWorkbookRows(file) {
   return rows.filter(r => r.some(c => String(c).trim() !== ""));
 }
 
+// A blank cell (undefined/null/empty-after-trim) means "no update for
+// this field" for per-tab Excel import — used so a partial-column
+// import (e.g. only Category/Sub-category/Symbol filled in) never
+// clobbers an existing Units/Invested value with 0 just because that
+// column was left empty in the source sheet.
+function cellIsBlank(v) {
+  return v === undefined || v === null || String(v).trim() === "";
+}
+
 // Normalizes a cell that might be a JS Date (from a date-formatted
 // Excel cell), a plain "YYYY-MM-DD" string, or empty, into the
 // yyyy-mm-dd format the app's <input type="date"> fields expect.
@@ -1086,7 +1331,12 @@ document.getElementById("importStockFile").addEventListener("change", async (e) 
     rows.forEach(r => {
       const name = String(r[0] ?? "").trim();
       if (!name) return;
-      const fields = { name, invested: parseFloat(r[1]) || 0, units: parseFloat(r[2]) || 0 };
+      // Blank Invested Amount / Units cells leave that field untouched
+      // on an existing row (partial-column updates, e.g. re-importing
+      // just to fix a name, won't zero out real data).
+      const fields = { name };
+      if (!cellIsBlank(r[1])) fields.invested = parseFloat(r[1]) || 0;
+      if (!cellIsBlank(r[2])) fields.units = parseFloat(r[2]) || 0;
       const result = upsertRow(
         state.equity,
         row => (row.name || "").trim().toUpperCase() === name.toUpperCase(),
@@ -1117,18 +1367,32 @@ document.getElementById("importMFFile").addEventListener("change", async (e) => 
       const name = String(r[0] ?? "").trim();
       if (!name) return;
       const symbol = String(r[1] ?? "").trim();
-      const fields = {
-        name, symbol,
-        category: String(r[2] ?? "").trim(),
-        subcategory: String(r[3] ?? "").trim(),
-        units: parseFloat(r[4]) || 0,
-        remarks: String(r[5] ?? "").trim()
-      };
+      // Blank cells leave that field untouched on an existing row, so
+      // a sheet that only fills in Symbol/Category/Sub-category (e.g.
+      // to wire up live NAV lookup) won't wipe out real Units.
+      const fields = { name };
+      if (symbol) fields.symbol = symbol;
+      if (!cellIsBlank(r[2])) fields.category = String(r[2]).trim();
+      if (!cellIsBlank(r[3])) fields.subcategory = String(r[3]).trim();
+      if (!cellIsBlank(r[4])) fields.units = parseFloat(r[4]) || 0;
+      if (!cellIsBlank(r[5])) fields.remarks = String(r[5]).trim();
       const result = upsertRow(
         state.mf,
-        row => symbol
-          ? (row.symbol || "").trim().toUpperCase() === symbol.toUpperCase()
-          : (row.name || "").trim().toUpperCase() === name.toUpperCase(),
+        row => {
+          // Prefer matching on an existing Symbol (the stable key once
+          // a fund is mapped). But if the imported row has a Symbol
+          // and the existing row doesn't have one yet — exactly the
+          // "assign a Symbol to a fund for the first time" case — fall
+          // back to matching by Name so this updates that row instead
+          // of creating a duplicate.
+          const rowSymbol = (row.symbol || "").trim().toUpperCase();
+          const rowName = (row.name || "").trim().toUpperCase();
+          if (symbol) {
+            if (rowSymbol) return rowSymbol === symbol.toUpperCase();
+            return rowName === name.toUpperCase();
+          }
+          return rowName === name.toUpperCase();
+        },
         fields,
         { unitPrice: 0 }
       );
@@ -1155,15 +1419,16 @@ document.getElementById("importGoldFile").addEventListener("change", async (e) =
     rows.forEach(r => {
       const name = String(r[0] ?? "").trim();
       if (!name) return;
-      const form = String(r[1] ?? "Physical").trim();
-      const fields = {
-        name,
-        form: ["Physical", "Digital", "SGB", "ETF"].includes(form) ? form : "ETF",
-        weight: parseFloat(r[2]) || 0,
-        purchaseRate: parseFloat(r[3]) || 0,
-        invested: parseFloat(r[4]) || 0,
-        notes: String(r[5] ?? "").trim()
-      };
+      const formRaw = String(r[1] ?? "").trim();
+      // Blank cells leave that field untouched on an existing row
+      // (partial-column updates don't zero out real Weight/Invested).
+      // Form always gets set (defaulting to ETF), matching the "new
+      // rows default to ETF" convention used elsewhere.
+      const fields = { name, form: ["Physical", "Digital", "SGB", "ETF"].includes(formRaw) ? formRaw : "ETF" };
+      if (!cellIsBlank(r[2])) fields.weight = parseFloat(r[2]) || 0;
+      if (!cellIsBlank(r[3])) fields.purchaseRate = parseFloat(r[3]) || 0;
+      if (!cellIsBlank(r[4])) fields.invested = parseFloat(r[4]) || 0;
+      if (!cellIsBlank(r[5])) fields.notes = String(r[5]).trim();
       const result = upsertRow(
         state.gold,
         row => (row.name || "").trim().toUpperCase() === name.toUpperCase(),
@@ -1222,6 +1487,291 @@ document.getElementById("importDebtFile").addEventListener("change", async (e) =
 });
 
 /* ============================================================
+   IMPORT ZERODHA HOLDINGS
+   One workbook, three sheets named exactly "Stocks", "Mutual
+   funds", "Gold" (Zerodha Console's Holdings export) — same file
+   every time. Each of the three tabs (Equity, Mutual Funds, Gold)
+   has its own "Import Zerodha Holdings" button; whichever button
+   is used, only that tab's sheet is read and only that asset
+   class's data is touched, even though the other two sheets are
+   sitting in the same uploaded workbook. Each real holding is
+   followed by two export-artifact rows (a stray quantity string,
+   and a "ZZ..." code) — those are dropped by requiring both Qty.
+   and Buy avg. to be present and numeric, rather than pattern-
+   matching the "ZZ" text specifically.
+
+   Matching: Equity and Gold match by Symbol against the app's
+   Name field (same convention the live-price refresh already
+   uses). Mutual Funds match by Name — Zerodha's MF "Symbol"
+   column in this export is actually the full scheme name, not a
+   code, and doesn't correspond to the app's own `symbol` field
+   (which is reserved for the separate Google-Sheet live-NAV
+   lookup) — so Name is the only reliable key here.
+
+   Update logic: only Quantity/Units and Average Price/Invested
+   are overwritten (never merged or averaged) — everything else,
+   including any live-fetched price, is left untouched. Unmatched
+   rows become new entries with livePricePending = true.
+   ============================================================ */
+
+const ZERODHA_SHEETS = { equity: "Stocks", mf: "Mutual funds", gold: "Gold" };
+
+// Handles plain numbers, Indian-grouped strings ("4,12,685.77"),
+// and stray non-breaking spaces from the export. Returns null for
+// anything blank/non-numeric so callers can treat a row as invalid.
+function parseIndianNumber(v) {
+  if (v === null || v === undefined || v === "") return null;
+  if (typeof v === "number") return isNaN(v) ? null : v;
+  const s = String(v).replace(/,/g, "").replace(/\u00a0/g, "").trim();
+  if (s === "") return null;
+  const n = parseFloat(s);
+  return isNaN(n) ? null : n;
+}
+
+// Row 1 is the header (skipped). A row only counts as a real
+// holding if it has both a Qty. and a Buy avg. — the two junk
+// rows Zerodha's export leaves behind never have both, so this
+// one rule is enough to filter them out.
+function parseHoldingsSheetRows(rows) {
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    const symbol = String(r[0] ?? "").replace(/\u00a0/g, "").trim();
+    const qty = parseIndianNumber(r[1]);
+    const buyAvg = parseIndianNumber(r[2]);
+    if (!symbol || qty === null || buyAvg === null) continue;
+    const buyValue = parseIndianNumber(r[3]);
+    out.push({ symbol, qty, buyAvg, buyValue: buyValue !== null ? buyValue : qty * buyAvg });
+  }
+  return out;
+}
+
+// Builds the match/add/duplicate plan for one asset class. Later
+// occurrences of the same key within the import win (last row is
+// treated as the true value); earlier ones are reported as
+// duplicates rather than silently dropped.
+function planAssetClass(importedRows, existingArray, keyFn, matchFn) {
+  const byKey = new Map();
+  const duplicateKeys = new Set();
+  importedRows.forEach(r => {
+    const k = keyFn(r);
+    if (byKey.has(k)) duplicateKeys.add(k);
+    byKey.set(k, r);
+  });
+  const matched = [];
+  const added = [];
+  byKey.forEach(r => {
+    const existing = existingArray.find(row => matchFn(row, r));
+    if (existing) matched.push({ existing, imported: r });
+    else added.push(r);
+  });
+  return { matched, added, duplicateKeys: [...duplicateKeys] };
+}
+
+function singleAssetPlanSummaryHTML(label, plan) {
+  let html = `<div class="import-stat-row">
+    <div class="import-stat"><div class="n">${plan.matched.length}</div><div class="l">Will Update</div></div>
+    <div class="import-stat"><div class="n">${plan.added.length}</div><div class="l">New Entries</div></div>
+    <div class="import-stat ${plan.duplicateKeys.length ? "warn" : ""}"><div class="n">${plan.duplicateKeys.length}</div><div class="l">Duplicate Rows</div></div>
+  </div>`;
+
+  if (plan.matched.length === 0 && plan.added.length === 0) {
+    html += `<p>No valid ${label} holdings found in this sheet — nothing to import.</p>`;
+    return html;
+  }
+
+  html += `<ul>`;
+  if (plan.matched.length) html += `<li>${plan.matched.length} existing entr${plan.matched.length === 1 ? "y" : "ies"} will have Quantity and Average Price overwritten: ${plan.matched.slice(0, 8).map(m => escapeAttr(m.imported.symbol)).join(", ")}${plan.matched.length > 8 ? "…" : ""}</li>`;
+  if (plan.added.length) html += `<li>${plan.added.length} new entr${plan.added.length === 1 ? "y" : "ies"} will be added: ${plan.added.slice(0, 8).map(a => escapeAttr(a.symbol)).join(", ")}${plan.added.length > 8 ? "…" : ""}</li>`;
+  if (plan.duplicateKeys.length) html += `<li class="warn">${plan.duplicateKeys.length} duplicate row(s) in the sheet — the last occurrence was used for each: ${plan.duplicateKeys.slice(0, 8).map(escapeAttr).join(", ")}</li>`;
+  html += `</ul>`;
+
+  return html;
+}
+
+function applyEquityZerodhaPlan(plan) {
+  const newInvestments = [];
+  plan.matched.forEach(({ existing, imported }) => {
+    existing.invested = imported.buyValue;
+    existing.units = imported.qty;
+  });
+  plan.added.forEach(imported => {
+    state.equity.push({ id: uid(), name: imported.symbol, invested: imported.buyValue, units: imported.qty, ltp: 0, livePricePending: true });
+    newInvestments.push({ name: imported.symbol, type: "Equity" });
+  });
+  saveState();
+  renderEquity();
+  renderDashboard();
+  return newInvestments;
+}
+
+function applyGoldZerodhaPlan(plan) {
+  const newInvestments = [];
+  plan.matched.forEach(({ existing, imported }) => {
+    existing.invested = imported.buyValue;
+    existing.weight = imported.qty;
+    existing.purchaseRate = imported.buyAvg;
+  });
+  plan.added.forEach(imported => {
+    state.gold.push({ id: uid(), name: imported.symbol, form: "ETF", weight: imported.qty, purchaseRate: imported.buyAvg, invested: imported.buyValue, currentRate: 0, notes: "", livePricePending: true });
+    newInvestments.push({ name: imported.symbol, type: "Gold" });
+  });
+  saveState();
+  renderGold();
+  renderDashboard();
+  return newInvestments;
+}
+
+// Looks up a fund's Symbol/Category/Sub-category on the live-price
+// Google Sheet's Mutual Funds tab (matched by fund name — Zerodha's
+// MF "Symbol" column is really the scheme name, same convention used
+// for the match itself). Returns null if the sheet has no row for
+// that name, or if categoryMap is null (lookup wasn't available).
+function lookupMFCategoryData(name, categoryMap) {
+  if (!categoryMap) return null;
+  return categoryMap.get(String(name || "").trim().toUpperCase()) || null;
+}
+
+// existing/new rows only have Symbol/Category/Sub-category overwritten
+// when the sheet actually has a non-blank value for that specific
+// field — a blank column on the sheet leaves whatever was already
+// there untouched, same "don't clobber with blank" rule used by the
+// per-tab Excel importers.
+function applyMFCategoryData(row, catData) {
+  if (!catData) return;
+  if (catData.symbol) row.symbol = catData.symbol;
+  if (catData.category) row.category = catData.category;
+  if (catData.subcategory) row.subcategory = catData.subcategory;
+}
+
+function applyMFZerodhaPlan(plan, categoryMap) {
+  const newInvestments = [];
+  plan.matched.forEach(({ existing, imported }) => {
+    existing.invested = imported.buyValue;
+    existing.units = imported.qty;
+    applyMFCategoryData(existing, lookupMFCategoryData(imported.symbol, categoryMap));
+  });
+  plan.added.forEach(imported => {
+    const row = { id: uid(), name: imported.symbol, symbol: "", category: "", subcategory: "", invested: imported.buyValue, units: imported.qty, unitPrice: 0, remarks: "", livePricePending: true };
+    applyMFCategoryData(row, lookupMFCategoryData(imported.symbol, categoryMap));
+    state.mf.push(row);
+    newInvestments.push({ name: imported.symbol, type: "Mutual Fund" });
+  });
+  saveState();
+  renderMF();
+  renderDashboard();
+  return newInvestments;
+}
+
+function showNewInvestmentsReminder(newInvestments) {
+  if (newInvestments.length === 0) return;
+  const rows = newInvestments.map(n => `<tr><td class="left">${escapeAttr(n.name)}</td><td class="left">${n.type}</td></tr>`).join("");
+  openModal(
+    "New Investments Added — Live Price Pending",
+    `<p>These were imported successfully but don't have a Google Finance symbol configured yet in your Apps Script sheet, so their live price will show as "Pending" until you add them.</p>
+     <table><thead><tr><th class="left">Investment Name</th><th class="left">Asset Type</th></tr></thead><tbody>${rows}</tbody></table>
+     <p>Once you add the mapping in Apps Script, the existing automatic refresh will start picking up prices for these with no further changes needed here.</p>`,
+    [{ label: "Got it", primary: true, onClick: closeModal }]
+  );
+}
+
+// One button per tab (Equity / Mutual Funds / Gold), each reading the
+// *same* Zerodha Console Holdings export workbook but only looking at
+// its own sheet ("Stocks" / "Mutual funds" / "Gold") and only touching
+// that one asset class's data — so importing on the Equity tab never
+// touches Mutual Funds or Gold, even though all three live in the one
+// uploaded file.
+const ZERODHA_TAB_CONFIG = {
+  equity: { sheetName: ZERODHA_SHEETS.equity, label: "Equity (Stocks)", getExisting: () => state.equity, apply: applyEquityZerodhaPlan },
+  mf:     { sheetName: ZERODHA_SHEETS.mf,     label: "Mutual Funds",    getExisting: () => state.mf,     apply: applyMFZerodhaPlan, needsCategoryEnrich: true },
+  gold:   { sheetName: ZERODHA_SHEETS.gold,   label: "Gold",            getExisting: () => state.gold,   apply: applyGoldZerodhaPlan }
+};
+
+// Counts, out of `names`, how many have a row in categoryMap — used
+// to tell Ganesh up front how many funds will actually get Symbol/
+// Category/Sub-category auto-filled vs. left as-is.
+function countCategoryMatches(names, categoryMap) {
+  let found = 0;
+  names.forEach(n => { if (categoryMap.has(String(n || "").trim().toUpperCase())) found++; });
+  return { found, total: names.length };
+}
+
+function setupZerodhaTabImport(inputId, assetKey) {
+  const cfg = ZERODHA_TAB_CONFIG[assetKey];
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  input.addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    let sheetFound = false;
+    let rows = [];
+    try {
+      const data = await file.arrayBuffer();
+      const wb = XLSX.read(data, { type: "array", cellDates: true });
+      const ws = wb.Sheets[cfg.sheetName];
+      sheetFound = !!ws;
+      if (ws) rows = parseHoldingsSheetRows(XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: "" }));
+    } catch (err) {
+      alert(`Could not read that file. Expected a Zerodha Console Holdings export (.xlsx) with a "${cfg.sheetName}" sheet.`);
+      e.target.value = "";
+      return;
+    }
+    if (!sheetFound) {
+      alert(`That workbook doesn't have a sheet named exactly "${cfg.sheetName}" — check the tab name in the Zerodha export (the file can still contain the other asset classes' sheets too; only "${cfg.sheetName}" is read here).`);
+      e.target.value = "";
+      return;
+    }
+    const norm = s => String(s || "").trim().toUpperCase();
+    const plan = planAssetClass(rows, cfg.getExisting(), r => norm(r.symbol), (row, r) => norm(row.name) === norm(r.symbol));
+
+    // Mutual Funds only: also fetch the live-price sheet so Symbol/
+    // Category/Sub-category can be auto-filled alongside Units/
+    // Invested, instead of needing a separate manual Excel import.
+    let categoryMap = null;
+    let categoryFetchError = null;
+    let categoryHTML = "";
+    if (cfg.needsCategoryEnrich) {
+      const statusEl = document.getElementById("mfFetchStatus");
+      if (statusEl) statusEl.textContent = "Fetching Category/Sub-category/Symbol from live-price sheet...";
+      try {
+        const data = await fetchPriceData();
+        categoryMap = buildMFCategoryMap(data.mf);
+      } catch (err) {
+        categoryFetchError = err;
+      }
+      if (statusEl) statusEl.textContent = "";
+      if (categoryFetchError) {
+        categoryHTML = `<p style="color:var(--negative)">Could not fetch Symbol/Category/Sub-category from your live-price sheet (${escapeAttr(sheetErrorMessage(categoryFetchError))}). Units and Invested Amount will still be updated normally — Symbol/Category/Sub-category will be left as they are.</p>`;
+      } else {
+        const allNames = [...plan.matched.map(m => m.imported.symbol), ...plan.added.map(a => a.symbol)];
+        const stats = countCategoryMatches(allNames, categoryMap);
+        categoryHTML = `<p>${stats.found} of ${stats.total} fund(s) matched a row on your live-price sheet's Mutual Funds tab — Symbol, Category and Sub-category will be filled in for those automatically. The rest are left as-is; add them to the sheet and re-import to pick them up.</p>`;
+      }
+    }
+
+    openModal(
+      `Import Zerodha Holdings — ${cfg.label} — Preview`,
+      singleAssetPlanSummaryHTML(cfg.label, plan) + categoryHTML,
+      [
+        { label: "Cancel", onClick: closeModal },
+        {
+          label: "Confirm Import", primary: true, onClick: () => {
+            const newInvestments = cfg.apply(plan, categoryMap);
+            closeModal();
+            showNewInvestmentsReminder(newInvestments);
+          }
+        }
+      ]
+    );
+    e.target.value = "";
+  });
+}
+
+setupZerodhaTabImport("importZerodhaEquityFile", "equity");
+setupZerodhaTabImport("importZerodhaMFFile", "mf");
+setupZerodhaTabImport("importZerodhaGoldFile", "gold");
+
+/* ============================================================
    EXPORT / IMPORT (full JSON backup)
    ============================================================ */
 
@@ -1260,212 +1810,107 @@ document.getElementById("importFile").addEventListener("change", (e) => {
 });
 
 /* ============================================================
-   EXPORT TO EXCEL (full human-readable backup)
-   Builds a multi-sheet workbook entirely in the browser via
-   SheetJS (already loaded for the Import from Excel feature).
-   Dashboard Summary is informational only — Settings is what
-   actually round-trips cash/ideal-allocation on restore.
+   EXCEL EXPORT — full backup as a readable .xlsx workbook
+   A parallel option to the JSON backup above: if a JSON file is
+   ever hard to make sense of by eye, this gives every tab's data
+   in a normal spreadsheet, plus a Dashboard Summary and Settings
+   sheet, all computed the same way the app itself displays them.
    ============================================================ */
 
-function sheetFromRows(headerRow, dataRows, colWidths) {
-  const ws = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows]);
-  if (colWidths) ws["!cols"] = colWidths.map(w => ({ wch: w }));
-  return ws;
-}
-
-function buildBackupWorkbook() {
+function buildExcelWorkbook() {
   const wb = XLSX.utils.book_new();
+
   const eq = equityTotals(), debt = debtTotals(), mf = mfTotals(), gold = goldTotals();
   const cash = Number(state.cash) || 0;
-  const netWorth = cash + debt.invested + mf.amount + eq.current + gold.current;
+  const netWorth = cash + debt.invested + mf.current + eq.current + gold.current;
 
-  // --- Dashboard Summary ---
-  const classes = [
-    { label: "Cash", current: cash },
-    { label: "Debt / Fixed Investments", current: debt.invested },
-    { label: "Equity Mutual Funds", current: mf.amount },
-    { label: "Equity Stocks", current: eq.current },
-    { label: "Gold", current: gold.current }
-  ];
+  // Dashboard Summary
   const summaryRows = [
-    ["Net Worth", netWorth],
-    ["Total Amount Invested", debt.invested + mf.amount + eq.invested + gold.invested],
-    ["Overall Profit/Loss (Equity + Gold)", eq.pl + gold.pl],
-    ["Cash on Hand", cash],
-    ["Last Saved", state.lastSaved ? new Date(state.lastSaved).toLocaleString() : ""],
+    ["Ganesh's Net Worth & Allocation Tracker — Summary"],
+    ["Exported", new Date().toLocaleString()],
     [],
-    ["Asset Class", "Current Value", "Current %", "Ideal %", "Diff %", "Diff Amount"],
-    ...classes.map(c => {
-      const currentPct = netWorth > 0 ? (c.current / netWorth) * 100 : 0;
-      const idealPct = Number(state.ideal[c.label === "Cash" ? "cash" : c.label.includes("Debt") ? "debt" : c.label.includes("Mutual") ? "mf" : c.label.includes("Stocks") ? "equity" : "gold"]) || 0;
-      const diffPct = currentPct - idealPct;
-      return [c.label, c.current, +currentPct.toFixed(2), idealPct, +diffPct.toFixed(2), +((diffPct / 100) * netWorth).toFixed(2)];
-    })
+    ["Asset Class", "Current Value", "Invested Amount", "P&L", "Ideal %"],
+    ["Cash", cash, cash, 0, state.ideal.cash],
+    ["Debt / Fixed Income", debt.invested, debt.invested, debt.profit, state.ideal.debt],
+    ["Equity Mutual Funds", mf.current, mf.invested, mf.pl, state.ideal.mf],
+    ["Equity Stocks", eq.current, eq.invested, eq.pl, state.ideal.equity],
+    ["Gold", gold.current, gold.invested, gold.pl, state.ideal.gold],
+    [],
+    ["Net Worth", netWorth]
   ];
-  const summaryWs = XLSX.utils.aoa_to_sheet(summaryRows);
-  summaryWs["!cols"] = [{ wch: 30 }, { wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 14 }];
-  XLSX.utils.book_append_sheet(wb, summaryWs, "Dashboard Summary");
+  const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
+  wsSummary["!cols"] = [{ wch: 26 }, { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 10 }];
+  XLSX.utils.book_append_sheet(wb, wsSummary, "Dashboard Summary");
 
-  // --- Stock Holdings ---
-  const eqRows = state.equity.map(r => {
+  // Stock Holdings
+  const eqRows = [["Name/Symbol", "Invested Amount", "Units", "Avg Price", "LTP", "Current Value", "P&L", "P&L %", "Alloc %"]];
+  state.equity.forEach(r => {
     const d = equityDerived(r);
-    return [r.name, r.invested, r.units, +d.avgPrice.toFixed(2), r.ltp, +d.currentValue.toFixed(2), +d.pl.toFixed(2), +d.plPct.toFixed(2), eq.invested > 0 ? +((r.invested / eq.invested) * 100).toFixed(2) : 0];
+    const allocPct = eq.invested > 0 ? (Number(r.invested) / eq.invested) * 100 : 0;
+    eqRows.push([r.name, r.invested, r.units, d.avgPrice, r.ltp, d.currentValue, d.pl, d.plPct, allocPct]);
   });
-  XLSX.utils.book_append_sheet(wb, sheetFromRows(
-    ["Name/Symbol", "Invested Amount", "Units", "Avg Price", "LTP", "Current Value", "P&L", "P&L %", "Alloc % (Invested)"],
-    eqRows, [16, 14, 8, 10, 10, 14, 12, 10, 16]
-  ), "Stock Holdings");
+  const wsEq = XLSX.utils.aoa_to_sheet(eqRows);
+  wsEq["!cols"] = [{ wch: 20 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 10 }];
+  XLSX.utils.book_append_sheet(wb, wsEq, "Stock Holdings");
 
-  // --- Mutual Funds ---
-  const mfRows = state.mf.map(r => {
+  // Mutual Funds
+  const mfRows = [["Name", "Symbol", "Category", "Sub-category", "Invested Amount", "Units", "Avg Price", "NAV", "Current Value", "P&L", "P&L %", "Remarks"]];
+  state.mf.forEach(r => {
     const d = mfDerived(r);
-    return [r.name, r.symbol, r.category, r.subcategory, r.unitPrice, r.units, +d.amount.toFixed(2), mf.amount > 0 ? +((d.amount / mf.amount) * 100).toFixed(2) : 0, r.remarks];
+    mfRows.push([r.name, r.symbol, r.category, r.subcategory, r.invested, r.units, d.avgPrice, r.unitPrice, d.currentValue, d.pl, d.plPct, r.remarks]);
   });
-  XLSX.utils.book_append_sheet(wb, sheetFromRows(
-    ["Name", "Symbol", "Category", "Sub-category", "NAV", "Units", "Amount", "Alloc %", "Remarks"],
-    mfRows, [22, 16, 12, 14, 10, 10, 12, 10, 20]
-  ), "Mutual Funds");
+  const wsMF = XLSX.utils.aoa_to_sheet(mfRows);
+  wsMF["!cols"] = [{ wch: 28 }, { wch: 14 }, { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 22 }];
+  XLSX.utils.book_append_sheet(wb, wsMF, "Mutual Funds");
 
-  // --- Gold ---
-  const goldRows = state.gold.map(r => {
+  // Gold
+  const goldRows = [["Name/Symbol", "Form", "Weight/Units", "Purchase Rate", "Invested Amount", "Current Rate", "Current Value", "P&L", "P&L %", "Notes"]];
+  state.gold.forEach(r => {
     const d = goldDerived(r);
-    return [r.name, r.form, r.weight, r.purchaseRate, r.invested, r.currentRate, +d.currentValue.toFixed(2), +d.pl.toFixed(2), +d.plPct.toFixed(2), r.notes];
+    goldRows.push([r.name, r.form, r.weight, r.purchaseRate, r.invested, r.currentRate, d.currentValue, d.pl, d.plPct, r.notes]);
   });
-  XLSX.utils.book_append_sheet(wb, sheetFromRows(
-    ["Name/Symbol", "Form", "Weight/Units", "Purchase Rate", "Invested Amount", "Current Rate", "Current Value", "P&L", "P&L %", "Notes"],
-    goldRows, [16, 10, 12, 12, 14, 12, 14, 12, 10, 20]
-  ), "Gold");
+  const wsGold = XLSX.utils.aoa_to_sheet(goldRows);
+  wsGold["!cols"] = [{ wch: 20 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 22 }];
+  XLSX.utils.book_append_sheet(wb, wsGold, "Gold");
 
-  // --- Debt / Fixed Income ---
-  const debtRows = state.debt.map(r => {
+  // Debt
+  const debtRows = [["Name", "Category", "Sub-category", "Account No.", "Invested Amount", "ROI %", "Maturity Amount", "Profit", "Invested Date", "Maturity Date", "Tenure (Months)", "Tenure (Years)", "Notes"]];
+  state.debt.forEach(r => {
     const d = debtDerived(r);
-    return [r.name, r.category, r.subcategory, r.account, r.invested, r.roi, r.maturityAmount, +d.profit.toFixed(2), r.investedDate, r.maturityDate, r.tenureMonths, +d.years.toFixed(1), r.notes];
+    debtRows.push([r.name, r.category, r.subcategory, r.account, r.invested, r.roi, r.maturityAmount, d.profit, r.investedDate, r.maturityDate, r.tenureMonths, d.years, r.notes]);
   });
-  XLSX.utils.book_append_sheet(wb, sheetFromRows(
-    ["Name", "Category", "Sub-category", "Account No.", "Invested Amount", "ROI %", "Maturity Amount", "Profit", "Invested Date", "Maturity Date", "Tenure (Mo)", "Tenure (Yr)", "Notes"],
-    debtRows, [18, 12, 14, 14, 14, 8, 14, 12, 14, 14, 10, 10, 20]
-  ), "Debt");
+  const wsDebt = XLSX.utils.aoa_to_sheet(debtRows);
+  wsDebt["!cols"] = [{ wch: 24 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 22 }];
+  XLSX.utils.book_append_sheet(wb, wsDebt, "Debt");
 
-  // --- Settings (round-trips on restore) ---
+  // Settings
   const settingsRows = [
-    ["Cash on Hand", cash],
-    [],
-    ["Ideal Allocation %", ""],
-    ["Cash", state.ideal.cash],
-    ["Debt", state.ideal.debt],
-    ["Mutual Funds", state.ideal.mf],
-    ["Equity", state.ideal.equity],
-    ["Gold", state.ideal.gold]
+    ["Setting", "Value"],
+    ["Cash on hand", state.cash],
+    ["Ideal % - Cash", state.ideal.cash],
+    ["Ideal % - Debt", state.ideal.debt],
+    ["Ideal % - Mutual Funds", state.ideal.mf],
+    ["Ideal % - Equity", state.ideal.equity],
+    ["Ideal % - Gold", state.ideal.gold],
+    ["Portfolio Locked", state.portfolioLocked ? "Yes" : "No"],
+    ["Last Saved", state.lastSaved],
+    ["Last Backup", state.lastBackup]
   ];
-  XLSX.utils.book_append_sheet(wb, sheetFromRows(["Setting", "Value"], settingsRows, [22, 14]), "Settings");
+  const wsSettings = XLSX.utils.aoa_to_sheet(settingsRows);
+  wsSettings["!cols"] = [{ wch: 24 }, { wch: 26 }];
+  XLSX.utils.book_append_sheet(wb, wsSettings, "Settings");
 
   return wb;
 }
 
 document.getElementById("btnExportExcel").addEventListener("click", () => {
-  const wb = buildBackupWorkbook();
-  XLSX.writeFile(wb, `networth-backup-${new Date().toISOString().slice(0, 10)}.xlsx`);
-});
-
-/* ---- Restore from Excel: full-state rebuild from a backup workbook ----
-   This REPLACES all current holdings/settings — unlike the per-tab
-   Import from Excel (which appends/upserts), this is meant for
-   disaster recovery: rebuilding everything from one backup file. */
-
-function sheetRows(wb, name) {
-  const sheet = wb.Sheets[name];
-  if (!sheet) return null;
-  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "" });
-  return rows.filter(r => r.some(c => String(c).trim() !== ""));
-}
-
-document.getElementById("restoreExcelFile").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const proceed = confirm(
-    "This will REPLACE all current holdings and settings with the contents of this Excel file. " +
-    "This cannot be undone (though your last JSON export, if any, would still be safe). Continue?"
-  );
-  if (!proceed) { e.target.value = ""; return; }
-
   try {
-    const data = await file.arrayBuffer();
-    const wb = XLSX.read(data, { type: "array", cellDates: true });
-
-    const newState = blankState();
-
-    const eqRows = sheetRows(wb, "Stock Holdings");
-    if (eqRows) {
-      eqRows.slice(1).forEach(r => {
-        const name = String(r[0] ?? "").trim();
-        if (!name) return;
-        newState.equity.push({ id: uid(), name, invested: parseFloat(r[1]) || 0, units: parseFloat(r[2]) || 0, ltp: parseFloat(r[4]) || 0 });
-      });
-    }
-
-    const mfRows = sheetRows(wb, "Mutual Funds");
-    if (mfRows) {
-      mfRows.slice(1).forEach(r => {
-        const name = String(r[0] ?? "").trim();
-        if (!name) return;
-        newState.mf.push({
-          id: uid(), name, symbol: String(r[1] ?? "").trim(), category: String(r[2] ?? "").trim(),
-          subcategory: String(r[3] ?? "").trim(), unitPrice: parseFloat(r[4]) || 0, units: parseFloat(r[5]) || 0,
-          remarks: String(r[8] ?? "").trim()
-        });
-      });
-    }
-
-    const goldRows = sheetRows(wb, "Gold");
-    if (goldRows) {
-      goldRows.slice(1).forEach(r => {
-        const name = String(r[0] ?? "").trim();
-        if (!name) return;
-        const form = String(r[1] ?? "ETF").trim();
-        newState.gold.push({
-          id: uid(), name, form: ["Physical", "Digital", "SGB", "ETF"].includes(form) ? form : "ETF",
-          weight: parseFloat(r[2]) || 0, purchaseRate: parseFloat(r[3]) || 0, invested: parseFloat(r[4]) || 0,
-          currentRate: parseFloat(r[5]) || 0, notes: String(r[9] ?? "").trim()
-        });
-      });
-    }
-
-    const debtRows = sheetRows(wb, "Debt");
-    if (debtRows) {
-      debtRows.slice(1).forEach(r => {
-        const name = String(r[0] ?? "").trim();
-        if (!name) return;
-        newState.debt.push({
-          id: uid(), name, category: String(r[1] ?? "").trim(), subcategory: String(r[2] ?? "").trim(),
-          account: String(r[3] ?? "").trim(), invested: parseFloat(r[4]) || 0, roi: parseFloat(r[5]) || 0,
-          maturityAmount: parseFloat(r[6]) || 0, investedDate: toDateInputValue(r[8]), maturityDate: toDateInputValue(r[9]),
-          tenureMonths: parseFloat(r[10]) || 0, notes: String(r[12] ?? "").trim()
-        });
-      });
-    }
-
-    const settingsRows = sheetRows(wb, "Settings");
-    if (settingsRows) {
-      settingsRows.forEach(r => {
-        const label = String(r[0] ?? "").trim();
-        const val = parseFloat(r[1]);
-        if (label === "Cash on Hand" && !isNaN(val)) newState.cash = val;
-        if (label === "Cash") newState.ideal.cash = isNaN(val) ? newState.ideal.cash : val;
-        if (label === "Debt") newState.ideal.debt = isNaN(val) ? newState.ideal.debt : val;
-        if (label === "Mutual Funds") newState.ideal.mf = isNaN(val) ? newState.ideal.mf : val;
-        if (label === "Equity") newState.ideal.equity = isNaN(val) ? newState.ideal.equity : val;
-        if (label === "Gold") newState.ideal.gold = isNaN(val) ? newState.ideal.gold : val;
-      });
-    }
-
-    state = newState;
-    saveState();
-    renderAll();
-    alert("Restore complete — all holdings and settings were rebuilt from this Excel file.");
-  } catch (err) {
-    alert("Could not restore from that file. Make sure it's a backup produced by 'Export to Excel' from this app.");
+    const wb = buildExcelWorkbook();
+    XLSX.writeFile(wb, `networth-backup-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  } catch (e) {
+    console.error("Excel export failed:", e);
+    alert("Could not build the Excel export: " + (e && e.message ? e.message : "unknown error"));
   }
-  e.target.value = "";
 });
 
 /* ============================================================
@@ -1498,19 +1943,20 @@ function maybeRunWeeklyBackup() {
 
 /* ============================================================
    CLOUD SYNC — Firebase Auth (Google Sign-In) + Firestore
-   One document per signed-in user (keyed by their Google uid)
-   holds the full app state, mirroring the localStorage shape.
-   localStorage stays the instant local cache — every UI action
-   still reads/writes it exactly as before — and a debounced
-   background push mirrors changes to Firestore whenever signed
-   in. Conflict handling is recency-based, not a true merge: on
-   sign-in (including a restored session on page load), whichever
-   copy — local or cloud — was saved more recently wins and gets
-   loaded. This is a known, disclosed tradeoff for a single-user
-   tool, not a full multi-device merge.
+   localStorage stays the instant local cache (nothing about
+   normal app usage changes when signed out). Firestore doc at
+   portfolios/{uid} mirrors it once signed in. saveState()
+   triggers a debounced (2s) background push. On sign-in,
+   resolveCloudSync() reconciles local vs. cloud using safe rules
+   that never silently discard real data on either side:
+     - empty cloud + real local  -> push local automatically
+     - empty local + real cloud  -> pull cloud automatically
+     - both empty                -> no-op
+     - both non-empty, identical -> no-op (no nagging every load)
+     - both non-empty, different -> ask which one wins
    ============================================================ */
 
-const firebaseConfig = {
+const FIREBASE_CONFIG = {
   apiKey: "AIzaSyDhaP5WPnVHD5PXTg3O6wJeJOlG51NJ6xI",
   authDomain: "networth-tracker-f101b.firebaseapp.com",
   projectId: "networth-tracker-f101b",
@@ -1519,155 +1965,144 @@ const firebaseConfig = {
   appId: "1:638244383857:web:84431ad971b2fee7e47fd0"
 };
 
-let fbAuth = null, fbDb = null, cloudUser = null, cloudSyncTimer = null;
+let fbAuth = null;
+let fbDb = null;
+let cloudUser = null;
+let cloudSyncTimer = null;
 
-function initFirebase() {
-  try {
-    firebase.initializeApp(firebaseConfig);
-    fbAuth = firebase.auth();
-    fbDb = firebase.firestore();
-  } catch (err) {
-    console.error("Firebase failed to initialize:", err);
-    const statusEl = document.getElementById("cloudSyncStatus");
-    if (statusEl) statusEl.textContent = "Cloud sync unavailable";
-  }
+function isStateEmpty(s) {
+  return !s.cash &&
+    (!s.equity || s.equity.length === 0) &&
+    (!s.debt || s.debt.length === 0) &&
+    (!s.mf || s.mf.length === 0) &&
+    (!s.gold || s.gold.length === 0);
 }
 
-function setCloudStatus(text) {
-  const el = document.getElementById("cloudSyncStatus");
-  if (el) el.textContent = text;
+// Compares two state objects ignoring lastSaved/lastBackup, which
+// change on every save and would otherwise make "identical" data
+// look different and trigger a needless conflict prompt.
+function stateContentEqual(a, b) {
+  const strip = (s) => {
+    const c = { ...s };
+    delete c.lastSaved;
+    delete c.lastBackup;
+    return JSON.stringify(c);
+  };
+  return strip(a) === strip(b);
 }
 
-function updateCloudButton() {
-  const btn = document.getElementById("btnCloudSignIn");
+function updateCloudSyncUI(statusOverride) {
+  const btn = document.getElementById("btnCloudSync");
   if (!btn) return;
   if (cloudUser) {
-    btn.textContent = "Sign out (" + (cloudUser.displayName || cloudUser.email || "account") + ")";
+    btn.textContent = "☁️ " + (statusOverride || cloudUser.email || "Synced");
+    btn.classList.add("synced");
+    btn.title = "Signed in as " + (cloudUser.email || cloudUser.uid) + " — data syncs automatically. Click to sign out.";
   } else {
-    btn.textContent = "Sign in with Google";
-    setCloudStatus("");
+    btn.textContent = statusOverride ? "☁️ " + statusOverride : "☁️ Sign in with Google";
+    btn.classList.remove("synced");
+    btn.title = "Sign in to sync your data across devices via Firestore.";
   }
 }
 
-async function pushToCloud() {
+async function pushStateToCloud() {
   if (!cloudUser || !fbDb) return;
-  setCloudStatus("Syncing…");
   try {
-    await fbDb.collection("portfolios").doc(cloudUser.uid).set({
-      state,
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
-    setCloudStatus("Synced " + new Date().toLocaleTimeString());
-  } catch (err) {
-    console.error("Cloud push failed:", err);
-    setCloudStatus("Cloud sync error — will retry on next change");
+    await fbDb.collection("portfolios").doc(cloudUser.uid).set(state);
+  } catch (e) {
+    console.error("Cloud push failed:", e);
+    updateCloudSyncUI("Sync failed");
   }
 }
 
-// Called from saveState() on every local change. Debounced so
-// rapid edits (e.g. typing) don't fire a write per keystroke.
-function scheduleCloudSync() {
+// Called from saveState() on every local change; debounced so a
+// burst of edits (e.g. typing) doesn't fire a write per keystroke.
+function scheduleCloudPush() {
   if (!cloudUser) return;
   clearTimeout(cloudSyncTimer);
-  cloudSyncTimer = setTimeout(pushToCloud, 2000);
-}
-
-// Runs once per sign-in event (fresh popup login, or a restored
-// session on page load). Resolves local-vs-cloud by recency.
-function isStateEmpty(s) {
-  return (!s.equity || s.equity.length === 0) &&
-         (!s.debt || s.debt.length === 0) &&
-         (!s.mf || s.mf.length === 0) &&
-         (!s.gold || s.gold.length === 0) &&
-         (!s.cash || Number(s.cash) === 0);
-}
-
-// Compares two states ignoring volatile bookkeeping fields
-// (lastSaved/lastBackup change on every save and don't reflect
-// an actual data difference).
-function stateContentEqual(a, b) {
-  const strip = s => { const { lastSaved, lastBackup, ...rest } = s; return rest; };
-  return JSON.stringify(strip(a)) === JSON.stringify(strip(b));
+  cloudSyncTimer = setTimeout(pushStateToCloud, 2000);
 }
 
 async function resolveCloudSync() {
   if (!cloudUser || !fbDb) return;
-  setCloudStatus("Checking cloud data…");
+  updateCloudSyncUI("Syncing…");
   try {
     const snap = await fbDb.collection("portfolios").doc(cloudUser.uid).get();
-    if (!snap.exists || !snap.data().state) {
-      // No cloud copy yet at all — seed it from this device, whatever it has.
-      await pushToCloud();
-      return;
-    }
-    const cloudData = snap.data();
-    const cloudState = cloudData.state;
-    const cloudIsEmpty = isStateEmpty(cloudState);
-    const localIsEmpty = isStateEmpty(state);
+    const cloud = snap.exists ? snap.data() : null;
+    const localEmpty = isStateEmpty(state);
+    const cloudEmpty = !cloud || isStateEmpty(cloud);
 
-    // Directions where nothing can be lost: safe to do automatically,
-    // no confirmation needed.
-    if (cloudIsEmpty && !localIsEmpty) { await pushToCloud(); return; }
-    if (localIsEmpty && !cloudIsEmpty) {
-      state = { ...blankState(), ...cloudState, ideal: { ...DEFAULT_IDEAL, ...(cloudState.ideal || {}) } };
+    if (cloudEmpty && !localEmpty) {
+      await pushStateToCloud();
+    } else if (!cloudEmpty && localEmpty) {
+      state = { ...blankState(), ...cloud, ideal: { ...DEFAULT_IDEAL, ...(cloud.ideal || {}) } };
       saveState();
       renderAll();
-      setCloudStatus("Loaded data from cloud");
-      return;
-    }
-    if (localIsEmpty && cloudIsEmpty) { setCloudStatus("Cloud sync on"); return; }
-
-    // Both sides have real data. If they already match, there's
-    // nothing to resolve — don't bother the user.
-    if (stateContentEqual(state, cloudState)) { setCloudStatus("Cloud sync on"); return; }
-
-    // They genuinely differ — never silently pick one. Ask.
-    const cloudUpdatedAt = cloudData.updatedAt && cloudData.updatedAt.toMillis ? cloudData.updatedAt.toMillis() : 0;
-    const localUpdatedAt = state.lastSaved ? new Date(state.lastSaved).getTime() : 0;
-    const cloudLooksNewer = cloudUpdatedAt > localUpdatedAt;
-    const loadCloud = confirm(
-      (cloudLooksNewer
-        ? "Cloud data looks newer than what's on this device."
-        : "This device's data looks newer than the cloud copy.") +
-      "\n\nClick OK to LOAD the cloud version (replacing this device's data), " +
-      "or Cancel to KEEP this device's data and push it to the cloud instead."
-    );
-    if (loadCloud) {
-      state = { ...blankState(), ...cloudState, ideal: { ...DEFAULT_IDEAL, ...(cloudState.ideal || {}) } };
-      saveState();
-      renderAll();
-      setCloudStatus("Loaded cloud data");
+    } else if (cloudEmpty && localEmpty) {
+      // nothing on either side yet
+    } else if (stateContentEqual(state, cloud)) {
+      // already in sync, don't nag
     } else {
-      await pushToCloud();
+      const useCloud = confirm(
+        "Your local data on this device and your cloud data are different.\n\n" +
+        "Click OK to use the CLOUD version (this device's local data will be overwritten).\n" +
+        "Click Cancel to keep THIS DEVICE's version (the cloud will be overwritten with it)."
+      );
+      if (useCloud) {
+        state = { ...blankState(), ...cloud, ideal: { ...DEFAULT_IDEAL, ...(cloud.ideal || {}) } };
+        saveState();
+        renderAll();
+      } else {
+        await pushStateToCloud();
+      }
     }
-  } catch (err) {
-    console.error("Cloud sync check failed:", err);
-    setCloudStatus("Cloud sync error");
+    updateCloudSyncUI();
+  } catch (e) {
+    console.error("Cloud sync failed:", e);
+    updateCloudSyncUI("Sync error");
   }
 }
 
-document.getElementById("btnCloudSignIn").addEventListener("click", () => {
+document.getElementById("btnCloudSync").addEventListener("click", async () => {
   if (!fbAuth) {
-    alert("Cloud sync isn't available right now — check your internet connection and reload.");
+    alert("Cloud sync isn't available right now — the Firebase SDK didn't load (check your internet connection).");
     return;
   }
   if (cloudUser) {
-    fbAuth.signOut();
+    const ok = confirm("Sign out of cloud sync? Your data stays on this device but will stop syncing to other devices.");
+    if (ok) await fbAuth.signOut();
     return;
   }
-  const provider = new firebase.auth.GoogleAuthProvider();
-  fbAuth.signInWithPopup(provider).catch(err => {
-    alert("Sign-in failed: " + err.message);
-  });
+  try {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    await fbAuth.signInWithPopup(provider);
+  } catch (e) {
+    console.error("Sign-in failed:", e);
+    alert(
+      "Sign-in failed: " + (e && e.message ? e.message : "unknown error") +
+      "\n\nIf this is the first time, make sure in the Firebase console: Google sign-in is enabled " +
+      "(Authentication → Sign-in method), and this site's domain is added under Authentication → Settings → Authorized domains."
+    );
+  }
 });
 
-initFirebase();
-if (fbAuth) {
-  fbAuth.onAuthStateChanged(user => {
-    cloudUser = user;
-    updateCloudButton();
-    if (user) resolveCloudSync();
-  });
+function initCloudSync() {
+  if (typeof firebase === "undefined") {
+    console.warn("Firebase SDK not loaded — cloud sync disabled for this session.");
+    return;
+  }
+  try {
+    firebase.initializeApp(FIREBASE_CONFIG);
+    fbAuth = firebase.auth();
+    fbDb = firebase.firestore();
+    fbAuth.onAuthStateChanged(async (user) => {
+      cloudUser = user;
+      updateCloudSyncUI();
+      if (user) await resolveCloudSync();
+    });
+  } catch (e) {
+    console.error("Firebase init failed:", e);
+  }
 }
 
 /* ============================================================
@@ -1698,5 +2133,15 @@ setupColumnResize("col-debt-name", "#panel-debt .col-resizer");
 setupColumnResize("col-mf-name", "#panel-mf .col-resizer");
 setupColumnResize("col-gold-name", "#panel-gold .col-resizer");
 
+updateLockButton();
 renderAll();
 maybeRunWeeklyBackup();
+initCloudSync();
+
+// Auto-refresh live prices on open, per tab (Debt is intentionally
+// skipped — it has no live-price mechanism). Runs quietly in the
+// background; each tab's own status tag and fail panel update in
+// place once its fetch resolves, same as clicking Refresh by hand.
+runEquityRefresh(document.getElementById("equityFetchStatus"));
+runMFRefresh(document.getElementById("mfFetchStatus"));
+runGoldRefresh(document.getElementById("goldFetchStatus"));

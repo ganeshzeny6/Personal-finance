@@ -220,7 +220,7 @@
   table.data-table{table-layout:fixed;width:100%;}
   #panel-equity table.data-table{min-width:955px;}
   #panel-debt table.data-table{min-width:1615px;}
-  #panel-mf table.data-table{min-width:1115px;}
+  #panel-mf table.data-table{min-width:1520px;}
   #panel-gold table.data-table{min-width:1130px;}
 
   .filter-input{
@@ -242,6 +242,52 @@
   }
   .ideal-input:focus{border-color:var(--gold);outline:none;}
 
+  #btnLockPortfolio.locked{background:var(--negative-soft);border-color:var(--negative);color:var(--negative);}
+  #btnCloudSync.synced{background:var(--positive-soft);border-color:var(--positive);color:var(--positive);}
+
+  .price-cell{display:flex;align-items:center;gap:4px;}
+  .price-cell input{min-width:0;flex:1 1 auto;}
+  .pending-badge{
+    flex:0 0 auto;font-family:var(--font-body);font-size:9.5px;font-weight:600;
+    color:var(--gold);background:var(--gold-soft);border-radius:4px;padding:2px 5px;
+    letter-spacing:.02em;white-space:nowrap;
+  }
+
+  .fail-panel{
+    background:var(--surface);border:1px solid var(--negative);border-radius:var(--radius);
+    padding:12px 16px;margin-bottom:12px;font-size:12px;
+  }
+  .fail-panel h4{margin:0 0 8px;font-family:var(--font-display);font-size:12.5px;color:var(--negative);}
+  .fail-panel table{width:100%;font-size:11.5px;min-width:0;}
+  .fail-panel th{background:none;padding:4px 8px;font-size:10px;}
+  .fail-panel td{padding:4px 8px;font-family:var(--font-body);color:var(--text-muted);white-space:normal;}
+  .fail-panel td:first-child{color:var(--text);font-family:var(--font-mono);}
+
+  .modal-overlay{
+    display:none;position:fixed;inset:0;background:#0008;backdrop-filter:blur(2px);
+    z-index:200;align-items:center;justify-content:center;padding:20px;
+  }
+  .modal-overlay.open{display:flex;}
+  .modal-card{
+    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+    max-width:640px;width:100%;max-height:86vh;display:flex;flex-direction:column;
+    box-shadow:0 20px 60px #0009;
+  }
+  .modal-card h3{font-family:var(--font-display);font-size:16px;margin:0;padding:18px 22px;border-bottom:1px solid var(--border);}
+  .modal-body{padding:18px 22px;overflow-y:auto;font-size:13px;color:var(--text-muted);line-height:1.6;}
+  .modal-body h4{color:var(--text);font-family:var(--font-display);font-size:13px;margin:14px 0 6px;}
+  .modal-body h4:first-child{margin-top:0;}
+  .modal-body ul{margin:4px 0;padding-left:20px;}
+  .modal-body table{width:100%;font-size:11.8px;margin-top:6px;}
+  .modal-body th{background:var(--surface-2);padding:5px 8px;font-size:10px;}
+  .modal-body td{padding:5px 8px;font-family:var(--font-body);color:var(--text-muted);white-space:normal;}
+  .import-stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin:6px 0 14px;}
+  .import-stat{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;}
+  .import-stat .n{font-family:var(--font-mono);font-size:18px;font-weight:600;color:var(--text);}
+  .import-stat .l{font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;}
+  .import-stat.warn .n{color:var(--negative);}
+  .modal-footer{padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;}
+
   footer.app-footer{text-align:center;color:var(--text-faint);font-size:11px;padding:20px;}
   .settings-note{font-size:11.5px;color:var(--text-faint);margin-top:10px;line-height:1.6;}
   .empty-row td{text-align:center;color:var(--text-faint);font-family:var(--font-body);padding:22px;}
@@ -262,14 +308,12 @@
   </div>
   <div class="topbar-actions">
     <span class="status-tag" id="lastUpdatedTag">Not saved yet</span>
+    <button class="btn" id="btnLockPortfolio" title="When locked, Quantity and Average Price can only change via Import Holdings">🔓 Unlocked</button>
+    <button class="btn" id="btnCloudSync" title="Sign in to sync your data across devices">☁️ Sign in with Google</button>
+    <button class="btn btn-ghost" id="btnExportExcel">Export Excel</button>
     <button class="btn btn-ghost" id="btnExport">Export JSON</button>
     <label class="btn btn-ghost" for="importFile">Import JSON</label>
     <input type="file" id="importFile" accept="application/json">
-    <button class="btn btn-ghost" id="btnExportExcel">Export to Excel</button>
-    <label class="btn btn-ghost" for="restoreExcelFile">Restore from Excel</label>
-    <input type="file" id="restoreExcelFile" accept=".xlsx,.xls">
-    <span class="status-tag" id="cloudSyncStatus"></span>
-    <button class="btn btn-primary" id="btnCloudSignIn">Sign in with Google</button>
   </div>
 </div>
 
@@ -361,10 +405,13 @@
         <button class="btn" id="btnRefreshStocks">Refresh live prices</button>
         <label class="btn btn-ghost" for="importStockFile">Import from Excel</label>
         <input type="file" id="importStockFile" accept=".xlsx,.xls">
+        <label class="btn btn-ghost" for="importZerodhaEquityFile" title="Reads only the &quot;Stocks&quot; sheet from a Zerodha Console Holdings export">Import Zerodha Holdings</label>
+        <input type="file" id="importZerodhaEquityFile" accept=".xlsx,.xls">
         <input type="text" class="filter-input" id="equityFilter" placeholder="Filter...">
         <span class="status-tag" id="equityFetchStatus"></span>
       </div>
     </div>
+    <div class="fail-panel" id="equityFailPanel" style="display:none"></div>
 
     <div class="table-scroll">
       <table class="data-table">
@@ -474,17 +521,21 @@
         <button class="btn" id="btnRefreshMF">Refresh live NAV</button>
         <label class="btn btn-ghost" for="importMFFile">Import from Excel</label>
         <input type="file" id="importMFFile" accept=".xlsx,.xls">
+        <label class="btn btn-ghost" for="importZerodhaMFFile" title="Reads only the &quot;Mutual funds&quot; sheet from a Zerodha Console Holdings export">Import Zerodha Holdings</label>
+        <input type="file" id="importZerodhaMFFile" accept=".xlsx,.xls">
         <input type="text" class="filter-input" id="mfFilter" placeholder="Filter...">
         <span class="status-tag" id="mfFetchStatus"></span>
       </div>
     </div>
+    <div class="fail-panel" id="mfFailPanel" style="display:none"></div>
 
     <div class="table-scroll">
       <table class="data-table">
         <colgroup>
-          <col id="col-mf-name" style="width:180px">
-          <col style="width:140px"><col style="width:110px"><col style="width:130px">
-          <col style="width:90px"><col style="width:80px"><col style="width:110px">
+          <col id="col-mf-name" style="width:170px">
+          <col style="width:140px"><col style="width:110px"><col style="width:120px">
+          <col style="width:125px"><col style="width:80px"><col style="width:90px">
+          <col style="width:90px"><col style="width:110px"><col style="width:120px"><col style="width:90px">
           <col style="width:80px"><col style="width:150px"><col style="width:45px">
         </colgroup>
         <thead>
@@ -493,9 +544,13 @@
             <th class="left sortable" data-col="symbol">Symbol</th>
             <th class="left sortable" data-col="category">Category</th>
             <th class="left sortable" data-col="subcategory">Sub-category</th>
-            <th class="sortable" data-col="unitPrice">NAV</th>
+            <th class="sortable" data-col="invested">Invested Amt</th>
             <th class="sortable" data-col="units">Units</th>
-            <th class="sortable" data-col="amount">Amount</th>
+            <th class="sortable" data-col="avgPrice">Avg Price</th>
+            <th class="sortable" data-col="unitPrice">NAV</th>
+            <th class="sortable" data-col="currentValue">Current Value</th>
+            <th class="sortable" data-col="pl">P&amp;L</th>
+            <th class="sortable" data-col="plPct">P&amp;L %</th>
             <th class="sortable" data-col="allocPct">Alloc %</th>
             <th class="left sortable" data-col="remarks">Remarks</th>
             <th class="row-actions">—</th>
@@ -505,8 +560,12 @@
         <tfoot>
           <tr>
             <td class="left">Total</td>
-            <td></td><td></td><td></td><td></td><td></td>
-            <td id="mfTotalAmount">₹0</td>
+            <td></td><td></td><td></td>
+            <td id="mfTotalInvested">₹0</td>
+            <td></td><td></td><td></td>
+            <td id="mfTotalCurrent">₹0</td>
+            <td id="mfTotalPL">₹0</td>
+            <td id="mfTotalPLPct">0%</td>
             <td>100%</td>
             <td></td><td></td>
           </tr>
@@ -526,10 +585,13 @@
         <button class="btn" id="btnRefreshGold">Refresh live prices</button>
         <label class="btn btn-ghost" for="importGoldFile">Import from Excel</label>
         <input type="file" id="importGoldFile" accept=".xlsx,.xls">
+        <label class="btn btn-ghost" for="importZerodhaGoldFile" title="Reads only the &quot;Gold&quot; sheet from a Zerodha Console Holdings export">Import Zerodha Holdings</label>
+        <input type="file" id="importZerodhaGoldFile" accept=".xlsx,.xls">
         <input type="text" class="filter-input" id="goldFilter" placeholder="Filter...">
         <span class="status-tag" id="goldFetchStatus"></span>
       </div>
     </div>
+    <div class="fail-panel" id="goldFailPanel" style="display:none"></div>
 
     <div class="table-scroll">
       <table class="data-table">
@@ -572,8 +634,16 @@
 
 </main>
 
-<footer class="app-footer">All data stays in this browser (localStorage) unless you export it or connect Google Drive. Nothing is sent to any server except live price lookups.</footer>
+<footer class="app-footer">All data stays in this browser (localStorage) unless you export it or sign in to sync via Google. Nothing is sent to any server except live price lookups and, if signed in, your own Firestore document.</footer>
 
-<script src="app.js"></script>
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal-card">
+    <h3 id="modalTitle">Title</h3>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-footer" id="modalFooter"></div>
+  </div>
+</div>
+
+<script src="app.js?v=2026-08-08-5"></script>
 </body>
 </html>
