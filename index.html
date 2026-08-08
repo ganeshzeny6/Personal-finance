@@ -27,6 +27,8 @@
     --positive-soft:#4bbf9c1a;
     --negative:#e0667a;
     --negative-soft:#e0667a1a;
+    --warning:#d9a441;
+    --warning-soft:#d9a44122;
     --blue:#6f93c9;
     --radius:10px;
     --font-display:'Space Grotesk',sans-serif;
@@ -160,7 +162,7 @@
   thead th{
     text-align:right;font-weight:500;font-size:10.8px;text-transform:uppercase;letter-spacing:0.04em;
     color:var(--text-faint);background:var(--surface-2);padding:10px 12px;border-bottom:1px solid var(--border);
-    white-space:nowrap;position:sticky;top:0;
+    white-space:nowrap;position:sticky;top:0;z-index:2;
   }
   thead th:first-child, tbody td:first-child, tbody td.left, thead th.left{text-align:left;}
   tbody td{padding:8px 12px;border-bottom:1px solid var(--border);text-align:right;font-family:var(--font-mono);color:var(--text);white-space:nowrap;}
@@ -222,6 +224,37 @@
   #panel-debt table.data-table{min-width:1615px;}
   #panel-mf table.data-table{min-width:1520px;}
   #panel-gold table.data-table{min-width:1130px;}
+
+  /* Frozen first column (Name/Symbol) — stays put while the rest of a
+     wide table scrolls horizontally. It's the leftmost column so its
+     sticky offset is always 0, no matter how it's resized. */
+  .data-table td.sticky-col{
+    position:sticky;
+    left:0;
+    z-index:1;
+    background:var(--surface);
+    box-shadow:2px 0 6px -2px #00000066;
+  }
+  .data-table tbody tr:hover td.sticky-col{background:var(--surface-2);}
+  .data-table th.sticky-col{
+    position:sticky;
+    left:0;
+    z-index:3;
+    box-shadow:2px 0 6px -2px #00000066;
+  }
+  .data-table tfoot td.sticky-col{
+    position:sticky;
+    left:0;
+    z-index:1;
+    box-shadow:2px 0 6px -2px #00000066;
+  }
+
+  /* Debt: maturity date highlighting, computed dynamically against
+     today's date at render time. */
+  td.maturity-overdue{background:var(--negative-soft);}
+  td.maturity-overdue input[type=date]{border-color:var(--negative);color:var(--negative);}
+  td.maturity-soon{background:var(--warning-soft);}
+  td.maturity-soon input[type=date]{border-color:var(--warning);color:var(--warning);}
 
   .filter-input{
     font-family:var(--font-body);
@@ -423,7 +456,7 @@
         </colgroup>
         <thead>
           <tr>
-            <th class="left sortable resizable" data-col="name">Stock / Symbol<span class="col-resizer"></span></th>
+            <th class="left sortable resizable sticky-col" data-col="name">Stock / Symbol<span class="col-resizer"></span></th>
             <th class="sortable" data-col="invested">Invested Amt</th>
             <th class="sortable" data-col="units">Units</th>
             <th class="sortable" data-col="avgPrice">Avg Price</th>
@@ -438,7 +471,7 @@
         <tbody id="equityTableBody"></tbody>
         <tfoot>
           <tr>
-            <td class="left">Total</td>
+            <td class="left sticky-col">Total</td>
             <td id="eqTotalInvested">₹0</td>
             <td>—</td><td>—</td><td>—</td>
             <td id="eqTotalCurrent">₹0</td>
@@ -460,8 +493,9 @@
     <div class="table-toolbar">
       <div class="left-group">
         <button class="btn btn-primary" id="btnAddDebt">+ Add entry</button>
-        <label class="btn btn-ghost" for="importDebtFile">Import from Excel</label>
+        <label class="btn btn-ghost" for="importDebtFile" title="Overwrites all existing Debt entries with the contents of the file">Import from Excel</label>
         <input type="file" id="importDebtFile" accept=".xlsx,.xls">
+        <button class="btn btn-ghost" id="btnImportDebtSheet" title="Overwrites all existing Debt entries with the Debt tab of your Google Sheet">Import from Google Sheet</button>
         <input type="text" class="filter-input" id="debtFilter" placeholder="Filter...">
         <span class="status-tag" id="debtImportStatus"></span>
       </div>
@@ -478,7 +512,7 @@
         </colgroup>
         <thead>
           <tr>
-            <th class="left sortable resizable" data-col="name">Name<span class="col-resizer"></span></th>
+            <th class="left sortable resizable sticky-col" data-col="name">Name<span class="col-resizer"></span></th>
             <th class="left sortable" data-col="category">Category</th>
             <th class="left sortable" data-col="subcategory">Sub-category</th>
             <th class="left sortable" data-col="account">Account No.</th>
@@ -497,7 +531,7 @@
         <tbody id="debtTableBody"></tbody>
         <tfoot>
           <tr>
-            <td class="left">Total</td>
+            <td class="left sticky-col">Total</td>
             <td></td><td></td><td></td>
             <td id="debtTotalInvested">₹0</td>
             <td></td>
@@ -540,7 +574,7 @@
         </colgroup>
         <thead>
           <tr>
-            <th class="left sortable resizable" data-col="name">Name<span class="col-resizer"></span></th>
+            <th class="left sortable resizable sticky-col" data-col="name">Name<span class="col-resizer"></span></th>
             <th class="left sortable" data-col="symbol">Symbol</th>
             <th class="left sortable" data-col="category">Category</th>
             <th class="left sortable" data-col="subcategory">Sub-category</th>
@@ -559,7 +593,7 @@
         <tbody id="mfTableBody"></tbody>
         <tfoot>
           <tr>
-            <td class="left">Total</td>
+            <td class="left sticky-col">Total</td>
             <td></td><td></td><td></td>
             <td id="mfTotalInvested">₹0</td>
             <td></td><td></td><td></td>
@@ -603,7 +637,7 @@
         </colgroup>
         <thead>
           <tr>
-            <th class="left sortable resizable" data-col="name">Name / Symbol<span class="col-resizer"></span></th>
+            <th class="left sortable resizable sticky-col" data-col="name">Name / Symbol<span class="col-resizer"></span></th>
             <th class="left sortable" data-col="form">Form</th>
             <th class="sortable" data-col="weight">Weight / Units</th>
             <th class="sortable" data-col="purchaseRate">Purchase Rate</th>
@@ -619,7 +653,7 @@
         <tbody id="goldTableBody"></tbody>
         <tfoot>
           <tr>
-            <td class="left">Total</td><td></td><td></td><td></td>
+            <td class="left sticky-col">Total</td><td></td><td></td><td></td>
             <td id="goldTotalInvested">₹0</td>
             <td></td>
             <td id="goldTotalCurrent">₹0</td>
@@ -644,6 +678,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-08-08-7"></script>
+<script src="app.js?v=2026-08-08-8"></script>
 </body>
 </html>

@@ -388,7 +388,7 @@ function renderEquity() {
     const tr = document.createElement("tr");
     tr.dataset.id = row.id;
     tr.innerHTML = `
-      <td class="left"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" placeholder="e.g. TCS.NS" ${locked ? "disabled" : ""}></td>
+      <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" placeholder="e.g. TCS.NS" ${locked ? "disabled" : ""}></td>
       <td><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
       <td><input type="number" step="any" value="${row.units ?? ""}" data-field="units" ${locked ? "disabled" : ""}></td>
       <td class="c-avg">${fmtNum(d.avgPrice)}</td>
@@ -637,6 +637,22 @@ document.getElementById("btnRefreshStocks").addEventListener("click", () => {
    DEBT TAB
    ============================================================ */
 
+// Compares a row's Maturity Date against *today* (recomputed on every
+// render/update — never stored) and returns the CSS class that should
+// highlight it: overdue (already matured), soon (within 30 days), or
+// "" for anything further out / blank.
+function maturityStatus(dateStr) {
+  if (!dateStr) return "";
+  const md = new Date(dateStr + "T00:00:00");
+  if (isNaN(md)) return "";
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diffDays = (md - today) / (1000 * 60 * 60 * 24);
+  if (diffDays < 0) return "maturity-overdue";
+  if (diffDays <= 30) return "maturity-soon";
+  return "";
+}
+
 function debtDerived(row) {
   const invested = Number(row.invested) || 0;
   const maturity = Number(row.maturityAmount) || 0;
@@ -697,7 +713,7 @@ function renderDebt() {
     const tr = document.createElement("tr");
     tr.dataset.id = row.id;
     tr.innerHTML = `
-      <td class="left"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" ${locked ? "disabled" : ""}></td>
+      <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" ${locked ? "disabled" : ""}></td>
       <td class="left"><input type="text" value="${escapeAttr(row.category || "")}" data-field="category" ${locked ? "disabled" : ""}></td>
       <td class="left"><input type="text" value="${escapeAttr(row.subcategory || "")}" data-field="subcategory" ${locked ? "disabled" : ""}></td>
       <td class="left"><input type="text" value="${escapeAttr(row.account || "")}" data-field="account" ${locked ? "disabled" : ""}></td>
@@ -706,7 +722,7 @@ function renderDebt() {
       <td><input type="number" step="any" value="${row.maturityAmount ?? ""}" data-field="maturityAmount" ${locked ? "disabled" : ""}></td>
       <td class="c-profit ${plClass(d.profit)}">${fmtNum(d.profit)}</td>
       <td><input type="date" value="${row.investedDate || ""}" data-field="investedDate" ${locked ? "disabled" : ""}></td>
-      <td><input type="date" value="${row.maturityDate || ""}" data-field="maturityDate" ${locked ? "disabled" : ""}></td>
+      <td class="c-maturity ${maturityStatus(row.maturityDate)}"><input type="date" value="${row.maturityDate || ""}" data-field="maturityDate" ${locked ? "disabled" : ""}></td>
       <td><input type="number" step="any" value="${row.tenureMonths ?? ""}" data-field="tenureMonths" ${locked ? "disabled" : ""}></td>
       <td class="c-years">${fmtNum(d.years, 1)}</td>
       <td class="left"><input type="text" value="${escapeAttr(row.notes || "")}" data-field="notes" ${locked ? "disabled" : ""}></td>
@@ -749,6 +765,8 @@ function updateDebtComputed() {
     profitCell.textContent = fmtNum(d.profit);
     profitCell.className = "c-profit " + plClass(d.profit);
     tr.querySelector(".c-years").textContent = fmtNum(d.years, 1);
+    const maturityCell = tr.querySelector(".c-maturity");
+    if (maturityCell) maturityCell.className = ("c-maturity " + maturityStatus(row.maturityDate)).trim();
   });
   const totals = debtTotals();
   document.getElementById("debtTotalInvested").textContent = fmtINR(totals.invested);
@@ -844,7 +862,7 @@ function renderMF() {
     const tr = document.createElement("tr");
     tr.dataset.id = row.id;
     tr.innerHTML = `
-      <td class="left"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" ${locked ? "disabled" : ""}></td>
+      <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" ${locked ? "disabled" : ""}></td>
       <td class="left"><input type="text" value="${escapeAttr(row.symbol || "")}" data-field="symbol" placeholder="Symbol" ${locked ? "disabled" : ""}></td>
       <td class="left"><input type="text" value="${escapeAttr(row.category || "")}" data-field="category" ${locked ? "disabled" : ""}></td>
       <td class="left"><input type="text" value="${escapeAttr(row.subcategory || "")}" data-field="subcategory" ${locked ? "disabled" : ""}></td>
@@ -1036,7 +1054,7 @@ function renderGold() {
     const tr = document.createElement("tr");
     tr.dataset.id = row.id;
     tr.innerHTML = `
-      <td class="left"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" placeholder="e.g. GOLDBEES.NS" ${locked ? "disabled" : ""}></td>
+      <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" placeholder="e.g. GOLDBEES.NS" ${locked ? "disabled" : ""}></td>
       <td class="left">
         <select data-field="form" ${locked ? "disabled" : ""}>
           <option value="Physical" ${row.form === "Physical" ? "selected" : ""}>Physical</option>
@@ -1322,7 +1340,10 @@ function toDateInputValue(v) {
     return v.toISOString().slice(0, 10);
   }
   const s = String(v ?? "").trim();
-  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : "";
+  // Matches a plain "YYYY-MM-DD" cell as well as a full ISO datetime
+  // string (e.g. "2026-08-08T00:00:00.000Z", what Apps Script's
+  // JSON.stringify produces for a Date cell) — takes just the date part.
+  return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : "";
 }
 
 // Stocks: Name/Symbol, Invested Amount, Units
@@ -1456,39 +1477,152 @@ document.getElementById("importGoldFile").addEventListener("change", async (e) =
 // Invested Amount, ROI, Maturity Amount, Invested Date, Maturity
 // Date, Tenure Months, Notes (Profit and Tenure Years are always
 // calculated, never imported).
+//
+// Unlike the other three tabs' importers, Debt import is a full
+// OVERWRITE, not an upsert/append: whatever's parsed from the file
+// (or Google Sheet) entirely replaces state.debt. This is deliberate
+// — FD names aren't a reliable unique key (two different FDs can
+// share a bank name), so matching-by-name risked silently merging
+// distinct entries; a clean replace sidesteps that instead of trying
+// to solve it. Always shown as a preview + explicit confirm first,
+// same pattern as the Zerodha Holdings importers use.
+function parseDebtWorkbookRows(headerRows) {
+  return headerRows.slice(1).map(r => {
+    const name = String(r[0] ?? "").trim();
+    if (!name) return null;
+    return {
+      id: uid(), name,
+      category: String(r[1] ?? "").trim(),
+      subcategory: String(r[2] ?? "").trim(),
+      account: String(r[3] ?? "").trim(),
+      invested: parseFloat(r[4]) || 0,
+      roi: parseFloat(r[5]) || 0,
+      maturityAmount: parseFloat(r[6]) || 0,
+      investedDate: toDateInputValue(r[7]),
+      maturityDate: toDateInputValue(r[8]),
+      tenureMonths: parseFloat(r[9]) || 0,
+      notes: String(r[10] ?? "").trim()
+    };
+  }).filter(Boolean);
+}
+
+// Same field set, but sourced from a Google Sheet row object (keyed
+// by that sheet's actual header text) instead of a positional Excel
+// row — mirrors the flexible-header-matching convention already used
+// by buildMFCategoryMap() for the Mutual Funds tab.
+function parseDebtSheetRows(rows) {
+  if (!Array.isArray(rows)) return [];
+  return rows.map(obj => {
+    const keys = Object.keys(obj);
+    const findVal = (candidates) => {
+      const k = keys.find(k => candidates.some(c => c.toLowerCase() === k.trim().toLowerCase()));
+      return k ? String(obj[k] ?? "").trim() : "";
+    };
+    const name = findVal(["Name"]);
+    if (!name) return null;
+    return {
+      id: uid(), name,
+      category: findVal(["Category"]),
+      subcategory: findVal(["Sub-category", "Sub-cateogry", "Subcategory", "Sub category"]),
+      account: findVal(["Account No.", "Account No", "Account"]),
+      invested: parseFloat(findVal(["Invested Amount", "Invested"])) || 0,
+      roi: parseFloat(findVal(["ROI", "ROI %", "ROI Percent"])) || 0,
+      maturityAmount: parseFloat(findVal(["Maturity Amount"])) || 0,
+      investedDate: toDateInputValue(findVal(["Invested Date"])),
+      maturityDate: toDateInputValue(findVal(["Maturity Date"])),
+      tenureMonths: parseFloat(findVal(["Tenure Months", "Tenure (Months)"])) || 0,
+      notes: findVal(["Notes"])
+    };
+  }).filter(Boolean);
+}
+
+function showDebtImportPreview(newRows, sourceLabel, statusEl) {
+  const existingCount = state.debt.length;
+  const previewRows = newRows.slice(0, 10).map(r => `
+    <tr>
+      <td class="left">${escapeAttr(r.name)}</td>
+      <td class="left">${escapeAttr(r.category || "—")}</td>
+      <td class="left">${fmtINR(r.invested)}</td>
+      <td class="left">${escapeAttr(r.maturityDate || "—")}</td>
+    </tr>`).join("");
+  const html = `
+    <div class="import-stat-row">
+      <div class="import-stat"><div class="n">${existingCount}</div><div class="l">Current Entries</div></div>
+      <div class="import-stat"><div class="n">${newRows.length}</div><div class="l">Entries In ${escapeAttr(sourceLabel)}</div></div>
+      <div class="import-stat ${existingCount ? "warn" : ""}"><div class="n">${existingCount}</div><div class="l">Will Be Replaced</div></div>
+    </div>
+    <p>This <strong>replaces all ${existingCount} existing Debt ${existingCount === 1 ? "entry" : "entries"}</strong> with the ${newRows.length} entr${newRows.length === 1 ? "y" : "ies"} from ${escapeAttr(sourceLabel)} — nothing is merged. This can't be undone from within the app; export a backup first if you're not sure.</p>
+    <table>
+      <thead><tr><th class="left">Name</th><th class="left">Category</th><th class="left">Invested</th><th class="left">Maturity Date</th></tr></thead>
+      <tbody>${previewRows}</tbody>
+    </table>
+    ${newRows.length > 10 ? `<p class="settings-note">…and ${newRows.length - 10} more.</p>` : ""}
+  `;
+  openModal(
+    `Import Debt from ${sourceLabel} — Preview`,
+    html,
+    [
+      { label: "Cancel", onClick: () => { closeModal(); statusEl.textContent = ""; } },
+      {
+        label: `Replace ${existingCount} ${existingCount === 1 ? "entry" : "entries"}`, primary: true, onClick: () => {
+          state.debt = newRows;
+          saveState();
+          renderDebt();
+          renderDashboard();
+          closeModal();
+          statusEl.textContent = `Replaced Debt data with ${newRows.length} entr${newRows.length === 1 ? "y" : "ies"} from ${sourceLabel}.`;
+        }
+      }
+    ]
+  );
+}
+
 document.getElementById("importDebtFile").addEventListener("change", async (e) => {
   const file = e.target.files[0];
   const statusEl = document.getElementById("debtImportStatus");
   if (!file) return;
   try {
-    const rows = (await readWorkbookRows(file)).slice(1);
-    let count = 0;
-    rows.forEach(r => {
-      const name = String(r[0] ?? "").trim();
-      if (!name) return;
-      state.debt.push({
-        id: uid(), name,
-        category: String(r[1] ?? "").trim(),
-        subcategory: String(r[2] ?? "").trim(),
-        account: String(r[3] ?? "").trim(),
-        invested: parseFloat(r[4]) || 0,
-        roi: parseFloat(r[5]) || 0,
-        maturityAmount: parseFloat(r[6]) || 0,
-        investedDate: toDateInputValue(r[7]),
-        maturityDate: toDateInputValue(r[8]),
-        tenureMonths: parseFloat(r[9]) || 0,
-        notes: String(r[10] ?? "").trim()
-      });
-      count++;
-    });
-    saveState();
-    renderDebt();
-    renderDashboard();
-    statusEl.textContent = `Imported ${count} debt row(s) from Excel.`;
+    const rows = await readWorkbookRows(file);
+    const newRows = parseDebtWorkbookRows(rows);
+    if (newRows.length === 0) {
+      alert("No valid Debt rows found in that file — nothing to import.");
+    } else {
+      showDebtImportPreview(newRows, "Excel file", statusEl);
+    }
   } catch (err) {
     alert("Could not read that Excel file. Expected columns: Name, Category, Sub-category, Account No., Invested Amount, ROI, Maturity Amount, Invested Date, Maturity Date, Tenure Months, Notes.");
   }
   e.target.value = "";
+});
+
+// Google Sheet import: reads the same Apps Script Web App already
+// used for live prices (PRICE_API_URL) — the app just expects the
+// JSON payload to also carry a "debt" array now, one object per row
+// on a "Debt" tab, keyed by that tab's own header text (same
+// convention as stocks/mf/gold). See PROJECT_CONTEXT.md for the
+// doGet() change needed on Ganesh's Apps Script to add this.
+document.getElementById("btnImportDebtSheet").addEventListener("click", async () => {
+  const statusEl = document.getElementById("debtImportStatus");
+  statusEl.textContent = "Fetching from Google Sheet...";
+  let data;
+  try {
+    data = await fetchPriceData();
+  } catch (e) {
+    statusEl.textContent = sheetErrorMessage(e);
+    return;
+  }
+  if (!Array.isArray(data.debt)) {
+    statusEl.textContent = "";
+    alert('Your Apps Script doesn\'t return a "debt" array yet. Add a Debt tab to the Sheet and extend doGet() to include it under a "debt" key, the same way Stocks/Mutual Funds/Gold are already returned — see PROJECT_CONTEXT.md for the exact snippet.');
+    return;
+  }
+  const newRows = parseDebtSheetRows(data.debt);
+  statusEl.textContent = "";
+  if (newRows.length === 0) {
+    alert('No valid Debt rows found on the Debt tab of your Google Sheet — check that each row has at least a Name.');
+    return;
+  }
+  showDebtImportPreview(newRows, "Google Sheet", statusEl);
 });
 
 /* ============================================================
