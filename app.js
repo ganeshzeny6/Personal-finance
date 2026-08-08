@@ -313,6 +313,7 @@ document.getElementById("btnLockPortfolio").addEventListener("click", () => {
   saveState();
   updateLockButton();
   renderEquity();
+  renderDebt();
   renderMF();
   renderGold();
 });
@@ -689,24 +690,25 @@ function renderDebt() {
     tbody.innerHTML = '<tr class="empty-row"><td colspan="14">No entries match this filter.</td></tr>';
   }
 
+  const locked = state.portfolioLocked;
   displayRows.forEach(row => {
     const d = debtDerived(row);
     const tr = document.createElement("tr");
     tr.dataset.id = row.id;
     tr.innerHTML = `
-      <td class="left"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name"></td>
-      <td class="left"><input type="text" value="${escapeAttr(row.category || "")}" data-field="category"></td>
-      <td class="left"><input type="text" value="${escapeAttr(row.subcategory || "")}" data-field="subcategory"></td>
-      <td class="left"><input type="text" value="${escapeAttr(row.account || "")}" data-field="account"></td>
-      <td><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested"></td>
-      <td><input type="number" step="any" value="${row.roi ?? ""}" data-field="roi"></td>
-      <td><input type="number" step="any" value="${row.maturityAmount ?? ""}" data-field="maturityAmount"></td>
+      <td class="left"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" ${locked ? "disabled" : ""}></td>
+      <td class="left"><input type="text" value="${escapeAttr(row.category || "")}" data-field="category" ${locked ? "disabled" : ""}></td>
+      <td class="left"><input type="text" value="${escapeAttr(row.subcategory || "")}" data-field="subcategory" ${locked ? "disabled" : ""}></td>
+      <td class="left"><input type="text" value="${escapeAttr(row.account || "")}" data-field="account" ${locked ? "disabled" : ""}></td>
+      <td><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
+      <td><input type="number" step="any" value="${row.roi ?? ""}" data-field="roi" ${locked ? "disabled" : ""}></td>
+      <td><input type="number" step="any" value="${row.maturityAmount ?? ""}" data-field="maturityAmount" ${locked ? "disabled" : ""}></td>
       <td class="c-profit ${plClass(d.profit)}">${fmtNum(d.profit)}</td>
-      <td><input type="date" value="${row.investedDate || ""}" data-field="investedDate"></td>
-      <td><input type="date" value="${row.maturityDate || ""}" data-field="maturityDate"></td>
-      <td><input type="number" step="any" value="${row.tenureMonths ?? ""}" data-field="tenureMonths"></td>
+      <td><input type="date" value="${row.investedDate || ""}" data-field="investedDate" ${locked ? "disabled" : ""}></td>
+      <td><input type="date" value="${row.maturityDate || ""}" data-field="maturityDate" ${locked ? "disabled" : ""}></td>
+      <td><input type="number" step="any" value="${row.tenureMonths ?? ""}" data-field="tenureMonths" ${locked ? "disabled" : ""}></td>
       <td class="c-years">${fmtNum(d.years, 1)}</td>
-      <td class="left"><input type="text" value="${escapeAttr(row.notes || "")}" data-field="notes"></td>
+      <td class="left"><input type="text" value="${escapeAttr(row.notes || "")}" data-field="notes" ${locked ? "disabled" : ""}></td>
       <td class="row-actions"><button class="icon-btn" title="Remove">✕</button></td>
     `;
     tr.querySelectorAll("input").forEach(inp => {
