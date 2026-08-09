@@ -23,6 +23,16 @@ const STORAGE_KEY = "ledger_data_v1";
 // "Symbol", "Live Price").
 const PRICE_API_URL = "https://script.google.com/macros/s/AKfycbxT5Mgu9hhXdIA6kbfRfT_RhyWJNb6UYbbWBjte0jWh-9Zk4QmyiTLNJveQYLeUoTNBHw/exec";
 
+// Separate Apps Script Web App — its own standalone project/deployment,
+// unrelated to PRICE_API_URL above. It scans a designated Google Drive
+// folder for the most recently modified Zerodha Console Holdings
+// export (.xlsx), converts it to a temporary Google Sheet, reads the
+// Stocks / Mutual funds / Gold tabs, and returns their rows as JSON —
+// an alternative to picking the file from local disk via "Import
+// Zerodha Holdings". See ZerodhaHoldingsImport.gs for the script this
+// URL comes from. Replace with your own deployment's /exec URL.
+const HOLDINGS_API_URL = "https://script.google.com/macros/s/AKfycbxVhXBRtZvfmGNjFEaKwOQE54-u-OrC5oGfiFuEjBN7KDJhwW1PE-2OmnzcjXux8MOZ/exec";
+
 const DEFAULT_IDEAL = { cash: 5, debt: 30, mf: 30, equity: 25, gold: 10 };
 
 const ASSET_COLORS = {
@@ -502,6 +512,45 @@ async function fetchPriceData() {
   } catch (parseErr) {
     const e = new Error("The Price API didn't return valid JSON — check the doGet() script for errors (try opening the /exec URL directly in a browser tab).");
     e.kind = "parse";
+    throw e;
+  }
+  return json;
+}
+
+// Fetches the Drive-scanned Zerodha Holdings JSON from HOLDINGS_API_URL.
+// Mirrors fetchPriceData()'s error handling/messages exactly, but is a
+// fully separate function since it talks to a separate Apps Script
+// deployment — a failure here should never be confused with a
+// PRICE_API_URL failure in the UI's error text.
+async function fetchHoldingsData() {
+  let res;
+  try {
+    res = await fetch(HOLDINGS_API_URL, { cache: "no-store" });
+  } catch (networkErr) {
+    const e = new Error("Network/CORS: the browser blocked or couldn't complete this request.");
+    e.kind = "network";
+    throw e;
+  }
+  if (!res.ok) {
+    const e = new Error(`Holdings API returned HTTP ${res.status}. Check the Apps Script Web App deployment is still active and set to "Anyone" access.`);
+    e.kind = "http";
+    throw e;
+  }
+  let json;
+  try {
+    json = await res.json();
+  } catch (parseErr) {
+    const e = new Error("The Holdings API didn't return valid JSON — check the doGet() script for errors (try opening the /exec URL directly in a browser tab).");
+    e.kind = "parse";
+    throw e;
+  }
+  // doGet() reports its own errors (e.g. "no .xlsx in folder") as
+  // { error: "..." } with an HTTP 200, since Apps Script Web Apps
+  // can't easily return non-200 status codes — surface that the
+  // same way a network/HTTP failure would be.
+  if (json && json.error) {
+    const e = new Error(json.error);
+    e.kind = "app";
     throw e;
   }
   return json;
@@ -1685,6 +1734,32 @@ function parseHoldingsSheetRows(rows) {
   return out;
 }
 
+// Same junk-row-filtering and value-parsing rules as
+// parseHoldingsSheetRows() above, but for row *objects* keyed by
+// header text (what HOLDINGS_API_URL / the Drive import returns)
+// instead of positional arrays (what SheetJS gives the local-file
+// import). A row only counts as a real holding if it has both a
+// Qty. and a Buy avg. — same rule, same reason (drops Zerodha's two
+// export-artifact rows per real holding).
+function parseHoldingsSheetObjects(rows) {
+  const out = [];
+  if (!Array.isArray(rows)) return out;
+  rows.forEach(obj => {
+    const keys = Object.keys(obj);
+    const findVal = (candidates) => {
+      const k = keys.find(k => candidates.some(c => c.toLowerCase() === k.trim().toLowerCase()));
+      return k !== undefined ? obj[k] : undefined;
+    };
+    const symbol = String(findVal(["Symbol"]) ?? "").replace(/\u00a0/g, "").trim();
+    const qty = parseIndianNumber(findVal(["Qty."]));
+    const buyAvg = parseIndianNumber(findVal(["Buy avg."]));
+    if (!symbol || qty === null || buyAvg === null) return;
+    const buyValue = parseIndianNumber(findVal(["Buy value"]));
+    out.push({ symbol, qty, buyAvg, buyValue: buyValue !== null ? buyValue : qty * buyAvg });
+  });
+  return out;
+}
+
 // Builds the match/add/duplicate plan for one asset class. Later
 // occurrences of the same key within the import win (last row is
 // treated as the true value); earlier ones are reported as
@@ -1820,10 +1895,15 @@ function showNewInvestmentsReminder(newInvestments) {
 // that one asset class's data — so importing on the Equity tab never
 // touches Mutual Funds or Gold, even though all three live in the one
 // uploaded file.
+// dataKey is the key each asset class's rows live under in the JSON
+// HOLDINGS_API_URL returns (see ZerodhaHoldingsImport.gs) — separate
+// from sheetName, which is the tab name inside the local .xlsx file;
+// the two happen to differ ("stocks" vs "Stocks") so both are kept
+// explicit rather than derived from one another.
 const ZERODHA_TAB_CONFIG = {
-  equity: { sheetName: ZERODHA_SHEETS.equity, label: "Equity (Stocks)", getExisting: () => state.equity, apply: applyEquityZerodhaPlan },
-  mf:     { sheetName: ZERODHA_SHEETS.mf,     label: "Mutual Funds",    getExisting: () => state.mf,     apply: applyMFZerodhaPlan, needsCategoryEnrich: true },
-  gold:   { sheetName: ZERODHA_SHEETS.gold,   label: "Gold",            getExisting: () => state.gold,   apply: applyGoldZerodhaPlan }
+  equity: { sheetName: ZERODHA_SHEETS.equity, dataKey: "stocks", label: "Equity (Stocks)", statusElId: "equityFetchStatus", getExisting: () => state.equity, apply: applyEquityZerodhaPlan },
+  mf:     { sheetName: ZERODHA_SHEETS.mf,     dataKey: "mf",     label: "Mutual Funds",    statusElId: "mfFetchStatus",     getExisting: () => state.mf,     apply: applyMFZerodhaPlan, needsCategoryEnrich: true },
+  gold:   { sheetName: ZERODHA_SHEETS.gold,   dataKey: "gold",   label: "Gold",            statusElId: "goldFetchStatus",   getExisting: () => state.gold,   apply: applyGoldZerodhaPlan }
 };
 
 // Counts, out of `names`, how many have a row in categoryMap — used
@@ -1835,6 +1915,62 @@ function countCategoryMatches(names, categoryMap) {
   return { found, total: names.length };
 }
 
+// Shared by both the local-file and Google-Drive Zerodha import
+// paths: once rows have been parsed into {symbol, qty, buyAvg,
+// buyValue} objects (regardless of source), this builds the
+// match/add/duplicate plan, does Mutual-Fund category enrichment
+// when needed, and shows the same preview-and-confirm modal either
+// path already used before this Drive-import feature existed.
+// extraNoteHTML (optional) is prepended above the plan summary —
+// used by the Drive path to show which source file was read.
+async function runZerodhaImportFlow(assetKey, rows, extraNoteHTML) {
+  const cfg = ZERODHA_TAB_CONFIG[assetKey];
+  const norm = s => String(s || "").trim().toUpperCase();
+  const plan = planAssetClass(rows, cfg.getExisting(), r => norm(r.symbol), (row, r) => norm(row.name) === norm(r.symbol));
+
+  // Mutual Funds only: also fetch the live-price sheet so Symbol/
+  // Category/Sub-category can be auto-filled alongside Units/
+  // Invested, instead of needing a separate manual Excel import.
+  let categoryMap = null;
+  let categoryFetchError = null;
+  let categoryHTML = "";
+  if (cfg.needsCategoryEnrich) {
+    const statusEl = document.getElementById("mfFetchStatus");
+    if (statusEl) statusEl.textContent = "Fetching Category/Sub-category/Symbol from live-price sheet...";
+    try {
+      const data = await fetchPriceData();
+      categoryMap = buildMFCategoryMap(data.mf);
+    } catch (err) {
+      categoryFetchError = err;
+    }
+    if (statusEl) statusEl.textContent = "";
+    if (categoryFetchError) {
+      categoryHTML = `<p style="color:var(--negative)">Could not fetch Symbol/Category/Sub-category from your live-price sheet (${escapeAttr(sheetErrorMessage(categoryFetchError))}). Units and Invested Amount will still be updated normally — Symbol/Category/Sub-category will be left as they are.</p>`;
+    } else {
+      const allNames = [...plan.matched.map(m => m.imported.symbol), ...plan.added.map(a => a.symbol)];
+      const stats = countCategoryMatches(allNames, categoryMap);
+      categoryHTML = `<p>${stats.found} of ${stats.total} fund(s) matched a row on your live-price sheet's Mutual Funds tab — Symbol, Category and Sub-category will be filled in for those automatically. The rest are left as-is; add them to the sheet and re-import to pick them up.</p>`;
+    }
+  }
+
+  openModal(
+    `Import Zerodha Holdings — ${cfg.label} — Preview`,
+    (extraNoteHTML || "") + singleAssetPlanSummaryHTML(cfg.label, plan) + categoryHTML,
+    [
+      { label: "Cancel", onClick: closeModal },
+      {
+        label: "Confirm Import", primary: true, onClick: () => {
+          const newInvestments = cfg.apply(plan, categoryMap);
+          closeModal();
+          showNewInvestmentsReminder(newInvestments);
+        }
+      }
+    ]
+  );
+}
+
+// Local-file path: reads the uploaded .xlsx via SheetJS, pulls out
+// just this asset class's sheet, then hands off to the shared flow.
 function setupZerodhaTabImport(inputId, assetKey) {
   const cfg = ZERODHA_TAB_CONFIG[assetKey];
   const input = document.getElementById(inputId);
@@ -1860,55 +1996,49 @@ function setupZerodhaTabImport(inputId, assetKey) {
       e.target.value = "";
       return;
     }
-    const norm = s => String(s || "").trim().toUpperCase();
-    const plan = planAssetClass(rows, cfg.getExisting(), r => norm(r.symbol), (row, r) => norm(row.name) === norm(r.symbol));
-
-    // Mutual Funds only: also fetch the live-price sheet so Symbol/
-    // Category/Sub-category can be auto-filled alongside Units/
-    // Invested, instead of needing a separate manual Excel import.
-    let categoryMap = null;
-    let categoryFetchError = null;
-    let categoryHTML = "";
-    if (cfg.needsCategoryEnrich) {
-      const statusEl = document.getElementById("mfFetchStatus");
-      if (statusEl) statusEl.textContent = "Fetching Category/Sub-category/Symbol from live-price sheet...";
-      try {
-        const data = await fetchPriceData();
-        categoryMap = buildMFCategoryMap(data.mf);
-      } catch (err) {
-        categoryFetchError = err;
-      }
-      if (statusEl) statusEl.textContent = "";
-      if (categoryFetchError) {
-        categoryHTML = `<p style="color:var(--negative)">Could not fetch Symbol/Category/Sub-category from your live-price sheet (${escapeAttr(sheetErrorMessage(categoryFetchError))}). Units and Invested Amount will still be updated normally — Symbol/Category/Sub-category will be left as they are.</p>`;
-      } else {
-        const allNames = [...plan.matched.map(m => m.imported.symbol), ...plan.added.map(a => a.symbol)];
-        const stats = countCategoryMatches(allNames, categoryMap);
-        categoryHTML = `<p>${stats.found} of ${stats.total} fund(s) matched a row on your live-price sheet's Mutual Funds tab — Symbol, Category and Sub-category will be filled in for those automatically. The rest are left as-is; add them to the sheet and re-import to pick them up.</p>`;
-      }
-    }
-
-    openModal(
-      `Import Zerodha Holdings — ${cfg.label} — Preview`,
-      singleAssetPlanSummaryHTML(cfg.label, plan) + categoryHTML,
-      [
-        { label: "Cancel", onClick: closeModal },
-        {
-          label: "Confirm Import", primary: true, onClick: () => {
-            const newInvestments = cfg.apply(plan, categoryMap);
-            closeModal();
-            showNewInvestmentsReminder(newInvestments);
-          }
-        }
-      ]
-    );
+    await runZerodhaImportFlow(assetKey, rows);
     e.target.value = "";
+  });
+}
+
+// Google-Drive path: fetches already-parsed holdings from
+// HOLDINGS_API_URL (a separate Apps Script Web App that scans a
+// designated Drive folder for the most recently modified Zerodha
+// Holdings export) instead of reading a local file, then hands off
+// to the exact same shared flow as the file-based import above.
+function setupZerodhaDriveImport(buttonId, assetKey) {
+  const cfg = ZERODHA_TAB_CONFIG[assetKey];
+  const btn = document.getElementById(buttonId);
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    const statusEl = document.getElementById(cfg.statusElId);
+    if (statusEl) statusEl.textContent = "Fetching from Google Drive...";
+    let data;
+    try {
+      data = await fetchHoldingsData();
+    } catch (err) {
+      if (statusEl) statusEl.textContent = sheetErrorMessage(err);
+      return;
+    }
+    if (statusEl) statusEl.textContent = "";
+    const rawRows = data[cfg.dataKey];
+    if (!Array.isArray(rawRows)) {
+      alert(`The Drive import didn't return a "${cfg.dataKey}" sheet for ${cfg.label} — check the doGet() script and that the source workbook has a "${cfg.sheetName}" tab.`);
+      return;
+    }
+    const rows = parseHoldingsSheetObjects(rawRows);
+    const sourceNote = `<p class="settings-note">Source: ${escapeAttr(data.sourceFileName || "(unknown file)")}${data.fileUpdated ? " — last updated " + new Date(data.fileUpdated).toLocaleString() : ""}</p>`;
+    await runZerodhaImportFlow(assetKey, rows, sourceNote);
   });
 }
 
 setupZerodhaTabImport("importZerodhaEquityFile", "equity");
 setupZerodhaTabImport("importZerodhaMFFile", "mf");
 setupZerodhaTabImport("importZerodhaGoldFile", "gold");
+
+setupZerodhaDriveImport("btnImportZerodhaEquityDrive", "equity");
+setupZerodhaDriveImport("btnImportZerodhaMFDrive", "mf");
+setupZerodhaDriveImport("btnImportZerodhaGoldDrive", "gold");
 
 /* ============================================================
    EXPORT / IMPORT (full JSON backup)
