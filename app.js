@@ -31,7 +31,7 @@ const PRICE_API_URL = "https://script.google.com/macros/s/AKfycbxT5Mgu9hhXdIA6kb
 // an alternative to picking the file from local disk via "Import
 // Zerodha Holdings". See ZerodhaHoldingsImport.gs for the script this
 // URL comes from. Replace with your own deployment's /exec URL.
-const HOLDINGS_API_URL = "PASTE_YOUR_HOLDINGS_APPS_SCRIPT_WEB_APP_URL_HERE";
+const HOLDINGS_API_URL = "https://script.google.com/macros/s/AKfycbxVhXBRtZvfmGNjFEaKwOQE54-u-OrC5oGfiFuEjBN7KDJhwW1PE-2OmnzcjXux8MOZ/exec";
 
 const DEFAULT_IDEAL = { cash: 5, debt: 30, mf: 30, equity: 25, gold: 10 };
 

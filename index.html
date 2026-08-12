@@ -146,7 +146,20 @@
   .stat-card.hero .value{color:var(--gold);font-size:26px;}
   .stat-card .subvalue{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);margin-top:4px;}
   .cash-edit{display:flex;align-items:center;gap:6px;margin-top:8px;}
-  .cash-edit input{width:100%;}
+  .cash-edit input{
+    width:100%;
+    background:var(--surface-2);
+    border:1px solid var(--border);
+    border-radius:8px;
+    color:var(--text);
+    font-family:var(--font-mono);
+    font-size:15px;
+    padding:9px 11px;
+  }
+  .cash-edit input::placeholder{color:var(--text-faint);}
+  .cash-edit input:hover{border-color:var(--text-faint);}
+  .cash-edit input:focus{border-color:var(--gold);outline:none;background:var(--surface);}
+  .cash-edit input:disabled{opacity:.55;cursor:not-allowed;}
 
   .dash-grid{display:grid;grid-template-columns:1.6fr 1fr;gap:16px;}
   @media (max-width:900px){.dash-grid{grid-template-columns:1fr;}}
@@ -381,12 +394,17 @@
      scrolling through every card. */
   .mobile-totals{
     display:none;
+    justify-content:space-between;
+    gap:10px;
     position:sticky;top:0;z-index:10;
     background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
     padding:8px 14px;margin-bottom:12px;
   }
-  .mobile-totals .row{display:flex;justify-content:space-between;font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.03em;}
-  .mobile-totals .vals{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:13.5px;font-weight:600;margin-top:2px;}
+  .mobile-totals > div{flex:1 1 0;min-width:0;}
+  .mobile-totals > div:nth-child(2){text-align:center;}
+  .mobile-totals > div:last-child{text-align:right;}
+  .mobile-totals .row{font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;}
+  .mobile-totals .vals{font-family:var(--font-mono);font-size:13.5px;font-weight:600;margin-top:2px;white-space:nowrap;}
 
   .mobile-sort-row{display:none;align-items:center;gap:8px;margin-bottom:10px;}
   .mobile-sort-row select{
@@ -932,6 +950,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-08-10-1"></script>
+<script src="app.js?v=2026-08-12-1"></script>
 </body>
 </html>
