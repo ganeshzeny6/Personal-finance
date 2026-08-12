@@ -157,11 +157,20 @@
     font-size:22px;
     font-weight:600;
     padding:4px 6px;
+    -webkit-appearance:none;
+    appearance:none;
   }
   .cash-edit input::placeholder{color:var(--text-faint);font-weight:400;}
-  .cash-edit input:hover{border-color:var(--border);}
+  .cash-edit input:hover:not(:disabled){border-color:var(--border);}
   .cash-edit input:focus{border-color:var(--gold);outline:none;background:var(--surface-2);}
-  .cash-edit input:disabled{opacity:.55;cursor:not-allowed;}
+  .cash-edit input:disabled{
+    opacity:1;
+    -webkit-text-fill-color:var(--text);
+    color:var(--text);
+    background:transparent;
+    border-color:transparent;
+    cursor:default;
+  }
 
   .dash-grid{display:grid;grid-template-columns:1.6fr 1fr;gap:16px;}
   @media (max-width:900px){.dash-grid{grid-template-columns:1fr;}}
@@ -545,7 +554,7 @@
       <div class="stat-card">
         <div class="label">Cash on hand</div>
         <div class="cash-edit">
-          <input type="number" id="cashInput" placeholder="0" step="any">
+          <input type="text" inputmode="decimal" id="cashInput" placeholder="0">
         </div>
       </div>
     </div>
@@ -969,6 +978,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-08-12-2"></script>
+<script src="app.js?v=2026-08-12-3"></script>
 </body>
 </html>

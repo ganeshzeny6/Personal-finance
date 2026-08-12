@@ -1365,7 +1365,7 @@ document.getElementById("btnRefreshGold").addEventListener("click", () => {
 
 function renderDashboard() {
   const cashInput = document.getElementById("cashInput");
-  if (document.activeElement !== cashInput) cashInput.value = state.cash || "";
+  if (document.activeElement !== cashInput) cashInput.value = state.cash ? fmtINR(state.cash) : "";
   cashInput.disabled = state.portfolioLocked;
 
   const eq = equityTotals();
@@ -1479,11 +1479,24 @@ function renderPieChart(classes, netWorth) {
   });
 }
 
-document.getElementById("cashInput").addEventListener("change", (e) => {
-  state.cash = parseFloat(e.target.value) || 0;
-  saveState();
-  renderDashboard();
-});
+// The Cash on hand field displays a formatted currency value
+// (matching the look of the other stat cards) whenever it isn't
+// focused, and switches to a plain editable number while typing.
+(() => {
+  const cashInputEl = document.getElementById("cashInput");
+  cashInputEl.addEventListener("focus", () => {
+    cashInputEl.value = state.cash || "";
+  });
+  cashInputEl.addEventListener("blur", () => {
+    const cleaned = cashInputEl.value.replace(/[^\d.-]/g, "");
+    const val = parseFloat(cleaned) || 0;
+    if (val !== state.cash) {
+      state.cash = val;
+      saveState();
+    }
+    renderDashboard();
+  });
+})();
 
 /* ============================================================
    EXCEL IMPORT — Stocks, Mutual Funds, Gold
