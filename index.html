@@ -331,6 +331,126 @@
     .tabs{padding:0 14px;}
     .brand .mark{font-size:16px;line-height:1.3;}
   }
+
+  /* ============================================================
+     MOBILE CARD VIEW (<=700px)
+     Below this width, every data table's rows render as stacked
+     cards instead of horizontally-scrolling table rows — the
+     underlying <table> markup, sort/filter state, and every input's
+     event handlers are unchanged; this is a display-mode swap only.
+     ============================================================ */
+  .mobile-only{display:none;}
+  .fab-add{display:none;}
+
+  @media (max-width:700px){
+    .table-scroll{border:none;overflow:visible;}
+    table.data-table{table-layout:auto;min-width:0 !important;width:100%;}
+    .data-table thead, .data-table tfoot{display:none;}
+    .data-table tbody{display:block;}
+    .data-table tbody tr{
+      display:block;position:relative;
+      background:var(--surface);border:1px solid var(--border);border-radius:12px;
+      padding:12px 14px;margin-bottom:10px;
+    }
+    .data-table tbody tr.empty-row{background:none;border:none;padding:22px 0;text-align:center;}
+    .data-table tbody tr.maturity-overdue{border-left:3px solid var(--negative);}
+    .data-table tbody tr.maturity-soon{border-left:3px solid var(--warning);}
+    .data-table td{
+      display:flex;align-items:center;justify-content:space-between;gap:10px;
+      border-bottom:none;padding:5px 0;white-space:normal;
+    }
+    .data-table td.sticky-col{
+      position:static;box-shadow:none;background:transparent;
+      display:block;padding:0 0 10px;margin-bottom:8px;border-bottom:1px solid var(--border);
+    }
+    .data-table td.sticky-col input{font-size:15px;font-weight:600;padding:0;}
+    .data-table td[data-label]::before{
+      content:attr(data-label);color:var(--text-faint);font-size:10.5px;
+      text-transform:uppercase;letter-spacing:.04em;flex:0 0 auto;
+    }
+    .data-table td input, .data-table td select{
+      width:auto;max-width:60%;text-align:right;font-size:14px;padding:6px 4px;
+    }
+    .data-table td.left input, .data-table td.left select{text-align:right;}
+    .data-table td.row-actions{position:absolute;top:10px;right:12px;padding:0;}
+    .data-table .col-resizer{display:none;}
+  }
+
+  /* Sticky mobile totals strip — mirrors the desktop <tfoot> figures,
+     shown above the card list so key numbers stay visible without
+     scrolling through every card. */
+  .mobile-totals{
+    display:none;
+    position:sticky;top:0;z-index:10;
+    background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
+    padding:8px 14px;margin-bottom:12px;
+  }
+  .mobile-totals .row{display:flex;justify-content:space-between;font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.03em;}
+  .mobile-totals .vals{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:13.5px;font-weight:600;margin-top:2px;}
+
+  .mobile-sort-row{display:none;align-items:center;gap:8px;margin-bottom:10px;}
+  .mobile-sort-row select{
+    flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
+    color:var(--text);font-family:var(--font-body);font-size:12.5px;padding:7px 9px;
+  }
+  .mobile-sort-dir{
+    background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
+    color:var(--text);width:34px;height:34px;flex:0 0 auto;cursor:pointer;font-size:13px;
+  }
+
+  .toolbar-secondary{display:contents;}
+  .toolbar-overflow-toggle{display:none;}
+
+  @media (max-width:700px){
+    .mobile-totals, .mobile-sort-row{display:flex;}
+    .table-toolbar{position:relative;}
+    .toolbar-overflow-toggle{display:inline-flex;align-items:center;justify-content:center;width:34px;padding:0;}
+    .toolbar-secondary{
+      display:none;width:100%;order:5;
+      flex-direction:column;align-items:stretch;gap:6px;
+      margin-top:8px;padding-top:8px;border-top:1px solid var(--border);
+    }
+    .toolbar-secondary.open{display:flex;}
+    .toolbar-secondary .btn, .toolbar-secondary label.btn{width:100%;text-align:center;}
+    .table-toolbar .filter-input{flex:1;min-width:0;width:auto;}
+  }
+
+  .fab-add{
+    position:fixed;bottom:22px;right:20px;z-index:40;
+    width:50px;height:50px;border-radius:50%;
+    background:var(--gold);color:#1b1408;border:none;
+    font-size:24px;line-height:1;cursor:pointer;
+    box-shadow:0 4px 14px #00000066;
+    align-items:center;justify-content:center;
+  }
+  @media (max-width:700px){
+    .panel.active .fab-add{display:flex;}
+  }
+
+  /* Dashboard's allocation table — same card-list treatment, scoped
+     narrowly to this one table so it never touches the fixed-width
+     .data-table layout the four asset-class tabs use. */
+  @media (max-width:700px){
+    #panel-dashboard .table-scroll table{table-layout:auto;}
+    #panel-dashboard table thead, #panel-dashboard table tfoot{display:none;}
+    #panel-dashboard table tbody{display:block;}
+    #panel-dashboard table tbody tr{
+      display:block;background:var(--surface);border:1px solid var(--border);
+      border-radius:12px;padding:12px 14px;margin-bottom:10px;
+    }
+    #panel-dashboard table tbody td{
+      display:flex;align-items:center;justify-content:space-between;gap:10px;
+      border-bottom:none;padding:5px 0;
+    }
+    #panel-dashboard table tbody td:first-child{
+      padding:0 0 10px;margin-bottom:8px;border-bottom:1px solid var(--border);
+    }
+    #panel-dashboard table tbody td[data-label]::before{
+      content:attr(data-label);color:var(--text-faint);font-size:10.5px;
+      text-transform:uppercase;letter-spacing:.04em;
+    }
+    #panel-dashboard table tbody td .ideal-input{width:70px;}
+  }
 </style>
 </head>
 <body>
@@ -435,15 +555,46 @@
     <div class="table-toolbar">
       <div class="left-group">
         <button class="btn btn-primary" id="btnAddStock">+ Add stock</button>
-        <button class="btn" id="btnRefreshStocks">Refresh live prices</button>
-        <label class="btn btn-ghost" for="importStockFile">Import from Excel</label>
-        <input type="file" id="importStockFile" accept=".xlsx,.xls">
-        <label class="btn btn-ghost" for="importZerodhaEquityFile" title="Reads only the &quot;Stocks&quot; sheet from a Zerodha Console Holdings export">Import Zerodha Holdings</label>
-        <input type="file" id="importZerodhaEquityFile" accept=".xlsx,.xls">
-        <button class="btn btn-ghost" id="btnImportZerodhaEquityDrive" title="Fetches the most recently modified Zerodha Holdings export from your designated Google Drive folder — no file picker needed">Import from Google Drive</button>
+        <div class="toolbar-secondary" id="equityToolbarSecondary">
+          <button class="btn" id="btnRefreshStocks">Refresh live prices</button>
+          <label class="btn btn-ghost" for="importStockFile">Import from Excel</label>
+          <input type="file" id="importStockFile" accept=".xlsx,.xls">
+          <label class="btn btn-ghost" for="importZerodhaEquityFile" title="Reads only the &quot;Stocks&quot; sheet from a Zerodha Console Holdings export">Import Zerodha Holdings</label>
+          <input type="file" id="importZerodhaEquityFile" accept=".xlsx,.xls">
+          <button class="btn btn-ghost" id="btnImportZerodhaEquityDrive" title="Fetches the most recently modified Zerodha Holdings export from your designated Google Drive folder — no file picker needed">Import from Google Drive</button>
+        </div>
+        <button class="btn toolbar-overflow-toggle" id="equityOverflowToggle" title="More actions">⋯</button>
         <input type="text" class="filter-input" id="equityFilter" placeholder="Filter...">
         <span class="status-tag" id="equityFetchStatus"></span>
       </div>
+    </div>
+    <div class="mobile-totals" id="equityMobileTotals">
+      <div>
+        <div class="row"><span>Invested</span></div>
+        <div class="vals"><span id="eqMobTotalInvested">₹0</span></div>
+      </div>
+      <div>
+        <div class="row"><span>Current</span></div>
+        <div class="vals"><span id="eqMobTotalCurrent">₹0</span></div>
+      </div>
+      <div>
+        <div class="row"><span>P&amp;L</span></div>
+        <div class="vals"><span id="eqMobTotalPL">₹0</span></div>
+      </div>
+    </div>
+    <div class="mobile-sort-row">
+      <select id="equityMobileSort">
+        <option value="">Sort: default</option>
+        <option value="name">Name</option>
+        <option value="invested">Invested Amt</option>
+        <option value="units">Units</option>
+        <option value="ltp">LTP</option>
+        <option value="currentValue">Current Value</option>
+        <option value="pl">P&amp;L</option>
+        <option value="plPct">P&amp;L %</option>
+        <option value="allocPct" selected>Alloc %</option>
+      </select>
+      <button class="mobile-sort-dir" id="equityMobileSortDir" title="Toggle ascending/descending">↓</button>
     </div>
     <div class="fail-panel" id="equityFailPanel" style="display:none"></div>
 
@@ -484,6 +635,7 @@
         </tfoot>
       </table>
     </div>
+    <button class="fab-add" id="fabAddStock" title="Add stock" aria-label="Add stock">+</button>
   </section>
 
   <!-- ============ DEBT ============ -->
@@ -494,12 +646,43 @@
     <div class="table-toolbar">
       <div class="left-group">
         <button class="btn btn-primary" id="btnAddDebt">+ Add entry</button>
-        <label class="btn btn-ghost" for="importDebtFile" title="Overwrites all existing Debt entries with the contents of the file">Import from Excel</label>
-        <input type="file" id="importDebtFile" accept=".xlsx,.xls">
-        <button class="btn btn-ghost" id="btnImportDebtSheet" title="Overwrites all existing Debt entries with the Debt tab of your Google Sheet">Import from Google Sheet</button>
+        <div class="toolbar-secondary" id="debtToolbarSecondary">
+          <label class="btn btn-ghost" for="importDebtFile" title="Overwrites all existing Debt entries with the contents of the file">Import from Excel</label>
+          <input type="file" id="importDebtFile" accept=".xlsx,.xls">
+          <button class="btn btn-ghost" id="btnImportDebtSheet" title="Overwrites all existing Debt entries with the Debt tab of your Google Sheet">Import from Google Sheet</button>
+        </div>
+        <button class="btn toolbar-overflow-toggle" id="debtOverflowToggle" title="More actions">⋯</button>
         <input type="text" class="filter-input" id="debtFilter" placeholder="Filter...">
         <span class="status-tag" id="debtImportStatus"></span>
       </div>
+    </div>
+    <div class="mobile-totals" id="debtMobileTotals">
+      <div>
+        <div class="row"><span>Invested</span></div>
+        <div class="vals"><span id="debtMobTotalInvested">₹0</span></div>
+      </div>
+      <div>
+        <div class="row"><span>Maturity</span></div>
+        <div class="vals"><span id="debtMobTotalMaturity">₹0</span></div>
+      </div>
+      <div>
+        <div class="row"><span>Profit</span></div>
+        <div class="vals"><span id="debtMobTotalProfit">₹0</span></div>
+      </div>
+    </div>
+    <div class="mobile-sort-row">
+      <select id="debtMobileSort">
+        <option value="">Sort: default</option>
+        <option value="name">Name</option>
+        <option value="category">Category</option>
+        <option value="invested">Invested Amt</option>
+        <option value="roi">ROI %</option>
+        <option value="maturityAmount">Maturity Amt</option>
+        <option value="profit">Profit</option>
+        <option value="investedDate">Invested Date</option>
+        <option value="maturityDate" selected>Maturity Date</option>
+      </select>
+      <button class="mobile-sort-dir" id="debtMobileSortDir" title="Toggle ascending/descending">↑</button>
     </div>
 
     <div class="table-scroll">
@@ -543,6 +726,7 @@
         </tfoot>
       </table>
     </div>
+    <button class="fab-add" id="fabAddDebt" title="Add entry" aria-label="Add entry">+</button>
   </section>
 
   <!-- ============ MUTUAL FUNDS ============ -->
@@ -553,15 +737,48 @@
     <div class="table-toolbar">
       <div class="left-group">
         <button class="btn btn-primary" id="btnAddMF">+ Add fund</button>
-        <button class="btn" id="btnRefreshMF">Refresh live NAV</button>
-        <label class="btn btn-ghost" for="importMFFile">Import from Excel</label>
-        <input type="file" id="importMFFile" accept=".xlsx,.xls">
-        <label class="btn btn-ghost" for="importZerodhaMFFile" title="Reads only the &quot;Mutual funds&quot; sheet from a Zerodha Console Holdings export">Import Zerodha Holdings</label>
-        <input type="file" id="importZerodhaMFFile" accept=".xlsx,.xls">
-        <button class="btn btn-ghost" id="btnImportZerodhaMFDrive" title="Fetches the most recently modified Zerodha Holdings export from your designated Google Drive folder — no file picker needed">Import from Google Drive</button>
+        <div class="toolbar-secondary" id="mfToolbarSecondary">
+          <button class="btn" id="btnRefreshMF">Refresh live NAV</button>
+          <label class="btn btn-ghost" for="importMFFile">Import from Excel</label>
+          <input type="file" id="importMFFile" accept=".xlsx,.xls">
+          <label class="btn btn-ghost" for="importZerodhaMFFile" title="Reads only the &quot;Mutual funds&quot; sheet from a Zerodha Console Holdings export">Import Zerodha Holdings</label>
+          <input type="file" id="importZerodhaMFFile" accept=".xlsx,.xls">
+          <button class="btn btn-ghost" id="btnImportZerodhaMFDrive" title="Fetches the most recently modified Zerodha Holdings export from your designated Google Drive folder — no file picker needed">Import from Google Drive</button>
+        </div>
+        <button class="btn toolbar-overflow-toggle" id="mfOverflowToggle" title="More actions">⋯</button>
         <input type="text" class="filter-input" id="mfFilter" placeholder="Filter...">
         <span class="status-tag" id="mfFetchStatus"></span>
       </div>
+    </div>
+    <div class="mobile-totals" id="mfMobileTotals">
+      <div>
+        <div class="row"><span>Invested</span></div>
+        <div class="vals"><span id="mfMobTotalInvested">₹0</span></div>
+      </div>
+      <div>
+        <div class="row"><span>Current</span></div>
+        <div class="vals"><span id="mfMobTotalCurrent">₹0</span></div>
+      </div>
+      <div>
+        <div class="row"><span>P&amp;L</span></div>
+        <div class="vals"><span id="mfMobTotalPL">₹0</span></div>
+      </div>
+    </div>
+    <div class="mobile-sort-row">
+      <select id="mfMobileSort">
+        <option value="">Sort: default</option>
+        <option value="name">Name</option>
+        <option value="symbol">Symbol</option>
+        <option value="category">Category</option>
+        <option value="invested">Invested Amt</option>
+        <option value="units">Units</option>
+        <option value="unitPrice">NAV</option>
+        <option value="currentValue">Current Value</option>
+        <option value="pl">P&amp;L</option>
+        <option value="plPct">P&amp;L %</option>
+        <option value="allocPct" selected>Alloc %</option>
+      </select>
+      <button class="mobile-sort-dir" id="mfMobileSortDir" title="Toggle ascending/descending">↓</button>
     </div>
     <div class="fail-panel" id="mfFailPanel" style="display:none"></div>
 
@@ -608,6 +825,7 @@
         </tfoot>
       </table>
     </div>
+    <button class="fab-add" id="fabAddMF" title="Add fund" aria-label="Add fund">+</button>
   </section>
 
   <!-- ============ GOLD ============ -->
@@ -618,15 +836,47 @@
     <div class="table-toolbar">
       <div class="left-group">
         <button class="btn btn-primary" id="btnAddGold">+ Add holding</button>
-        <button class="btn" id="btnRefreshGold">Refresh live prices</button>
-        <label class="btn btn-ghost" for="importGoldFile">Import from Excel</label>
-        <input type="file" id="importGoldFile" accept=".xlsx,.xls">
-        <label class="btn btn-ghost" for="importZerodhaGoldFile" title="Reads only the &quot;Gold&quot; sheet from a Zerodha Console Holdings export">Import Zerodha Holdings</label>
-        <input type="file" id="importZerodhaGoldFile" accept=".xlsx,.xls">
-        <button class="btn btn-ghost" id="btnImportZerodhaGoldDrive" title="Fetches the most recently modified Zerodha Holdings export from your designated Google Drive folder — no file picker needed">Import from Google Drive</button>
+        <div class="toolbar-secondary" id="goldToolbarSecondary">
+          <button class="btn" id="btnRefreshGold">Refresh live prices</button>
+          <label class="btn btn-ghost" for="importGoldFile">Import from Excel</label>
+          <input type="file" id="importGoldFile" accept=".xlsx,.xls">
+          <label class="btn btn-ghost" for="importZerodhaGoldFile" title="Reads only the &quot;Gold&quot; sheet from a Zerodha Console Holdings export">Import Zerodha Holdings</label>
+          <input type="file" id="importZerodhaGoldFile" accept=".xlsx,.xls">
+          <button class="btn btn-ghost" id="btnImportZerodhaGoldDrive" title="Fetches the most recently modified Zerodha Holdings export from your designated Google Drive folder — no file picker needed">Import from Google Drive</button>
+        </div>
+        <button class="btn toolbar-overflow-toggle" id="goldOverflowToggle" title="More actions">⋯</button>
         <input type="text" class="filter-input" id="goldFilter" placeholder="Filter...">
         <span class="status-tag" id="goldFetchStatus"></span>
       </div>
+    </div>
+    <div class="mobile-totals" id="goldMobileTotals">
+      <div>
+        <div class="row"><span>Invested</span></div>
+        <div class="vals"><span id="goldMobTotalInvested">₹0</span></div>
+      </div>
+      <div>
+        <div class="row"><span>Current</span></div>
+        <div class="vals"><span id="goldMobTotalCurrent">₹0</span></div>
+      </div>
+      <div>
+        <div class="row"><span>P&amp;L</span></div>
+        <div class="vals"><span id="goldMobTotalPL">₹0</span></div>
+      </div>
+    </div>
+    <div class="mobile-sort-row">
+      <select id="goldMobileSort">
+        <option value="">Sort: default</option>
+        <option value="name">Name</option>
+        <option value="form">Form</option>
+        <option value="weight">Weight/Units</option>
+        <option value="purchaseRate">Purchase Rate</option>
+        <option value="invested">Invested Amt</option>
+        <option value="currentRate">Current Rate</option>
+        <option value="currentValue">Current Value</option>
+        <option value="pl">P&amp;L</option>
+        <option value="plPct">P&amp;L %</option>
+      </select>
+      <button class="mobile-sort-dir" id="goldMobileSortDir" title="Toggle ascending/descending">↑</button>
     </div>
     <div class="fail-panel" id="goldFailPanel" style="display:none"></div>
 
@@ -667,6 +917,7 @@
         </tfoot>
       </table>
     </div>
+    <button class="fab-add" id="fabAddGold" title="Add holding" aria-label="Add holding">+</button>
   </section>
 
 </main>
@@ -681,6 +932,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-08-09-1"></script>
+<script src="app.js?v=2026-08-10-1"></script>
 </body>
 </html>

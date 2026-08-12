@@ -31,7 +31,7 @@ const PRICE_API_URL = "https://script.google.com/macros/s/AKfycbxT5Mgu9hhXdIA6kb
 // an alternative to picking the file from local disk via "Import
 // Zerodha Holdings". See ZerodhaHoldingsImport.gs for the script this
 // URL comes from. Replace with your own deployment's /exec URL.
-const HOLDINGS_API_URL = "https://script.google.com/macros/s/AKfycbxVhXBRtZvfmGNjFEaKwOQE54-u-OrC5oGfiFuEjBN7KDJhwW1PE-2OmnzcjXux8MOZ/exec";
+const HOLDINGS_API_URL = "PASTE_YOUR_HOLDINGS_APPS_SCRIPT_WEB_APP_URL_HERE";
 
 const DEFAULT_IDEAL = { cash: 5, debt: 30, mf: 30, equity: 25, gold: 10 };
 
@@ -165,9 +165,9 @@ modalOverlay.addEventListener("click", (e) => {
    ============================================================ */
 
 const tableUI = {
-  equity: { sortCol: null, sortDir: 1, filter: "" },
-  debt:   { sortCol: null, sortDir: 1, filter: "" },
-  mf:     { sortCol: null, sortDir: 1, filter: "" },
+  equity: { sortCol: "allocPct", sortDir: -1, filter: "" },
+  debt:   { sortCol: "maturityDate", sortDir: 1, filter: "" },
+  mf:     { sortCol: "allocPct", sortDir: -1, filter: "" },
   gold:   { sortCol: null, sortDir: 1, filter: "" }
 };
 
@@ -221,6 +221,80 @@ function setupSortAndFilter(tableKey, theadSelector, filterInputId, onChange) {
     tableUI[tableKey].filter = filterInput.value;
     onChange();
   });
+}
+
+// Marks the desktop header that matches tableUI[tableKey]'s current
+// sortCol with the right asc/desc arrow — needed once at init since
+// Equity/MF/Debt now start with a non-null default sort (Alloc % /
+// Alloc % / Maturity Date) rather than "unsorted".
+function markInitialSortIndicator(tableKey, theadSelector) {
+  const ui = tableUI[tableKey];
+  if (!ui.sortCol) return;
+  const th = document.querySelector(`${theadSelector} th.sortable[data-col="${ui.sortCol}"]`);
+  if (th) th.classList.add(ui.sortDir === 1 ? "sort-asc" : "sort-desc");
+}
+
+// Wires the mobile-only "Sort: <select>" + direction-toggle button
+// that stands in for clicking a column header (headers aren't visible
+// in the card layout). Reuses the exact same tableUI state the
+// desktop click-to-sort headers use, and keeps those headers' arrow
+// indicators in sync so switching between mobile/desktop widths (or
+// just resizing the window) never shows stale state either way.
+function setupMobileSort(tableKey, selectId, dirBtnId, theadSelector, onChange) {
+  const select = document.getElementById(selectId);
+  const dirBtn = document.getElementById(dirBtnId);
+  if (!select) return;
+  const ui = tableUI[tableKey];
+  select.value = ui.sortCol || "";
+  if (dirBtn) dirBtn.textContent = ui.sortDir === 1 ? "↑" : "↓";
+
+  const syncDesktopHeaders = () => {
+    document.querySelectorAll(`${theadSelector} th.sortable`).forEach(h => h.classList.remove("sort-asc", "sort-desc"));
+    if (ui.sortCol) {
+      const th = document.querySelector(`${theadSelector} th.sortable[data-col="${ui.sortCol}"]`);
+      if (th) th.classList.add(ui.sortDir === 1 ? "sort-asc" : "sort-desc");
+    }
+  };
+
+  select.addEventListener("change", () => {
+    ui.sortCol = select.value || null;
+    ui.sortDir = 1;
+    if (dirBtn) dirBtn.textContent = "↑";
+    syncDesktopHeaders();
+    onChange();
+  });
+  if (dirBtn) {
+    dirBtn.addEventListener("click", () => {
+      if (!ui.sortCol) return;
+      ui.sortDir = -ui.sortDir;
+      dirBtn.textContent = ui.sortDir === 1 ? "↑" : "↓";
+      syncDesktopHeaders();
+      onChange();
+    });
+  }
+}
+
+// Wires a mobile "⋯" overflow toggle button to show/hide the
+// secondary action buttons (Refresh, Import Excel, Import Zerodha,
+// Import from Drive) that would otherwise crowd a phone-width
+// toolbar. Desktop is unaffected — .toolbar-secondary is `display:
+// contents` above the 700px breakpoint, so the buttons sit inline
+// exactly as before and this toggle never even renders.
+function setupOverflowToggle(toggleId, secondaryId) {
+  const toggle = document.getElementById(toggleId);
+  const secondary = document.getElementById(secondaryId);
+  if (!toggle || !secondary) return;
+  toggle.addEventListener("click", () => secondary.classList.toggle("open"));
+}
+
+// Wires a mobile floating "+" button to trigger the same "+ Add ..."
+// button each tab already has — no separate add logic, just a
+// second, thumb-reachable entry point into the existing handler.
+function setupFabAdd(fabId, addBtnId) {
+  const fab = document.getElementById(fabId);
+  const addBtn = document.getElementById(addBtnId);
+  if (!fab || !addBtn) return;
+  fab.addEventListener("click", () => addBtn.click());
 }
 
 // Lightweight drag-to-resize for one column, via its <col>
@@ -399,14 +473,14 @@ function renderEquity() {
     tr.dataset.id = row.id;
     tr.innerHTML = `
       <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" placeholder="e.g. TCS.NS" ${locked ? "disabled" : ""}></td>
-      <td><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
-      <td><input type="number" step="any" value="${row.units ?? ""}" data-field="units" ${locked ? "disabled" : ""}></td>
-      <td class="c-avg">${fmtNum(d.avgPrice)}</td>
-      <td><div class="price-cell"><input type="number" step="any" value="${row.ltp ?? ""}" data-field="ltp" ${locked ? "disabled" : ""}>${pendingBadge}</div></td>
-      <td class="c-cv">${fmtNum(d.currentValue)}</td>
-      <td class="c-pl ${plClass(d.pl)}">${fmtNum(d.pl)}</td>
-      <td class="c-plpct ${plClass(d.pl)}">${fmtPct(d.plPct)}</td>
-      <td class="c-alloc">${fmtNum(allocPct)}%</td>
+      <td data-label="Invested Amt"><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
+      <td data-label="Units"><input type="number" step="any" value="${row.units ?? ""}" data-field="units" ${locked ? "disabled" : ""}></td>
+      <td class="c-avg" data-label="Avg Price">${fmtNum(d.avgPrice)}</td>
+      <td data-label="LTP"><div class="price-cell"><input type="number" step="any" value="${row.ltp ?? ""}" data-field="ltp" ${locked ? "disabled" : ""}>${pendingBadge}</div></td>
+      <td class="c-cv" data-label="Current Value">${fmtNum(d.currentValue)}</td>
+      <td class="c-pl ${plClass(d.pl)}" data-label="P&amp;L">${fmtNum(d.pl)}</td>
+      <td class="c-plpct ${plClass(d.pl)}" data-label="P&amp;L %">${fmtPct(d.plPct)}</td>
+      <td class="c-alloc" data-label="Alloc %">${fmtNum(allocPct)}%</td>
       <td class="row-actions"><button class="icon-btn" title="Remove">✕</button></td>
     `;
     tr.querySelectorAll("input").forEach(inp => {
@@ -435,6 +509,11 @@ function renderEquity() {
   const plPctCell = document.getElementById("eqTotalPLPct");
   plPctCell.textContent = fmtPct(totals.plPct);
   plPctCell.className = plClass(totals.pl);
+  document.getElementById("eqMobTotalInvested").textContent = fmtINR(totals.invested);
+  document.getElementById("eqMobTotalCurrent").textContent = fmtINR(totals.current);
+  const mobPlCell = document.getElementById("eqMobTotalPL");
+  mobPlCell.textContent = fmtINR(totals.pl);
+  mobPlCell.className = plClass(totals.pl);
 }
 
 // Lightweight refresh used on every keystroke-commit (input `change`):
@@ -467,6 +546,11 @@ function updateEquityComputed() {
   const plPctCell = document.getElementById("eqTotalPLPct");
   plPctCell.textContent = fmtPct(totals.plPct);
   plPctCell.className = plClass(totals.pl);
+  document.getElementById("eqMobTotalInvested").textContent = fmtINR(totals.invested);
+  document.getElementById("eqMobTotalCurrent").textContent = fmtINR(totals.current);
+  const mobPlCell = document.getElementById("eqMobTotalPL");
+  mobPlCell.textContent = fmtINR(totals.pl);
+  mobPlCell.className = plClass(totals.pl);
 }
 
 document.getElementById("btnAddStock").addEventListener("click", () => {
@@ -761,20 +845,22 @@ function renderDebt() {
     const d = debtDerived(row);
     const tr = document.createElement("tr");
     tr.dataset.id = row.id;
+    const mStatus = maturityStatus(row.maturityDate);
+    if (mStatus) tr.classList.add(mStatus);
     tr.innerHTML = `
       <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" ${locked ? "disabled" : ""}></td>
-      <td class="left"><input type="text" value="${escapeAttr(row.category || "")}" data-field="category" ${locked ? "disabled" : ""}></td>
-      <td class="left"><input type="text" value="${escapeAttr(row.subcategory || "")}" data-field="subcategory" ${locked ? "disabled" : ""}></td>
-      <td class="left"><input type="text" value="${escapeAttr(row.account || "")}" data-field="account" ${locked ? "disabled" : ""}></td>
-      <td><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
-      <td><input type="number" step="any" value="${row.roi ?? ""}" data-field="roi" ${locked ? "disabled" : ""}></td>
-      <td><input type="number" step="any" value="${row.maturityAmount ?? ""}" data-field="maturityAmount" ${locked ? "disabled" : ""}></td>
-      <td class="c-profit ${plClass(d.profit)}">${fmtNum(d.profit)}</td>
-      <td><input type="date" value="${row.investedDate || ""}" data-field="investedDate" ${locked ? "disabled" : ""}></td>
-      <td class="c-maturity ${maturityStatus(row.maturityDate)}"><input type="date" value="${row.maturityDate || ""}" data-field="maturityDate" ${locked ? "disabled" : ""}></td>
-      <td><input type="number" step="any" value="${row.tenureMonths ?? ""}" data-field="tenureMonths" ${locked ? "disabled" : ""}></td>
-      <td class="c-years">${fmtNum(d.years, 1)}</td>
-      <td class="left"><input type="text" value="${escapeAttr(row.notes || "")}" data-field="notes" ${locked ? "disabled" : ""}></td>
+      <td class="left" data-label="Category"><input type="text" value="${escapeAttr(row.category || "")}" data-field="category" ${locked ? "disabled" : ""}></td>
+      <td class="left" data-label="Sub-category"><input type="text" value="${escapeAttr(row.subcategory || "")}" data-field="subcategory" ${locked ? "disabled" : ""}></td>
+      <td class="left" data-label="Account No."><input type="text" value="${escapeAttr(row.account || "")}" data-field="account" ${locked ? "disabled" : ""}></td>
+      <td data-label="Invested Amt"><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
+      <td data-label="ROI %"><input type="number" step="any" value="${row.roi ?? ""}" data-field="roi" ${locked ? "disabled" : ""}></td>
+      <td data-label="Maturity Amt"><input type="number" step="any" value="${row.maturityAmount ?? ""}" data-field="maturityAmount" ${locked ? "disabled" : ""}></td>
+      <td class="c-profit ${plClass(d.profit)}" data-label="Profit">${fmtNum(d.profit)}</td>
+      <td data-label="Invested Date"><input type="date" value="${row.investedDate || ""}" data-field="investedDate" ${locked ? "disabled" : ""}></td>
+      <td class="c-maturity ${mStatus}" data-label="Maturity Date"><input type="date" value="${row.maturityDate || ""}" data-field="maturityDate" ${locked ? "disabled" : ""}></td>
+      <td data-label="Tenure (Mo)"><input type="number" step="any" value="${row.tenureMonths ?? ""}" data-field="tenureMonths" ${locked ? "disabled" : ""}></td>
+      <td class="c-years" data-label="Tenure (Yr)">${fmtNum(d.years, 1)}</td>
+      <td class="left" data-label="Notes"><input type="text" value="${escapeAttr(row.notes || "")}" data-field="notes" ${locked ? "disabled" : ""}></td>
       <td class="row-actions"><button class="icon-btn" title="Remove">✕</button></td>
     `;
     tr.querySelectorAll("input").forEach(inp => {
@@ -802,6 +888,11 @@ function renderDebt() {
   const profitCell = document.getElementById("debtTotalProfit");
   profitCell.textContent = fmtINR(totals.profit);
   profitCell.className = plClass(totals.profit);
+  document.getElementById("debtMobTotalInvested").textContent = fmtINR(totals.invested);
+  document.getElementById("debtMobTotalMaturity").textContent = fmtINR(totals.maturity);
+  const mobProfitCell = document.getElementById("debtMobTotalProfit");
+  mobProfitCell.textContent = fmtINR(totals.profit);
+  mobProfitCell.className = plClass(totals.profit);
 }
 
 function updateDebtComputed() {
@@ -814,8 +905,11 @@ function updateDebtComputed() {
     profitCell.textContent = fmtNum(d.profit);
     profitCell.className = "c-profit " + plClass(d.profit);
     tr.querySelector(".c-years").textContent = fmtNum(d.years, 1);
+    const mStatus = maturityStatus(row.maturityDate);
     const maturityCell = tr.querySelector(".c-maturity");
-    if (maturityCell) maturityCell.className = ("c-maturity " + maturityStatus(row.maturityDate)).trim();
+    if (maturityCell) maturityCell.className = ("c-maturity " + mStatus).trim();
+    tr.classList.remove("maturity-overdue", "maturity-soon");
+    if (mStatus) tr.classList.add(mStatus);
   });
   const totals = debtTotals();
   document.getElementById("debtTotalInvested").textContent = fmtINR(totals.invested);
@@ -823,6 +917,11 @@ function updateDebtComputed() {
   const totalProfitCell = document.getElementById("debtTotalProfit");
   totalProfitCell.textContent = fmtINR(totals.profit);
   totalProfitCell.className = plClass(totals.profit);
+  document.getElementById("debtMobTotalInvested").textContent = fmtINR(totals.invested);
+  document.getElementById("debtMobTotalMaturity").textContent = fmtINR(totals.maturity);
+  const mobProfitCell = document.getElementById("debtMobTotalProfit");
+  mobProfitCell.textContent = fmtINR(totals.profit);
+  mobProfitCell.className = plClass(totals.profit);
 }
 
 document.getElementById("btnAddDebt").addEventListener("click", () => {
@@ -912,18 +1011,18 @@ function renderMF() {
     tr.dataset.id = row.id;
     tr.innerHTML = `
       <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" ${locked ? "disabled" : ""}></td>
-      <td class="left"><input type="text" value="${escapeAttr(row.symbol || "")}" data-field="symbol" placeholder="Symbol" ${locked ? "disabled" : ""}></td>
-      <td class="left"><input type="text" value="${escapeAttr(row.category || "")}" data-field="category" ${locked ? "disabled" : ""}></td>
-      <td class="left"><input type="text" value="${escapeAttr(row.subcategory || "")}" data-field="subcategory" ${locked ? "disabled" : ""}></td>
-      <td><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
-      <td><input type="number" step="any" value="${row.units ?? ""}" data-field="units" ${locked ? "disabled" : ""}></td>
-      <td class="c-avg">${fmtNum(d.avgPrice)}</td>
-      <td><div class="price-cell"><input type="number" step="any" value="${row.unitPrice ?? ""}" data-field="unitPrice" ${locked ? "disabled" : ""}>${pendingBadge}</div></td>
-      <td class="c-cv">${fmtNum(d.currentValue)}</td>
-      <td class="c-pl ${plClass(d.pl)}">${fmtNum(d.pl)}</td>
-      <td class="c-plpct ${plClass(d.pl)}">${fmtPct(d.plPct)}</td>
-      <td class="c-alloc">${fmtNum(allocPct)}%</td>
-      <td class="left"><input type="text" value="${escapeAttr(row.remarks || "")}" data-field="remarks" ${locked ? "disabled" : ""}></td>
+      <td class="left" data-label="Symbol"><input type="text" value="${escapeAttr(row.symbol || "")}" data-field="symbol" placeholder="Symbol" ${locked ? "disabled" : ""}></td>
+      <td class="left" data-label="Category"><input type="text" value="${escapeAttr(row.category || "")}" data-field="category" ${locked ? "disabled" : ""}></td>
+      <td class="left" data-label="Sub-category"><input type="text" value="${escapeAttr(row.subcategory || "")}" data-field="subcategory" ${locked ? "disabled" : ""}></td>
+      <td data-label="Invested Amt"><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
+      <td data-label="Units"><input type="number" step="any" value="${row.units ?? ""}" data-field="units" ${locked ? "disabled" : ""}></td>
+      <td class="c-avg" data-label="Avg Price">${fmtNum(d.avgPrice)}</td>
+      <td data-label="NAV"><div class="price-cell"><input type="number" step="any" value="${row.unitPrice ?? ""}" data-field="unitPrice" ${locked ? "disabled" : ""}>${pendingBadge}</div></td>
+      <td class="c-cv" data-label="Current Value">${fmtNum(d.currentValue)}</td>
+      <td class="c-pl ${plClass(d.pl)}" data-label="P&amp;L">${fmtNum(d.pl)}</td>
+      <td class="c-plpct ${plClass(d.pl)}" data-label="P&amp;L %">${fmtPct(d.plPct)}</td>
+      <td class="c-alloc" data-label="Alloc %">${fmtNum(allocPct)}%</td>
+      <td class="left" data-label="Remarks"><input type="text" value="${escapeAttr(row.remarks || "")}" data-field="remarks" ${locked ? "disabled" : ""}></td>
       <td class="row-actions"><button class="icon-btn" title="Remove">✕</button></td>
     `;
     tr.querySelectorAll("input").forEach(inp => {
@@ -953,6 +1052,11 @@ function renderMF() {
   const plPctCell = document.getElementById("mfTotalPLPct");
   plPctCell.textContent = fmtPct(totals.plPct);
   plPctCell.className = plClass(totals.pl);
+  document.getElementById("mfMobTotalInvested").textContent = fmtINR(totals.invested);
+  document.getElementById("mfMobTotalCurrent").textContent = fmtINR(totals.current);
+  const mobPlCell = document.getElementById("mfMobTotalPL");
+  mobPlCell.textContent = fmtINR(totals.pl);
+  mobPlCell.className = plClass(totals.pl);
 }
 
 function updateMFComputed() {
@@ -981,6 +1085,11 @@ function updateMFComputed() {
   const plPctCell = document.getElementById("mfTotalPLPct");
   plPctCell.textContent = fmtPct(totals.plPct);
   plPctCell.className = plClass(totals.pl);
+  document.getElementById("mfMobTotalInvested").textContent = fmtINR(totals.invested);
+  document.getElementById("mfMobTotalCurrent").textContent = fmtINR(totals.current);
+  const mobPlCell2 = document.getElementById("mfMobTotalPL");
+  mobPlCell2.textContent = fmtINR(totals.pl);
+  mobPlCell2.className = plClass(totals.pl);
 }
 
 document.getElementById("btnAddMF").addEventListener("click", () => {
@@ -1104,7 +1213,7 @@ function renderGold() {
     tr.dataset.id = row.id;
     tr.innerHTML = `
       <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" placeholder="e.g. GOLDBEES.NS" ${locked ? "disabled" : ""}></td>
-      <td class="left">
+      <td class="left" data-label="Form">
         <select data-field="form" ${locked ? "disabled" : ""}>
           <option value="Physical" ${row.form === "Physical" ? "selected" : ""}>Physical</option>
           <option value="Digital" ${row.form === "Digital" ? "selected" : ""}>Digital</option>
@@ -1112,14 +1221,14 @@ function renderGold() {
           <option value="ETF" ${row.form === "ETF" ? "selected" : ""}>ETF</option>
         </select>
       </td>
-      <td><input type="number" step="any" value="${row.weight ?? ""}" data-field="weight" ${locked ? "disabled" : ""}></td>
-      <td><input type="number" step="any" value="${row.purchaseRate ?? ""}" data-field="purchaseRate" ${locked ? "disabled" : ""}></td>
-      <td><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
-      <td><div class="price-cell"><input type="number" step="any" value="${row.currentRate ?? ""}" data-field="currentRate" ${locked ? "disabled" : ""}>${pendingBadge}</div></td>
-      <td class="c-cv">${fmtNum(d.currentValue)}</td>
-      <td class="c-pl ${plClass(d.pl)}">${fmtNum(d.pl)}</td>
-      <td class="c-plpct ${plClass(d.pl)}">${fmtPct(d.plPct)}</td>
-      <td class="left"><input type="text" value="${escapeAttr(row.notes || "")}" data-field="notes" ${locked ? "disabled" : ""}></td>
+      <td data-label="Weight/Units"><input type="number" step="any" value="${row.weight ?? ""}" data-field="weight" ${locked ? "disabled" : ""}></td>
+      <td data-label="Purchase Rate"><input type="number" step="any" value="${row.purchaseRate ?? ""}" data-field="purchaseRate" ${locked ? "disabled" : ""}></td>
+      <td data-label="Invested Amt"><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
+      <td data-label="Current Rate"><div class="price-cell"><input type="number" step="any" value="${row.currentRate ?? ""}" data-field="currentRate" ${locked ? "disabled" : ""}>${pendingBadge}</div></td>
+      <td class="c-cv" data-label="Current Value">${fmtNum(d.currentValue)}</td>
+      <td class="c-pl ${plClass(d.pl)}" data-label="P&amp;L">${fmtNum(d.pl)}</td>
+      <td class="c-plpct ${plClass(d.pl)}" data-label="P&amp;L %">${fmtPct(d.plPct)}</td>
+      <td class="left" data-label="Notes"><input type="text" value="${escapeAttr(row.notes || "")}" data-field="notes" ${locked ? "disabled" : ""}></td>
       <td class="row-actions"><button class="icon-btn" title="Remove">✕</button></td>
     `;
     tr.querySelectorAll("input, select").forEach(inp => {
@@ -1149,6 +1258,11 @@ function renderGold() {
   const plPctCell = document.getElementById("goldTotalPLPct");
   plPctCell.textContent = fmtPct(totals.plPct);
   plPctCell.className = plClass(totals.pl);
+  document.getElementById("goldMobTotalInvested").textContent = fmtINR(totals.invested);
+  document.getElementById("goldMobTotalCurrent").textContent = fmtINR(totals.current);
+  const mobPlCell = document.getElementById("goldMobTotalPL");
+  mobPlCell.textContent = fmtINR(totals.pl);
+  mobPlCell.className = plClass(totals.pl);
 }
 
 function updateGoldComputed() {
@@ -1174,6 +1288,11 @@ function updateGoldComputed() {
   const plPctCell = document.getElementById("goldTotalPLPct");
   plPctCell.textContent = fmtPct(totals.plPct);
   plPctCell.className = plClass(totals.pl);
+  document.getElementById("goldMobTotalInvested").textContent = fmtINR(totals.invested);
+  document.getElementById("goldMobTotalCurrent").textContent = fmtINR(totals.current);
+  const mobPlCell2 = document.getElementById("goldMobTotalPL");
+  mobPlCell2.textContent = fmtINR(totals.pl);
+  mobPlCell2.className = plClass(totals.pl);
 }
 
 document.getElementById("btnAddGold").addEventListener("click", () => {
@@ -1283,11 +1402,11 @@ function renderDashboard() {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td class="left"><div class="alloc-name"><span class="swatch" style="background:${ASSET_COLORS[c.key]}"></span>${c.label}</div></td>
-      <td>${fmtINR(c.current)}</td>
-      <td>${fmtNum(currentPct)}%</td>
-      <td><input class="ideal-input" type="number" step="any" value="${idealPct}" data-key="${c.key}" ${locked ? "disabled" : ""}></td>
-      <td class="${plClass(diffPct)}">${diffPct >= 0 ? "+" : ""}${fmtNum(diffPct)}%</td>
-      <td class="${plClass(diffAmount)}">${diffAmount >= 0 ? "+" : ""}${fmtINR(diffAmount)}</td>
+      <td data-label="Current Value">${fmtINR(c.current)}</td>
+      <td data-label="Current %">${fmtNum(currentPct)}%</td>
+      <td data-label="Ideal %"><input class="ideal-input" type="number" step="any" value="${idealPct}" data-key="${c.key}" ${locked ? "disabled" : ""}></td>
+      <td class="${plClass(diffPct)}" data-label="Diff %">${diffPct >= 0 ? "+" : ""}${fmtNum(diffPct)}%</td>
+      <td class="${plClass(diffAmount)}" data-label="Diff Amount">${diffAmount >= 0 ? "+" : ""}${fmtINR(diffAmount)}</td>
     `;
     tr.querySelector(".ideal-input").addEventListener("change", (e) => {
       state.ideal[c.key] = parseFloat(e.target.value) || 0;
@@ -2396,6 +2515,26 @@ setupSortAndFilter("equity", "#panel-equity thead", "equityFilter", () => { rend
 setupSortAndFilter("debt", "#panel-debt thead", "debtFilter", () => { renderDebt(); });
 setupSortAndFilter("mf", "#panel-mf thead", "mfFilter", () => { renderMF(); });
 setupSortAndFilter("gold", "#panel-gold thead", "goldFilter", () => { renderGold(); });
+
+markInitialSortIndicator("equity", "#panel-equity thead");
+markInitialSortIndicator("debt", "#panel-debt thead");
+markInitialSortIndicator("mf", "#panel-mf thead");
+markInitialSortIndicator("gold", "#panel-gold thead");
+
+setupMobileSort("equity", "equityMobileSort", "equityMobileSortDir", "#panel-equity thead", () => { renderEquity(); });
+setupMobileSort("debt", "debtMobileSort", "debtMobileSortDir", "#panel-debt thead", () => { renderDebt(); });
+setupMobileSort("mf", "mfMobileSort", "mfMobileSortDir", "#panel-mf thead", () => { renderMF(); });
+setupMobileSort("gold", "goldMobileSort", "goldMobileSortDir", "#panel-gold thead", () => { renderGold(); });
+
+setupOverflowToggle("equityOverflowToggle", "equityToolbarSecondary");
+setupOverflowToggle("debtOverflowToggle", "debtToolbarSecondary");
+setupOverflowToggle("mfOverflowToggle", "mfToolbarSecondary");
+setupOverflowToggle("goldOverflowToggle", "goldToolbarSecondary");
+
+setupFabAdd("fabAddStock", "btnAddStock");
+setupFabAdd("fabAddDebt", "btnAddDebt");
+setupFabAdd("fabAddMF", "btnAddMF");
+setupFabAdd("fabAddGold", "btnAddGold");
 
 setupColumnResize("col-eq-name", "#panel-equity .col-resizer");
 setupColumnResize("col-debt-name", "#panel-debt .col-resizer");

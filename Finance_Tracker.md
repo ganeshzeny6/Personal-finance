@@ -290,3 +290,48 @@ Row-object shape (keyed by header text: `Symbol`, `Qty.`, `Buy avg.`, `Buy value
 
 **Still to do (Ganesh's side, not code):** complete the one-time Apps Script setup in `ZerodhaHoldingsImport.gs`'s header comment (enable Advanced Drive Service, create/ID the Drive folder, deploy, get the URL), then paste that URL into `HOLDINGS_API_URL` near the top of `app.js` before the Drive-import buttons will actually work — until then, clicking "Import from Google Drive" will fail with a clear network/HTTP error rather than silently doing nothing.
 
+---
+
+## 12. Mobile card-view redesign (this session)
+
+**Problem:** the app was desktop-only in practice. All four data tables (Equity/Debt/MF/Gold) are wide, fixed-width (`table-layout:fixed`, 955–1615px `min-width`), horizontally-scrolling tables — fine on a PC, but on a phone this meant swiping sideways through most of a row's data even with the Name column frozen, plus a toolbar of 4–6 buttons wrapping into several rows before you even reached the table, plus small (~12.6px) table inputs that trigger iOS Safari's auto-zoom on tap.
+
+**Approach chosen (of three discussed): below a new `700px` breakpoint, every table row renders as a stacked card instead of a horizontally-scrolling row** — pure CSS on top of the exact same DOM, sort/filter state, render functions, and event handlers; **desktop is completely unchanged**, since every mobile rule lives inside `@media (max-width:700px)`. Nothing about how state, calculations, or imports work changed in this session — presentation layer only.
+
+### 12a. How the card view works
+
+- `td[data-label]::before{content:attr(data-label)}` shows the column name next to each value — every `<td>` across all four render functions (`renderEquity`, `renderDebt`, `renderMF`, `renderGold`) and the Dashboard's allocation table now carries a `data-label="..."` attribute matching its header text (the first "Name" column and the "row-actions" remove-button column intentionally have none — the name is the card's own title, the ✕ button is self-explanatory).
+- `table.data-table tbody tr` becomes a bordered, rounded card; `thead`/`tfoot` are hidden (their numbers move to a dedicated mobile summary bar instead — see 12b); the first column (`td.sticky-col`) becomes the card's title row (larger font, bottom border) instead of a desktop frozen column — `position:sticky` is explicitly reset to `position:static` on mobile since there's no horizontal scroll to freeze against anymore.
+- Debt's maturity-soon/overdue tinting now also applies to the whole card via a class added directly to the `<tr>` (`maturityStatus()`'s return value), not just the one date field as on desktop — a left-edge accent border, kept in sync on every edit through `updateDebtComputed()` exactly like the existing `.c-maturity` cell class already was.
+
+### 12b. New mobile-only controls (all hidden above 700px, all reuse existing state/handlers — no parallel logic)
+
+- **Sticky totals bar** (`.mobile-totals`, one per tab plus one implicit via the Dashboard's own already-responsive stat cards) — mirrors the desktop `<tfoot>` figures, updated in the exact same places `renderX()`/`updateXComputed()` already update the desktop footer, just writing to a second set of element IDs (`eqMobTotal*`, `debtMobTotal*`, `mfMobTotal*`, `goldMobTotal*`).
+- **Mobile sort control** (`<select>` + a ↑/↓ direction-toggle button) stands in for clicking a column header, since headers aren't visible in card view. `setupMobileSort()` operates on the exact same `tableUI[tableKey]` object the desktop click-to-sort headers use, and keeps the desktop header's arrow indicator in sync (`syncDesktopHeaders()`), so switching between mobile and desktop widths — or just resizing a window — never shows stale sort state either way.
+- **Overflow menu** (`⋯` toggle button) shows/hides the secondary action buttons (Refresh, Import from Excel, Import Zerodha Holdings, Import from Google Drive) that would otherwise crowd a phone-width toolbar. Implemented as a plain class toggle (`setupOverflowToggle()`) on a wrapper (`.toolbar-secondary`) that's `display:contents` above 700px — meaning on desktop those buttons render exactly as before, inline, with zero visual or behavioral change; the toggle button itself is also hidden on desktop.
+- **Floating "+" button** (`.fab-add`, one per panel, `position:fixed` bottom-right) — `setupFabAdd()` just forwards its click to the existing "+ Add ..." button's `.click()`, so there's no second add-row implementation to keep in sync; CSS shows it only for whichever panel currently has `.active` (`.panel.active .fab-add{display:flex}`), so only one FAB is ever visible at a time without any JS needed to hide the other three.
+
+### 12c. Default sort order (new this session, explicit request)
+
+Previously all four tables started unsorted (insertion order). Now:
+- **Equity, Mutual Funds** default to **Alloc % descending** (`tableUI.equity`/`tableUI.mf = { sortCol: "allocPct", sortDir: -1 }`) — biggest holdings first.
+- **Debt** defaults to **Maturity Date ascending** (`tableUI.debt = { sortCol: "maturityDate", sortDir: 1 }`) — soonest-maturing entries first, so upcoming maturities needing attention surface at the top without having to sort manually.
+- **Gold** stays unsorted by default (not requested).
+- `markInitialSortIndicator()` marks the correct desktop header with its arrow on page load, so the header UI reflects the actual default sort state from the first render rather than only after a manual click. The mobile `<select>` elements have their default `<option>` marked `selected` to match (`allocPct` for Equity/MF, `maturityDate` for Debt).
+- This only changes the *initial* sort state — clicking any header (desktop) or picking any option (mobile) still works exactly as before, on any column, either direction.
+
+### 12d. Also updated: Dashboard allocation table
+
+Same card-list treatment as the four asset-class tabs, but via a separate, narrowly-scoped CSS block (`#panel-dashboard table tbody tr{...}` etc.) rather than reusing `.data-table`'s rules — that table isn't tagged `.data-table` and deliberately wasn't given that class, since `.data-table`'s desktop `table-layout:fixed` divides columns evenly and would have squeezed the Asset Class column (which needs more room for the color swatch + label) on desktop. The Ideal % input still works identically; a small `.ideal-input{width:70px}` override just keeps it from stretching full-width in the card layout.
+
+### 12e. Testing
+
+Verified via Puppeteer at two viewports (1400px desktop, 380px mobile) against the same page load:
+- **Desktop**: confirmed `sticky-col` cells are still `display:table-cell` (not the mobile `block`), the FAB/mobile-totals/mobile-sort-row/overflow-toggle are all `display:none`, and `.toolbar-secondary` renders as `display:contents` (buttons inline, unchanged) — i.e. a real regression check that mobile CSS doesn't leak into desktop rendering.
+- **Desktop, default sort**: confirmed `tableUI.equity`/`mf` start at `{sortCol:"allocPct", sortDir:-1}` and `tableUI.debt` at `{sortCol:"maturityDate", sortDir:1}`; confirmed actual row order on load matches (higher-invested stock row before lower-invested one for Equity; sooner-maturing FD before later one for Debt); confirmed the desktop header shows `sort-desc`/`sort-asc` on load without any click.
+- **Mobile**: confirmed rows render as `display:block` cards, `thead` is hidden, the FAB is `display:flex` and visible only on the active tab, the mobile totals bar shows the correct aggregated figures (cross-checked against manually computed Invested/Current/P&L for the seeded test rows), `data-label` attributes are present and correct, the overflow toggle correctly shows/hides the secondary buttons, a debt row maturing within 30 days gets the amber (`--warning`, `rgb(217,164,65)`) card border, clicking the FAB adds a row through the real `btnAddStock` handler (row count increased by exactly one), and changing the mobile sort `<select>` updates `tableUI` and syncs the desktop header's indicator class.
+- **Dashboard allocation table**: confirmed it also renders as `display:block` cards on mobile with correct `data-label`s and values.
+- **Not retestable in this sandbox**: real touch interaction, iOS Safari's specific auto-zoom behavior on `<input>` focus (the inputs' font-size wasn't changed this session since the card-view inputs already read at 14px in the card layout, above the 16px iOS zoom threshold isn't guaranteed on every input — flag if this still zooms on your phone and I'll bump the specific input font-size), and real-device layout at your actual phone's exact viewport width/browser. Please try it on your phone and report back anything that still looks off.
+
+**`index.html` cache-busting bumped to `app.js?v=2026-08-10-1`.**
+
