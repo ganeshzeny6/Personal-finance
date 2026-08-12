@@ -21,17 +21,20 @@ const STORAGE_KEY = "ledger_data_v1";
 // returns { stocks: [...], mf: [...], gold: [...] }, each row
 // keyed by that tab's actual header text (e.g. "Stock Name",
 // "Symbol", "Live Price").
-const PRICE_API_URL = "https://script.google.com/macros/s/AKfycbxT5Mgu9hhXdIA6kbfRfT_RhyWJNb6UYbbWBjte0jWh-9Zk4QmyiTLNJveQYLeUoTNBHw/exec";
+// These are just the fallback/first-run values — the live URLs actually
+// used by the app live in state.priceApiUrl / state.holdingsApiUrl (see
+// blankState() below), which are editable from the Settings modal so a
+// redeployed Apps Script URL can be updated without touching code.
+const DEFAULT_PRICE_API_URL = "https://script.google.com/macros/s/AKfycbxT5Mgu9hhXdIA6kbfRfT_RhyWJNb6UYbbWBjte0jWh-9Zk4QmyiTLNJveQYLeUoTNBHw/exec";
 
 // Separate Apps Script Web App — its own standalone project/deployment,
-// unrelated to PRICE_API_URL above. It scans a designated Google Drive
+// unrelated to the Price API above. It scans a designated Google Drive
 // folder for the most recently modified Zerodha Console Holdings
 // export (.xlsx), converts it to a temporary Google Sheet, reads the
 // Stocks / Mutual funds / Gold tabs, and returns their rows as JSON —
-// an alternative to picking the file from local disk via "Import
-// Zerodha Holdings". See ZerodhaHoldingsImport.gs for the script this
-// URL comes from. Replace with your own deployment's /exec URL.
-const HOLDINGS_API_URL = "https://script.google.com/macros/s/AKfycbxVhXBRtZvfmGNjFEaKwOQE54-u-OrC5oGfiFuEjBN7KDJhwW1PE-2OmnzcjXux8MOZ/exec";
+// used by each tab's "Import from Google Drive" button. See
+// ZerodhaHoldingsImport.gs for the script this URL comes from.
+const DEFAULT_HOLDINGS_API_URL = "PASTE_YOUR_HOLDINGS_APPS_SCRIPT_WEB_APP_URL_HERE";
 
 const DEFAULT_IDEAL = { cash: 5, debt: 30, mf: 30, equity: 25, gold: 10 };
 
@@ -70,7 +73,14 @@ function blankState() {
     // Equity, Mutual Funds and Gold are read-only in the UI and can
     // only change via "Import Zerodha Holdings". Everything else
     // (name, notes, remarks, category, add/remove row) stays editable.
-    portfolioLocked: false
+    portfolioLocked: false,
+    // Shown in the header/title ("<name>'s Net Worth & Allocation
+    // Tracker") and editable from Settings.
+    ownerName: "Ganesh",
+    // Editable from Settings so a redeployed Apps Script /exec URL
+    // can be updated without touching code.
+    priceApiUrl: DEFAULT_PRICE_API_URL,
+    holdingsApiUrl: DEFAULT_HOLDINGS_API_URL
   };
 }
 
@@ -579,7 +589,7 @@ function sheetErrorMessage(e) {
 async function fetchPriceData() {
   let res;
   try {
-    res = await fetch(PRICE_API_URL, { cache: "no-store" });
+    res = await fetch(state.priceApiUrl, { cache: "no-store" });
   } catch (networkErr) {
     const e = new Error("Network/CORS: the browser blocked or couldn't complete this request.");
     e.kind = "network";
@@ -601,15 +611,15 @@ async function fetchPriceData() {
   return json;
 }
 
-// Fetches the Drive-scanned Zerodha Holdings JSON from HOLDINGS_API_URL.
+// Fetches the Drive-scanned Zerodha Holdings JSON from state.holdingsApiUrl.
 // Mirrors fetchPriceData()'s error handling/messages exactly, but is a
 // fully separate function since it talks to a separate Apps Script
 // deployment — a failure here should never be confused with a
-// PRICE_API_URL failure in the UI's error text.
+// Price API failure in the UI's error text.
 async function fetchHoldingsData() {
   let res;
   try {
-    res = await fetch(HOLDINGS_API_URL, { cache: "no-store" });
+    res = await fetch(state.holdingsApiUrl, { cache: "no-store" });
   } catch (networkErr) {
     const e = new Error("Network/CORS: the browser blocked or couldn't complete this request.");
     e.kind = "network";
@@ -708,10 +718,10 @@ function renderFailPanel(panelId, assetType, failedRows) {
       <tbody>
         ${failedRows.map(f => `
           <tr>
-            <td class="left">${escapeAttr(f.name)}</td>
-            <td class="left">${assetType}</td>
-            <td class="left">${escapeAttr(f.key || "(blank)")}</td>
-            <td class="left">Verify the Google Finance ticker or update the symbol mapping in your Apps Script sheet.</td>
+            <td class="left" data-label="Name">${escapeAttr(f.name)}</td>
+            <td class="left" data-label="Asset Type">${assetType}</td>
+            <td class="left" data-label="Lookup Key Used">${escapeAttr(f.key || "(blank)")}</td>
+            <td class="left" data-label="Suggested Action">Verify the Google Finance ticker or update the symbol mapping in your Apps Script sheet.</td>
           </tr>`).join("")}
       </tbody>
     </table>
@@ -1835,31 +1845,11 @@ function parseIndianNumber(v) {
   return isNaN(n) ? null : n;
 }
 
-// Row 1 is the header (skipped). A row only counts as a real
-// holding if it has both a Qty. and a Buy avg. — the two junk
-// rows Zerodha's export leaves behind never have both, so this
-// one rule is enough to filter them out.
-function parseHoldingsSheetRows(rows) {
-  const out = [];
-  for (let i = 1; i < rows.length; i++) {
-    const r = rows[i];
-    const symbol = String(r[0] ?? "").replace(/\u00a0/g, "").trim();
-    const qty = parseIndianNumber(r[1]);
-    const buyAvg = parseIndianNumber(r[2]);
-    if (!symbol || qty === null || buyAvg === null) continue;
-    const buyValue = parseIndianNumber(r[3]);
-    out.push({ symbol, qty, buyAvg, buyValue: buyValue !== null ? buyValue : qty * buyAvg });
-  }
-  return out;
-}
-
-// Same junk-row-filtering and value-parsing rules as
-// parseHoldingsSheetRows() above, but for row *objects* keyed by
-// header text (what HOLDINGS_API_URL / the Drive import returns)
-// instead of positional arrays (what SheetJS gives the local-file
-// import). A row only counts as a real holding if it has both a
-// Qty. and a Buy avg. — same rule, same reason (drops Zerodha's two
-// export-artifact rows per real holding).
+// Parses row *objects* keyed by header text — what the Drive-import
+// Holdings API returns. A row only counts as a real holding if it has
+// both a Qty. and a Buy avg. — Zerodha's export leaves two artifact
+// rows per real holding that never have both, so this one rule is
+// enough to drop them.
 function parseHoldingsSheetObjects(rows) {
   const out = [];
   if (!Array.isArray(rows)) return out;
@@ -2088,43 +2078,13 @@ async function runZerodhaImportFlow(assetKey, rows, extraNoteHTML) {
   );
 }
 
-// Local-file path: reads the uploaded .xlsx via SheetJS, pulls out
-// just this asset class's sheet, then hands off to the shared flow.
-function setupZerodhaTabImport(inputId, assetKey) {
-  const cfg = ZERODHA_TAB_CONFIG[assetKey];
-  const input = document.getElementById(inputId);
-  if (!input) return;
-  input.addEventListener("change", async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    let sheetFound = false;
-    let rows = [];
-    try {
-      const data = await file.arrayBuffer();
-      const wb = XLSX.read(data, { type: "array", cellDates: true });
-      const ws = wb.Sheets[cfg.sheetName];
-      sheetFound = !!ws;
-      if (ws) rows = parseHoldingsSheetRows(XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: "" }));
-    } catch (err) {
-      alert(`Could not read that file. Expected a Zerodha Console Holdings export (.xlsx) with a "${cfg.sheetName}" sheet.`);
-      e.target.value = "";
-      return;
-    }
-    if (!sheetFound) {
-      alert(`That workbook doesn't have a sheet named exactly "${cfg.sheetName}" — check the tab name in the Zerodha export (the file can still contain the other asset classes' sheets too; only "${cfg.sheetName}" is read here).`);
-      e.target.value = "";
-      return;
-    }
-    await runZerodhaImportFlow(assetKey, rows);
-    e.target.value = "";
-  });
-}
-
-// Google-Drive path: fetches already-parsed holdings from
-// HOLDINGS_API_URL (a separate Apps Script Web App that scans a
-// designated Drive folder for the most recently modified Zerodha
-// Holdings export) instead of reading a local file, then hands off
-// to the exact same shared flow as the file-based import above.
+// Fetches already-parsed holdings from state.holdingsApiUrl (a
+// separate Apps Script Web App that scans a designated Drive folder
+// for the most recently modified Zerodha Holdings export), then hands
+// off to the shared flow above. This is the only Zerodha import path
+// now — the local-file picker version was removed per request; the
+// underlying parse/plan/apply functions are unchanged and still used
+// here.
 function setupZerodhaDriveImport(buttonId, assetKey) {
   const cfg = ZERODHA_TAB_CONFIG[assetKey];
   const btn = document.getElementById(buttonId);
@@ -2151,10 +2111,6 @@ function setupZerodhaDriveImport(buttonId, assetKey) {
   });
 }
 
-setupZerodhaTabImport("importZerodhaEquityFile", "equity");
-setupZerodhaTabImport("importZerodhaMFFile", "mf");
-setupZerodhaTabImport("importZerodhaGoldFile", "gold");
-
 setupZerodhaDriveImport("btnImportZerodhaEquityDrive", "equity");
 setupZerodhaDriveImport("btnImportZerodhaMFDrive", "mf");
 setupZerodhaDriveImport("btnImportZerodhaGoldDrive", "gold");
@@ -2173,11 +2129,12 @@ function downloadBackup() {
   URL.revokeObjectURL(url);
 }
 
-document.getElementById("btnExport").addEventListener("click", () => {
+// Called from the Settings modal's "Export JSON" button.
+function runJsonExport() {
   downloadBackup();
   state.lastBackup = new Date().toISOString();
   saveState();
-});
+}
 
 document.getElementById("importFile").addEventListener("change", (e) => {
   const file = e.target.files[0];
@@ -2291,7 +2248,8 @@ function buildExcelWorkbook() {
   return wb;
 }
 
-document.getElementById("btnExportExcel").addEventListener("click", () => {
+// Called from the Settings modal's "Export Excel" button.
+function runExcelExport() {
   try {
     const wb = buildExcelWorkbook();
     XLSX.writeFile(wb, `networth-backup-${new Date().toISOString().slice(0, 10)}.xlsx`);
@@ -2299,7 +2257,7 @@ document.getElementById("btnExportExcel").addEventListener("click", () => {
     console.error("Excel export failed:", e);
     alert("Could not build the Excel export: " + (e && e.message ? e.message : "unknown error"));
   }
-});
+}
 
 /* ============================================================
    WEEKLY AUTO-BACKUP
@@ -2501,6 +2459,76 @@ function escapeAttr(str) {
   return String(str).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
 
+// Updates the header title and the browser tab title from
+// state.ownerName — called once at startup and again after Settings
+// is saved.
+function renderBrand() {
+  const name = state.ownerName || "Ganesh";
+  const markEl = document.querySelector(".brand .mark");
+  if (markEl) markEl.innerHTML = `${escapeAttr(name)}<span>'s</span> Net Worth &amp; Allocation Tracker`;
+  document.title = `${name}'s Net Worth & Allocation Tracker`;
+}
+
+/* ============================================================
+   SETTINGS MODAL
+   Holds things that used to be scattered in the topbar (Export
+   Excel/JSON, Import JSON) plus two things that were previously
+   hardcoded in app.js: the display name shown in the header, and
+   the two Apps Script Web App URLs (Price API / Holdings API) —
+   editable here now so a redeployed /exec URL never requires a
+   code change. Reuses the app's one generic modal; the body HTML
+   (including the Export/Import controls) is rebuilt fresh every
+   time the modal opens, so its buttons are wired right after
+   openModal() runs rather than once at page load.
+   ============================================================ */
+
+function openSettingsModal() {
+  const html = `
+    <h4>Display</h4>
+    <div class="settings-field">
+      <label for="settingsOwnerName">Your name (shown in the title)</label>
+      <input type="text" id="settingsOwnerName" value="${escapeAttr(state.ownerName || "Ganesh")}">
+    </div>
+
+    <h4>Live Price &amp; Holdings API</h4>
+    <p class="settings-note" style="margin-top:0">Your Google Apps Script Web App URLs. Update them here if you ever redeploy and get a new <code>/exec</code> link — no code changes needed.</p>
+    <div class="settings-field">
+      <label for="settingsPriceApiUrl">Price API URL (Stocks / Mutual Funds / Gold / Debt)</label>
+      <input type="text" id="settingsPriceApiUrl" placeholder="https://script.google.com/macros/s/.../exec" value="${escapeAttr(state.priceApiUrl || "")}">
+    </div>
+    <div class="settings-field">
+      <label for="settingsHoldingsApiUrl">Holdings API URL (Import from Google Drive)</label>
+      <input type="text" id="settingsHoldingsApiUrl" placeholder="https://script.google.com/macros/s/.../exec" value="${escapeAttr(state.holdingsApiUrl || "")}">
+    </div>
+
+    <h4>Backup &amp; Restore</h4>
+    <div class="settings-actions">
+      <button class="btn" id="settingsBtnExportExcel">Export Excel</button>
+      <button class="btn" id="settingsBtnExportJSON">Export JSON</button>
+      <label class="btn btn-ghost" for="importFile">Import JSON</label>
+    </div>
+  `;
+  openModal("Settings", html, [
+    { label: "Cancel", onClick: closeModal },
+    {
+      label: "Save", primary: true, onClick: () => {
+        state.ownerName = document.getElementById("settingsOwnerName").value.trim() || "Ganesh";
+        state.priceApiUrl = document.getElementById("settingsPriceApiUrl").value.trim() || DEFAULT_PRICE_API_URL;
+        state.holdingsApiUrl = document.getElementById("settingsHoldingsApiUrl").value.trim() || DEFAULT_HOLDINGS_API_URL;
+        saveState();
+        renderBrand();
+        closeModal();
+      }
+    }
+  ]);
+  // The buttons above are re-created every time this modal opens, so
+  // wire them fresh each time rather than once at page load.
+  document.getElementById("settingsBtnExportExcel").addEventListener("click", runExcelExport);
+  document.getElementById("settingsBtnExportJSON").addEventListener("click", runJsonExport);
+}
+
+document.getElementById("btnSettings").addEventListener("click", openSettingsModal);
+
 function renderAll() {
   renderEquity();
   renderDebt();
@@ -2542,6 +2570,7 @@ setupColumnResize("col-mf-name", "#panel-mf .col-resizer");
 setupColumnResize("col-gold-name", "#panel-gold .col-resizer");
 
 updateLockButton();
+renderBrand();
 renderAll();
 maybeRunWeeklyBackup();
 initCloudSync();

@@ -145,20 +145,22 @@
   .stat-card.hero{background:linear-gradient(135deg, var(--surface-2), var(--surface));border-color:var(--gold-soft);}
   .stat-card.hero .value{color:var(--gold);font-size:26px;}
   .stat-card .subvalue{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);margin-top:4px;}
-  .cash-edit{display:flex;align-items:center;gap:6px;margin-top:8px;}
+  .cash-edit{display:flex;align-items:center;gap:6px;}
   .cash-edit input{
     width:100%;
-    background:var(--surface-2);
-    border:1px solid var(--border);
-    border-radius:8px;
+    background:transparent;
+    border:1px solid transparent;
+    border-radius:6px;
+    margin:-4px -6px;
     color:var(--text);
     font-family:var(--font-mono);
-    font-size:15px;
-    padding:9px 11px;
+    font-size:22px;
+    font-weight:600;
+    padding:4px 6px;
   }
-  .cash-edit input::placeholder{color:var(--text-faint);}
-  .cash-edit input:hover{border-color:var(--text-faint);}
-  .cash-edit input:focus{border-color:var(--gold);outline:none;background:var(--surface);}
+  .cash-edit input::placeholder{color:var(--text-faint);font-weight:400;}
+  .cash-edit input:hover{border-color:var(--border);}
+  .cash-edit input:focus{border-color:var(--gold);outline:none;background:var(--surface-2);}
   .cash-edit input:disabled{opacity:.55;cursor:not-allowed;}
 
   .dash-grid{display:grid;grid-template-columns:1.6fr 1fr;gap:16px;}
@@ -327,6 +329,14 @@
   .modal-body table{width:100%;font-size:11.8px;margin-top:6px;}
   .modal-body th{background:var(--surface-2);padding:5px 8px;font-size:10px;}
   .modal-body td{padding:5px 8px;font-family:var(--font-body);color:var(--text-muted);white-space:normal;}
+  .settings-field{margin-bottom:14px;}
+  .settings-field label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);margin-bottom:5px;}
+  .settings-field input[type=text]{
+    width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
+    color:var(--text);font-family:var(--font-mono);font-size:13px;padding:8px 10px;
+  }
+  .settings-field input[type=text]:focus{border-color:var(--gold);outline:none;}
+  .settings-actions{display:flex;gap:8px;flex-wrap:wrap;}
   .import-stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin:6px 0 14px;}
   .import-stat{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;}
   .import-stat .n{font-family:var(--font-mono);font-size:18px;font-weight:600;color:var(--text);}
@@ -387,6 +397,23 @@
     .data-table td.left input, .data-table td.left select{text-align:right;}
     .data-table td.row-actions{position:absolute;top:10px;right:12px;padding:0;}
     .data-table .col-resizer{display:none;}
+
+    /* Live-price "not matched" panel — same card-list treatment as
+       the data tables, scoped separately since it's a plain table,
+       not .data-table. */
+    .fail-panel table, .fail-panel thead, .fail-panel tbody,
+    .fail-panel tr, .fail-panel th, .fail-panel td{display:block;width:100%;}
+    .fail-panel thead{display:none;}
+    .fail-panel tbody tr{
+      border:1px solid var(--border);border-radius:10px;
+      padding:10px 12px;margin-bottom:8px;background:var(--surface-2);
+    }
+    .fail-panel tbody tr:last-child{margin-bottom:0;}
+    .fail-panel td{padding:4px 0;white-space:normal;}
+    .fail-panel td[data-label]::before{
+      content:attr(data-label);display:block;color:var(--text-faint);
+      font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:1px;
+    }
   }
 
   /* Sticky mobile totals strip — mirrors the desktop <tfoot> figures,
@@ -481,9 +508,7 @@
     <span class="status-tag" id="lastUpdatedTag">Not saved yet</span>
     <button class="btn" id="btnLockPortfolio" title="When locked, Quantity and Average Price can only change via Import Holdings">🔓 Unlocked</button>
     <button class="btn" id="btnCloudSync" title="Sign in to sync your data across devices">☁️ Sign in with Google</button>
-    <button class="btn btn-ghost" id="btnExportExcel">Export Excel</button>
-    <button class="btn btn-ghost" id="btnExport">Export JSON</button>
-    <label class="btn btn-ghost" for="importFile">Import JSON</label>
+    <button class="btn btn-ghost" id="btnSettings" title="Settings">⚙️ Settings</button>
     <input type="file" id="importFile" accept="application/json">
   </div>
 </div>
@@ -577,8 +602,6 @@
           <button class="btn" id="btnRefreshStocks">Refresh live prices</button>
           <label class="btn btn-ghost" for="importStockFile">Import from Excel</label>
           <input type="file" id="importStockFile" accept=".xlsx,.xls">
-          <label class="btn btn-ghost" for="importZerodhaEquityFile" title="Reads only the &quot;Stocks&quot; sheet from a Zerodha Console Holdings export">Import Zerodha Holdings</label>
-          <input type="file" id="importZerodhaEquityFile" accept=".xlsx,.xls">
           <button class="btn btn-ghost" id="btnImportZerodhaEquityDrive" title="Fetches the most recently modified Zerodha Holdings export from your designated Google Drive folder — no file picker needed">Import from Google Drive</button>
         </div>
         <button class="btn toolbar-overflow-toggle" id="equityOverflowToggle" title="More actions">⋯</button>
@@ -759,8 +782,6 @@
           <button class="btn" id="btnRefreshMF">Refresh live NAV</button>
           <label class="btn btn-ghost" for="importMFFile">Import from Excel</label>
           <input type="file" id="importMFFile" accept=".xlsx,.xls">
-          <label class="btn btn-ghost" for="importZerodhaMFFile" title="Reads only the &quot;Mutual funds&quot; sheet from a Zerodha Console Holdings export">Import Zerodha Holdings</label>
-          <input type="file" id="importZerodhaMFFile" accept=".xlsx,.xls">
           <button class="btn btn-ghost" id="btnImportZerodhaMFDrive" title="Fetches the most recently modified Zerodha Holdings export from your designated Google Drive folder — no file picker needed">Import from Google Drive</button>
         </div>
         <button class="btn toolbar-overflow-toggle" id="mfOverflowToggle" title="More actions">⋯</button>
@@ -858,8 +879,6 @@
           <button class="btn" id="btnRefreshGold">Refresh live prices</button>
           <label class="btn btn-ghost" for="importGoldFile">Import from Excel</label>
           <input type="file" id="importGoldFile" accept=".xlsx,.xls">
-          <label class="btn btn-ghost" for="importZerodhaGoldFile" title="Reads only the &quot;Gold&quot; sheet from a Zerodha Console Holdings export">Import Zerodha Holdings</label>
-          <input type="file" id="importZerodhaGoldFile" accept=".xlsx,.xls">
           <button class="btn btn-ghost" id="btnImportZerodhaGoldDrive" title="Fetches the most recently modified Zerodha Holdings export from your designated Google Drive folder — no file picker needed">Import from Google Drive</button>
         </div>
         <button class="btn toolbar-overflow-toggle" id="goldOverflowToggle" title="More actions">⋯</button>
@@ -950,6 +969,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-08-12-1"></script>
+<script src="app.js?v=2026-08-12-2"></script>
 </body>
 </html>
