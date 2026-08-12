@@ -34,7 +34,7 @@ const DEFAULT_PRICE_API_URL = "https://script.google.com/macros/s/AKfycbxT5Mgu9h
 // Stocks / Mutual funds / Gold tabs, and returns their rows as JSON —
 // used by each tab's "Import from Google Drive" button. See
 // ZerodhaHoldingsImport.gs for the script this URL comes from.
-const DEFAULT_HOLDINGS_API_URL = "PASTE_YOUR_HOLDINGS_APPS_SCRIPT_WEB_APP_URL_HERE";
+const DEFAULT_HOLDINGS_API_URL = "https://script.google.com/macros/s/AKfycbxVhXBRtZvfmGNjFEaKwOQE54-u-OrC5oGfiFuEjBN7KDJhwW1PE-2OmnzcjXux8MOZ/exec";
 
 const DEFAULT_IDEAL = { cash: 5, debt: 30, mf: 30, equity: 25, gold: 10 };
 
