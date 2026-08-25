@@ -156,6 +156,23 @@ function plClass(n) {
   return n > 0 ? "pos" : n < 0 ? "neg" : "muted";
 }
 
+// Rounds a number to `decimals` places for on-screen display only —
+// used as the `value` of editable <input> fields whose stored data
+// (e.g. Invested Amt imported from Zerodha, which can carry 4-6
+// decimal places from qty x avgPrice math) is otherwise too long to
+// fit its column. The full-precision figure stays in the row object
+// untouched; this only affects what's rendered until the field is
+// actually edited by hand. Returns "" for blank/nullish input so it
+// plugs directly into an input's value="${...}" the same way the
+// raw field did.
+function roundedInputValue(v, decimals = 2) {
+  if (v === undefined || v === null || v === "") return "";
+  const n = Number(v);
+  if (isNaN(n)) return "";
+  const p = Math.pow(10, decimals);
+  return Math.round(n * p) / p;
+}
+
 /* ============================================================
    MODAL HELPER
    One generic modal, reused for the Zerodha import preview and
@@ -513,7 +530,7 @@ function renderEquity() {
     tr.innerHTML = `
       <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" placeholder="e.g. TCS.NS" ${locked ? "disabled" : ""}></td>
       <td class="left" data-label="Sector"><input type="text" value="${escapeAttr(row.sector || "")}" data-field="sector" placeholder="e.g. IT" ${locked ? "disabled" : ""}></td>
-      <td data-label="Invested Amt"><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
+      <td data-label="Invested Amt"><input type="number" step="any" value="${roundedInputValue(row.invested)}" data-field="invested" ${locked ? "disabled" : ""}></td>
       <td data-label="Units"><input type="number" step="any" value="${row.units ?? ""}" data-field="units" ${locked ? "disabled" : ""}></td>
       <td class="c-avg" data-label="Avg Price">${fmtNum(d.avgPrice)}</td>
       <td data-label="LTP"><div class="price-cell"><input type="number" step="any" value="${row.ltp ?? ""}" data-field="ltp" ${locked ? "disabled" : ""}>${pendingBadge}</div></td>
@@ -892,9 +909,9 @@ function renderDebt() {
       <td class="left" data-label="Category"><input type="text" value="${escapeAttr(row.category || "")}" data-field="category" ${locked ? "disabled" : ""}></td>
       <td class="left" data-label="Sub-category"><input type="text" value="${escapeAttr(row.subcategory || "")}" data-field="subcategory" ${locked ? "disabled" : ""}></td>
       <td class="left" data-label="Account No."><input type="text" value="${escapeAttr(row.account || "")}" data-field="account" ${locked ? "disabled" : ""}></td>
-      <td data-label="Invested Amt"><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
+      <td data-label="Invested Amt"><input type="number" step="any" value="${roundedInputValue(row.invested)}" data-field="invested" ${locked ? "disabled" : ""}></td>
       <td data-label="ROI %"><input type="number" step="any" value="${row.roi ?? ""}" data-field="roi" ${locked ? "disabled" : ""}></td>
-      <td data-label="Maturity Amt"><input type="number" step="any" value="${row.maturityAmount ?? ""}" data-field="maturityAmount" ${locked ? "disabled" : ""}></td>
+      <td data-label="Maturity Amt"><input type="number" step="any" value="${roundedInputValue(row.maturityAmount)}" data-field="maturityAmount" ${locked ? "disabled" : ""}></td>
       <td class="c-profit ${plClass(d.profit)}" data-label="Profit">${fmtNum(d.profit)}</td>
       <td data-label="Invested Date"><input type="date" value="${row.investedDate || ""}" data-field="investedDate" ${locked ? "disabled" : ""}></td>
       <td class="c-maturity ${mStatus}" data-label="Maturity Date"><input type="date" value="${row.maturityDate || ""}" data-field="maturityDate" ${locked ? "disabled" : ""}></td>
@@ -1052,7 +1069,7 @@ function renderMF() {
       <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" ${locked ? "disabled" : ""}></td>
       <td class="left" data-label="Symbol"><input type="text" value="${escapeAttr(row.symbol || "")}" data-field="symbol" placeholder="Symbol" ${locked ? "disabled" : ""}></td>
       <td class="left" data-label="Category"><input type="text" value="${escapeAttr(row.category || "")}" data-field="category" ${locked ? "disabled" : ""}></td>
-      <td data-label="Invested Amt"><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
+      <td data-label="Invested Amt"><input type="number" step="any" value="${roundedInputValue(row.invested)}" data-field="invested" ${locked ? "disabled" : ""}></td>
       <td data-label="Units"><input type="number" step="any" value="${row.units ?? ""}" data-field="units" ${locked ? "disabled" : ""}></td>
       <td class="c-avg" data-label="Avg Price">${fmtNum(d.avgPrice)}</td>
       <td data-label="NAV"><div class="price-cell"><input type="number" step="any" value="${row.unitPrice ?? ""}" data-field="unitPrice" ${locked ? "disabled" : ""}>${pendingBadge}</div></td>
@@ -1275,7 +1292,7 @@ function renderGold() {
       </td>
       <td data-label="Weight/Units"><input type="number" step="any" value="${row.weight ?? ""}" data-field="weight" ${locked ? "disabled" : ""}></td>
       <td data-label="Purchase Rate"><input type="number" step="any" value="${row.purchaseRate ?? ""}" data-field="purchaseRate" ${locked ? "disabled" : ""}></td>
-      <td data-label="Invested Amt"><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
+      <td data-label="Invested Amt"><input type="number" step="any" value="${roundedInputValue(row.invested)}" data-field="invested" ${locked ? "disabled" : ""}></td>
       <td data-label="Current Rate"><div class="price-cell"><input type="number" step="any" value="${row.currentRate ?? ""}" data-field="currentRate" ${locked ? "disabled" : ""}>${pendingBadge}</div></td>
       <td class="c-cv" data-label="Current Value">${fmtNum(d.currentValue)}</td>
       <td class="c-pl ${plClass(d.pl)}" data-label="P&amp;L">${fmtNum(d.pl)}</td>
