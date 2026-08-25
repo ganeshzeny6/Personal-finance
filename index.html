@@ -244,9 +244,9 @@
   }
   .col-resizer:hover, .col-resizer.resizing{background:var(--gold-soft);}
   table.data-table{table-layout:fixed;width:100%;}
-  #panel-equity table.data-table{min-width:955px;}
+  #panel-equity table.data-table{min-width:1075px;}
   #panel-debt table.data-table{min-width:1615px;}
-  #panel-mf table.data-table{min-width:1520px;}
+  #panel-mf table.data-table{min-width:1400px;}
   #panel-gold table.data-table{min-width:1130px;}
 
   /* Frozen first column (Name/Symbol) — stays put while the rest of a
@@ -515,6 +515,7 @@
   </div>
   <div class="topbar-actions">
     <span class="status-tag" id="lastUpdatedTag">Not saved yet</span>
+    <span class="status-tag" id="offlineTag" style="display:none;color:var(--warning)">⚠️ Offline — read-only until reconnected</span>
     <button class="btn" id="btnLockPortfolio" title="When locked, Quantity and Average Price can only change via Import Holdings">🔓 Unlocked</button>
     <button class="btn" id="btnCloudSync" title="Sign in to sync your data across devices">☁️ Sign in with Google</button>
     <button class="btn btn-ghost" id="btnSettings" title="Settings">⚙️ Settings</button>
@@ -609,9 +610,8 @@
         <button class="btn btn-primary" id="btnAddStock">+ Add stock</button>
         <div class="toolbar-secondary" id="equityToolbarSecondary">
           <button class="btn" id="btnRefreshStocks">Refresh live prices</button>
-          <label class="btn btn-ghost" for="importStockFile">Import from Excel</label>
-          <input type="file" id="importStockFile" accept=".xlsx,.xls">
-          <button class="btn btn-ghost" id="btnImportZerodhaEquityDrive" title="Fetches the most recently modified Zerodha Holdings export from your designated Google Drive folder — no file picker needed">Import from Google Drive</button>
+          <button class="btn btn-ghost" id="btnImportEquity">Import</button>
+          <input type="file" id="importStockFile" accept=".xlsx,.xls" style="display:none">
         </div>
         <button class="btn toolbar-overflow-toggle" id="equityOverflowToggle" title="More actions">⋯</button>
         <input type="text" class="filter-input" id="equityFilter" placeholder="Filter...">
@@ -643,6 +643,7 @@
         <option value="pl">P&amp;L</option>
         <option value="plPct">P&amp;L %</option>
         <option value="allocPct" selected>Alloc %</option>
+        <option value="sector">Sector</option>
       </select>
       <button class="mobile-sort-dir" id="equityMobileSortDir" title="Toggle ascending/descending">↓</button>
     </div>
@@ -654,7 +655,7 @@
           <col id="col-eq-name" style="width:180px">
           <col style="width:100px"><col style="width:80px"><col style="width:90px">
           <col style="width:90px"><col style="width:110px"><col style="width:100px">
-          <col style="width:80px"><col style="width:80px"><col style="width:45px">
+          <col style="width:80px"><col style="width:80px"><col style="width:120px"><col style="width:45px">
         </colgroup>
         <thead>
           <tr>
@@ -667,6 +668,7 @@
             <th class="sortable" data-col="pl">P&amp;L</th>
             <th class="sortable" data-col="plPct">P&amp;L %</th>
             <th class="sortable" data-col="allocPct">Alloc %</th>
+            <th class="left sortable" data-col="sector">Sector</th>
             <th class="row-actions">—</th>
           </tr>
         </thead>
@@ -680,6 +682,7 @@
             <td id="eqTotalPL">₹0</td>
             <td id="eqTotalPLPct">0%</td>
             <td>100%</td>
+            <td></td>
             <td></td>
           </tr>
         </tfoot>
@@ -789,9 +792,8 @@
         <button class="btn btn-primary" id="btnAddMF">+ Add fund</button>
         <div class="toolbar-secondary" id="mfToolbarSecondary">
           <button class="btn" id="btnRefreshMF">Refresh live NAV</button>
-          <label class="btn btn-ghost" for="importMFFile">Import from Excel</label>
-          <input type="file" id="importMFFile" accept=".xlsx,.xls">
-          <button class="btn btn-ghost" id="btnImportZerodhaMFDrive" title="Fetches the most recently modified Zerodha Holdings export from your designated Google Drive folder — no file picker needed">Import from Google Drive</button>
+          <button class="btn btn-ghost" id="btnImportMF">Import</button>
+          <input type="file" id="importMFFile" accept=".xlsx,.xls" style="display:none">
         </div>
         <button class="btn toolbar-overflow-toggle" id="mfOverflowToggle" title="More actions">⋯</button>
         <input type="text" class="filter-input" id="mfFilter" placeholder="Filter...">
@@ -834,7 +836,7 @@
       <table class="data-table">
         <colgroup>
           <col id="col-mf-name" style="width:170px">
-          <col style="width:140px"><col style="width:110px"><col style="width:120px">
+          <col style="width:140px"><col style="width:110px">
           <col style="width:125px"><col style="width:80px"><col style="width:90px">
           <col style="width:90px"><col style="width:110px"><col style="width:120px"><col style="width:90px">
           <col style="width:80px"><col style="width:150px"><col style="width:45px">
@@ -844,7 +846,6 @@
             <th class="left sortable resizable sticky-col" data-col="name">Name<span class="col-resizer"></span></th>
             <th class="left sortable" data-col="symbol">Symbol</th>
             <th class="left sortable" data-col="category">Category</th>
-            <th class="left sortable" data-col="subcategory">Sub-category</th>
             <th class="sortable" data-col="invested">Invested Amt</th>
             <th class="sortable" data-col="units">Units</th>
             <th class="sortable" data-col="avgPrice">Avg Price</th>
@@ -861,7 +862,7 @@
         <tfoot>
           <tr>
             <td class="left sticky-col">Total</td>
-            <td></td><td></td><td></td>
+            <td></td><td></td>
             <td id="mfTotalInvested">₹0</td>
             <td></td><td></td><td></td>
             <td id="mfTotalCurrent">₹0</td>
@@ -886,9 +887,8 @@
         <button class="btn btn-primary" id="btnAddGold">+ Add holding</button>
         <div class="toolbar-secondary" id="goldToolbarSecondary">
           <button class="btn" id="btnRefreshGold">Refresh live prices</button>
-          <label class="btn btn-ghost" for="importGoldFile">Import from Excel</label>
-          <input type="file" id="importGoldFile" accept=".xlsx,.xls">
-          <button class="btn btn-ghost" id="btnImportZerodhaGoldDrive" title="Fetches the most recently modified Zerodha Holdings export from your designated Google Drive folder — no file picker needed">Import from Google Drive</button>
+          <button class="btn btn-ghost" id="btnImportGold">Import</button>
+          <input type="file" id="importGoldFile" accept=".xlsx,.xls" style="display:none">
         </div>
         <button class="btn toolbar-overflow-toggle" id="goldOverflowToggle" title="More actions">⋯</button>
         <input type="text" class="filter-input" id="goldFilter" placeholder="Filter...">

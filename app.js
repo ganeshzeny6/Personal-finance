@@ -49,6 +49,34 @@ const ASSET_COLORS = {
 let state = loadState();
 let pieChart = null;
 
+/* ---------------- offline read-only guard ----------------
+   Independent of the manual portfolioLocked toggle: while the
+   browser has no network connection, every field that Lock
+   Portfolio would normally guard is also made read-only (there's
+   nothing useful to sync/fetch offline, and it avoids entering
+   data that a later cloud-sync conflict could clobber). Connection
+   returns -> fields go back to whatever portfolioLocked says.
+   isReadOnly() is the single source of truth every render*()
+   function below should use instead of state.portfolioLocked. */
+function isReadOnly() {
+  return state.portfolioLocked || !navigator.onLine;
+}
+
+function updateOfflineBanner() {
+  const tag = document.getElementById("offlineTag");
+  if (!tag) return;
+  tag.style.display = navigator.onLine ? "none" : "inline-block";
+}
+
+window.addEventListener("online", () => {
+  updateOfflineBanner();
+  renderEquity(); renderDebt(); renderMF(); renderGold(); renderDashboard();
+});
+window.addEventListener("offline", () => {
+  updateOfflineBanner();
+  renderEquity(); renderDebt(); renderMF(); renderGold(); renderDashboard();
+});
+
 // chartjs-plugin-datalabels draws permanent on-slice labels (no hover
 // needed), which also means it works identically on touch/mobile.
 if (typeof ChartDataLabels !== "undefined") {
@@ -441,7 +469,7 @@ function equityTotals() {
 
 function equityGetSearchText(row) {
   const d = equityDerived(row);
-  return [row.name, row.invested, row.units, d.avgPrice, row.ltp, d.currentValue, d.pl, d.plPct].join(" ");
+  return [row.name, row.invested, row.units, d.avgPrice, row.ltp, d.currentValue, d.pl, d.plPct, row.sector].join(" ");
 }
 
 function equityGetSortValue(row, col) {
@@ -456,6 +484,7 @@ function equityGetSortValue(row, col) {
     case "pl": return d.pl;
     case "plPct": return d.plPct;
     case "allocPct": return Number(row.invested) || 0; // alloc% is invested-based, same sort order
+    case "sector": return row.sector || "";
     default: return 0;
   }
 }
@@ -467,12 +496,12 @@ function renderEquity() {
   const displayRows = applySortFilter("equity", state.equity, equityGetSearchText, equityGetSortValue);
 
   if (state.equity.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="10">No stocks added yet. Click "+ Add stock" to begin.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="11">No stocks added yet. Click "+ Add stock" to begin.</td></tr>';
   } else if (displayRows.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="10">No stocks match this filter.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="11">No stocks match this filter.</td></tr>';
   }
 
-  const locked = state.portfolioLocked;
+  const locked = isReadOnly();
   displayRows.forEach(row => {
     const d = equityDerived(row);
     // Alloc % reflects each stock's share of total invested capital,
@@ -491,12 +520,13 @@ function renderEquity() {
       <td class="c-pl ${plClass(d.pl)}" data-label="P&amp;L">${fmtNum(d.pl)}</td>
       <td class="c-plpct ${plClass(d.pl)}" data-label="P&amp;L %">${fmtPct(d.plPct)}</td>
       <td class="c-alloc" data-label="Alloc %">${fmtNum(allocPct)}%</td>
+      <td class="left" data-label="Sector"><input type="text" value="${escapeAttr(row.sector || "")}" data-field="sector" placeholder="e.g. IT" ${locked ? "disabled" : ""}></td>
       <td class="row-actions"><button class="icon-btn" title="Remove">✕</button></td>
     `;
     tr.querySelectorAll("input").forEach(inp => {
       inp.addEventListener("change", () => {
         const field = inp.dataset.field;
-        row[field] = field === "name" ? inp.value : parseFloat(inp.value) || 0;
+        row[field] = (field === "name" || field === "sector") ? inp.value : parseFloat(inp.value) || 0;
         saveState();
         updateEquityComputed();
         renderDashboard();
@@ -564,7 +594,7 @@ function updateEquityComputed() {
 }
 
 document.getElementById("btnAddStock").addEventListener("click", () => {
-  state.equity.push({ id: uid(), name: "", invested: 0, units: 0, ltp: 0 });
+  state.equity.push({ id: uid(), name: "", invested: 0, units: 0, ltp: 0, sector: "" });
   saveState();
   renderEquity();
   renderDashboard();
@@ -850,7 +880,7 @@ function renderDebt() {
     tbody.innerHTML = '<tr class="empty-row"><td colspan="14">No entries match this filter.</td></tr>';
   }
 
-  const locked = state.portfolioLocked;
+  const locked = isReadOnly();
   displayRows.forEach(row => {
     const d = debtDerived(row);
     const tr = document.createElement("tr");
@@ -977,7 +1007,7 @@ function mfTotals() {
 
 function mfGetSearchText(row) {
   const d = mfDerived(row);
-  return [row.name, row.symbol, row.category, row.subcategory, row.invested, row.units, d.avgPrice, row.unitPrice, d.currentValue, d.pl, d.plPct, row.remarks].join(" ");
+  return [row.name, row.symbol, row.category, row.invested, row.units, d.avgPrice, row.unitPrice, d.currentValue, d.pl, d.plPct, row.remarks].join(" ");
 }
 
 function mfGetSortValue(row, col) {
@@ -986,7 +1016,6 @@ function mfGetSortValue(row, col) {
     case "name": return row.name || "";
     case "symbol": return row.symbol || "";
     case "category": return row.category || "";
-    case "subcategory": return row.subcategory || "";
     case "invested": return Number(row.invested) || 0;
     case "units": return Number(row.units) || 0;
     case "avgPrice": return d.avgPrice;
@@ -1007,12 +1036,12 @@ function renderMF() {
   const displayRows = applySortFilter("mf", state.mf, mfGetSearchText, mfGetSortValue);
 
   if (state.mf.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="13">No mutual funds added yet. Click "+ Add fund" to begin.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="12">No mutual funds added yet. Click "+ Add fund" to begin.</td></tr>';
   } else if (displayRows.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="13">No funds match this filter.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="12">No funds match this filter.</td></tr>';
   }
 
-  const locked = state.portfolioLocked;
+  const locked = isReadOnly();
   displayRows.forEach(row => {
     const d = mfDerived(row);
     const allocPct = totals.current > 0 ? (d.currentValue / totals.current) * 100 : 0;
@@ -1023,7 +1052,6 @@ function renderMF() {
       <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" ${locked ? "disabled" : ""}></td>
       <td class="left" data-label="Symbol"><input type="text" value="${escapeAttr(row.symbol || "")}" data-field="symbol" placeholder="Symbol" ${locked ? "disabled" : ""}></td>
       <td class="left" data-label="Category"><input type="text" value="${escapeAttr(row.category || "")}" data-field="category" ${locked ? "disabled" : ""}></td>
-      <td class="left" data-label="Sub-category"><input type="text" value="${escapeAttr(row.subcategory || "")}" data-field="subcategory" ${locked ? "disabled" : ""}></td>
       <td data-label="Invested Amt"><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
       <td data-label="Units"><input type="number" step="any" value="${row.units ?? ""}" data-field="units" ${locked ? "disabled" : ""}></td>
       <td class="c-avg" data-label="Avg Price">${fmtNum(d.avgPrice)}</td>
@@ -1103,7 +1131,7 @@ function updateMFComputed() {
 }
 
 document.getElementById("btnAddMF").addEventListener("click", () => {
-  state.mf.push({ id: uid(), name: "", symbol: "", category: "", subcategory: "", invested: 0, units: 0, unitPrice: 0, remarks: "" });
+  state.mf.push({ id: uid(), name: "", symbol: "", category: "", invested: 0, units: 0, unitPrice: 0, remarks: "" });
   saveState();
   renderMF();
   renderDashboard();
@@ -1215,7 +1243,7 @@ function renderGold() {
     tbody.innerHTML = '<tr class="empty-row"><td colspan="11">No holdings match this filter.</td></tr>';
   }
 
-  const locked = state.portfolioLocked;
+  const locked = isReadOnly();
   displayRows.forEach(row => {
     const d = goldDerived(row);
     const pendingBadge = row.livePricePending ? '<span class="pending-badge">Pending</span>' : "";
@@ -1366,7 +1394,7 @@ document.getElementById("btnRefreshGold").addEventListener("click", () => {
 function renderDashboard() {
   const cashInput = document.getElementById("cashInput");
   if (document.activeElement !== cashInput) cashInput.value = state.cash ? fmtINR(state.cash) : "";
-  cashInput.disabled = state.portfolioLocked;
+  cashInput.disabled = isReadOnly();
 
   const eq = equityTotals();
   const debt = debtTotals();
@@ -1403,7 +1431,7 @@ function renderDashboard() {
   const idealTotal = Object.values(state.ideal).reduce((a, b) => a + (Number(b) || 0), 0);
   const tbody = document.getElementById("allocTableBody");
   tbody.innerHTML = "";
-  const locked = state.portfolioLocked;
+  const locked = isReadOnly();
   classes.forEach(c => {
     const currentPct = netWorth > 0 ? (c.current / netWorth) * 100 : 0;
     const idealPct = Number(state.ideal[c.key]) || 0;
@@ -1536,133 +1564,6 @@ function toDateInputValue(v) {
   // JSON.stringify produces for a Date cell) — takes just the date part.
   return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : "";
 }
-
-// Stocks: Name/Symbol, Invested Amount, Units
-document.getElementById("importStockFile").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  const statusEl = document.getElementById("equityFetchStatus");
-  if (!file) return;
-  try {
-    const rows = (await readWorkbookRows(file)).slice(1);
-    let added = 0, updated = 0;
-    rows.forEach(r => {
-      const name = String(r[0] ?? "").trim();
-      if (!name) return;
-      // Blank Invested Amount / Units cells leave that field untouched
-      // on an existing row (partial-column updates, e.g. re-importing
-      // just to fix a name, won't zero out real data).
-      const fields = { name };
-      if (!cellIsBlank(r[1])) fields.invested = parseFloat(r[1]) || 0;
-      if (!cellIsBlank(r[2])) fields.units = parseFloat(r[2]) || 0;
-      const result = upsertRow(
-        state.equity,
-        row => (row.name || "").trim().toUpperCase() === name.toUpperCase(),
-        fields,
-        { ltp: 0 }
-      );
-      result === "added" ? added++ : updated++;
-    });
-    saveState();
-    renderEquity();
-    renderDashboard();
-    statusEl.textContent = `Imported: ${added} new, ${updated} updated.`;
-  } catch (err) {
-    alert("Could not read that Excel file. Expected columns: Name/Symbol, Invested Amount, Units.");
-  }
-  e.target.value = "";
-});
-
-// Mutual Funds: Name, Symbol, Category, Sub-category, Units, Remarks
-document.getElementById("importMFFile").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  const statusEl = document.getElementById("mfFetchStatus");
-  if (!file) return;
-  try {
-    const rows = (await readWorkbookRows(file)).slice(1);
-    let added = 0, updated = 0;
-    rows.forEach(r => {
-      const name = String(r[0] ?? "").trim();
-      if (!name) return;
-      const symbol = String(r[1] ?? "").trim();
-      // Blank cells leave that field untouched on an existing row, so
-      // a sheet that only fills in Symbol/Category/Sub-category (e.g.
-      // to wire up live NAV lookup) won't wipe out real Units.
-      const fields = { name };
-      if (symbol) fields.symbol = symbol;
-      if (!cellIsBlank(r[2])) fields.category = String(r[2]).trim();
-      if (!cellIsBlank(r[3])) fields.subcategory = String(r[3]).trim();
-      if (!cellIsBlank(r[4])) fields.units = parseFloat(r[4]) || 0;
-      if (!cellIsBlank(r[5])) fields.remarks = String(r[5]).trim();
-      const result = upsertRow(
-        state.mf,
-        row => {
-          // Prefer matching on an existing Symbol (the stable key once
-          // a fund is mapped). But if the imported row has a Symbol
-          // and the existing row doesn't have one yet — exactly the
-          // "assign a Symbol to a fund for the first time" case — fall
-          // back to matching by Name so this updates that row instead
-          // of creating a duplicate.
-          const rowSymbol = (row.symbol || "").trim().toUpperCase();
-          const rowName = (row.name || "").trim().toUpperCase();
-          if (symbol) {
-            if (rowSymbol) return rowSymbol === symbol.toUpperCase();
-            return rowName === name.toUpperCase();
-          }
-          return rowName === name.toUpperCase();
-        },
-        fields,
-        { unitPrice: 0 }
-      );
-      result === "added" ? added++ : updated++;
-    });
-    saveState();
-    renderMF();
-    renderDashboard();
-    statusEl.textContent = `Imported: ${added} new, ${updated} updated.`;
-  } catch (err) {
-    alert("Could not read that Excel file. Expected columns: Name, Symbol, Category, Sub-category, Units, Remarks.");
-  }
-  e.target.value = "";
-});
-
-// Gold: Name/Symbol, Form, Weight/Units, Purchase Rate, Invested Amount, Notes
-document.getElementById("importGoldFile").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  const statusEl = document.getElementById("goldFetchStatus");
-  if (!file) return;
-  try {
-    const rows = (await readWorkbookRows(file)).slice(1);
-    let added = 0, updated = 0;
-    rows.forEach(r => {
-      const name = String(r[0] ?? "").trim();
-      if (!name) return;
-      const formRaw = String(r[1] ?? "").trim();
-      // Blank cells leave that field untouched on an existing row
-      // (partial-column updates don't zero out real Weight/Invested).
-      // Form always gets set (defaulting to ETF), matching the "new
-      // rows default to ETF" convention used elsewhere.
-      const fields = { name, form: ["Physical", "Digital", "SGB", "ETF"].includes(formRaw) ? formRaw : "ETF" };
-      if (!cellIsBlank(r[2])) fields.weight = parseFloat(r[2]) || 0;
-      if (!cellIsBlank(r[3])) fields.purchaseRate = parseFloat(r[3]) || 0;
-      if (!cellIsBlank(r[4])) fields.invested = parseFloat(r[4]) || 0;
-      if (!cellIsBlank(r[5])) fields.notes = String(r[5]).trim();
-      const result = upsertRow(
-        state.gold,
-        row => (row.name || "").trim().toUpperCase() === name.toUpperCase(),
-        fields,
-        { currentRate: 0 }
-      );
-      result === "added" ? added++ : updated++;
-    });
-    saveState();
-    renderGold();
-    renderDashboard();
-    statusEl.textContent = `Imported: ${added} new, ${updated} updated.`;
-  } catch (err) {
-    alert("Could not read that Excel file. Expected columns: Name/Symbol, Form, Weight/Units, Purchase Rate, Invested Amount, Notes.");
-  }
-  e.target.value = "";
-});
 
 // Debt / Fixed Income: Name, Category, Sub-category, Account No.,
 // Invested Amount, ROI, Maturity Amount, Invested Date, Maturity
@@ -1817,85 +1718,250 @@ document.getElementById("btnImportDebtSheet").addEventListener("click", async ()
 });
 
 /* ============================================================
-   IMPORT ZERODHA HOLDINGS
-   One workbook, three sheets named exactly "Stocks", "Mutual
-   funds", "Gold" (Zerodha Console's Holdings export) — same file
-   every time. Each of the three tabs (Equity, Mutual Funds, Gold)
-   has its own "Import Zerodha Holdings" button; whichever button
-   is used, only that tab's sheet is read and only that asset
-   class's data is touched, even though the other two sheets are
-   sitting in the same uploaded workbook. Each real holding is
-   followed by two export-artifact rows (a stray quantity string,
-   and a "ZZ..." code) — those are dropped by requiring both Qty.
-   and Buy avg. to be present and numeric, rather than pattern-
-   matching the "ZZ" text specifically.
+   IMPORT — Zerodha Holdings (single "Import" button per tab)
+   Equity, Mutual Funds and Gold each have one "Import" button.
+   Clicking it offers a choice — Import from Local (a Zerodha
+   Console "Holdings Statement" .xlsx picked from disk) or Import
+   from Google Drive (same Holdings Apps Script used before,
+   scanning a designated Drive folder for the most recently
+   modified export). Either source is parsed into the same
+   holding-record shape below, so the rest of the flow (matching,
+   multi-account combine, preview, apply) is shared.
 
-   Matching: Equity and Gold match by Symbol against the app's
-   Name field (same convention the live-price refresh already
-   uses). Mutual Funds match by Name — Zerodha's MF "Symbol"
-   column in this export is actually the full scheme name, not a
-   code, and doesn't correspond to the app's own `symbol` field
-   (which is reserved for the separate Google-Sheet live-NAV
-   lookup) — so Name is the only reliable key here.
+   Column mapping (from the actual Zerodha Holdings Statement
+   export — "Equity" and "Mutual Funds" sheets, each with a few
+   summary rows above the real data table):
+     Equity:        Symbol -> Stock/Symbol, Quantity Available ->
+                    Units, Average Price -> Avg Price (Invested =
+                    Units x Avg Price), Sector -> new Sector column.
+     Mutual Funds:  Symbol (the fund's full scheme name in this
+                    export) -> Name, Quantity Available -> Units,
+                    Average Price -> Avg Price, Instrument Type ->
+                    Category (Sub-category has been removed).
+   Gold ETFs (e.g. GOLDBEES) live inside the Equity sheet in
+   Zerodha's export, but get routed to the Gold tab instead of
+   Equity — see isGoldSymbol().
 
-   Update logic: only Quantity/Units and Average Price/Invested
-   are overwritten (never merged or averaged) — everything else,
-   including any live-fetched price, is left untouched. Unmatched
-   rows become new entries with livePricePending = true.
+   Multiple Zerodha accounts: every holding row keeps a hidden
+   zerodhaAccounts map { <Client ID>: {qty, avgPrice, invested} }.
+   Importing a file only ever writes that one Client ID's entry;
+   Units/Invested shown in the tracker are always the sum across
+   every account map key. That makes re-importing the same
+   account's file a safe no-op re-apply, and importing a second or
+   third account's file for a holding that already exists ADDS
+   that account's slice instead of overwriting the row — see
+   combineAccountTotals(). No duplicate rows are ever created;
+   matching is by Symbol (Equity/Gold) or fund name (Mutual Funds),
+   same convention the live-price refresh already uses.
    ============================================================ */
 
-const ZERODHA_SHEETS = { equity: "Stocks", mf: "Mutual funds", gold: "Gold" };
-
 // Handles plain numbers, Indian-grouped strings ("4,12,685.77"),
-// and stray non-breaking spaces from the export. Returns null for
-// anything blank/non-numeric so callers can treat a row as invalid.
+// stray non-breaking spaces, and Zerodha's "-" placeholder for
+// blank numeric cells. Returns null for anything not usable as a
+// number so callers can treat that field as missing.
 function parseIndianNumber(v) {
   if (v === null || v === undefined || v === "") return null;
   if (typeof v === "number") return isNaN(v) ? null : v;
   const s = String(v).replace(/,/g, "").replace(/\u00a0/g, "").trim();
-  if (s === "") return null;
+  if (s === "" || s === "-") return null;
   const n = parseFloat(s);
   return isNaN(n) ? null : n;
 }
 
-// Parses row *objects* keyed by header text — what the Drive-import
-// Holdings API returns. A row only counts as a real holding if it has
-// both a Qty. and a Buy avg. — Zerodha's export leaves two artifact
-// rows per real holding that never have both, so this one rule is
-// enough to drop them.
-function parseHoldingsSheetObjects(rows) {
-  const out = [];
-  if (!Array.isArray(rows)) return out;
-  rows.forEach(obj => {
-    const keys = Object.keys(obj);
-    const findVal = (candidates) => {
-      const k = keys.find(k => candidates.some(c => c.toLowerCase() === k.trim().toLowerCase()));
-      return k !== undefined ? obj[k] : undefined;
-    };
-    const symbol = String(findVal(["Symbol"]) ?? "").replace(/\u00a0/g, "").trim();
-    const qty = parseIndianNumber(findVal(["Qty."]));
-    const buyAvg = parseIndianNumber(findVal(["Buy avg."]));
-    if (!symbol || qty === null || buyAvg === null) return;
-    const buyValue = parseIndianNumber(findVal(["Buy value"]));
-    out.push({ symbol, qty, buyAvg, buyValue: buyValue !== null ? buyValue : qty * buyAvg });
-  });
-  return out;
+// Symbols that belong on the Gold tab even though Zerodha lists
+// them on the Equity holdings sheet (Gold ETFs trade on the
+// exchange like stocks). Matched case-insensitively anywhere in
+// the symbol — covers GOLDBEES, GOLDIETF, GOLDCASE, HDFCGOLD,
+// AXISGOLD, SETFGOLD and similar. If your broker export uses a
+// Gold ETF ticker that doesn't contain "GOLD", add it here.
+function isGoldSymbol(symbol) {
+  return /GOLD/i.test(String(symbol || ""));
 }
 
-// Builds the match/add/duplicate plan for one asset class. Later
-// occurrences of the same key within the import win (last row is
-// treated as the true value); earlier ones are reported as
-// duplicates rather than silently dropped.
-function planAssetClass(importedRows, existingArray, keyFn, matchFn) {
+// Finds the "Client ID" label anywhere in a sheet's raw rows
+// (array-of-arrays) and returns the value in the next non-empty
+// cell on that same row — tags every holding parsed from a file
+// with which Zerodha account it came from.
+function findClientId(rawRows) {
+  for (const r of rawRows) {
+    const idx = r.findIndex(c => String(c ?? "").trim().toLowerCase() === "client id");
+    if (idx === -1) continue;
+    for (let i = idx + 1; i < r.length; i++) {
+      const v = String(r[i] ?? "").trim();
+      if (v) return v;
+    }
+  }
+  return "";
+}
+
+// Zerodha's Holdings Statement export has several summary rows
+// above the real data table (title, Invested/Present Value, P&L,
+// etc.), and exactly how many depends on the account — so instead
+// of assuming a fixed row number, this scans for the row that
+// contains "Symbol" as a column header and treats every row below
+// it (until the next blank row) as the data table.
+function extractZerodhaSheetObjects(rawRows) {
+  const headerIdx = rawRows.findIndex(r => r.some(c => String(c ?? "").trim().toLowerCase() === "symbol"));
+  if (headerIdx === -1) return [];
+  const headers = rawRows[headerIdx].map(h => String(h ?? "").trim());
+  const objects = [];
+  for (let i = headerIdx + 1; i < rawRows.length; i++) {
+    const r = rawRows[i];
+    if (!r || r.every(c => c === undefined || c === null || String(c).trim() === "")) break;
+    const obj = {};
+    headers.forEach((h, idx) => { if (h) obj[h] = r[idx]; });
+    objects.push(obj);
+  }
+  return objects;
+}
+
+// Turns one raw row-object (keyed by the sheet's real header text
+// — whether parsed from a local .xlsx or returned as JSON by the
+// Drive Apps Script) into the common shape the rest of the import
+// flow uses. Also accepts the older Drive contract's header names
+// (Qty. / Buy avg.) so an already-deployed Holdings Apps Script
+// keeps working without changes. Returns null when Quantity or
+// Average Price isn't a usable number.
+function toHoldingRecord(obj, accountId) {
+  const keys = Object.keys(obj);
+  const findVal = (candidates) => {
+    const k = keys.find(k => candidates.some(c => c.toLowerCase() === k.trim().toLowerCase()));
+    return k !== undefined ? obj[k] : undefined;
+  };
+  const qty = parseIndianNumber(findVal(["Quantity Available", "Qty."]));
+  const avgPrice = parseIndianNumber(findVal(["Average Price", "Buy avg."]));
+  if (qty === null || avgPrice === null) return null;
+  const investedRaw = parseIndianNumber(findVal(["Buy value"]));
+  const invested = investedRaw !== null ? investedRaw : qty * avgPrice;
+  const sector = String(findVal(["Sector"]) ?? "").trim();
+  const instrumentType = String(findVal(["Instrument Type"]) ?? "").trim();
+  return {
+    accountId: accountId || "",
+    qty, avgPrice, invested,
+    sector: (sector && sector !== "-") ? sector : "",
+    category: (instrumentType && instrumentType !== "-") ? instrumentType : ""
+  };
+}
+
+// Splits a sheet's row-objects into usable holding records (paired
+// with their Symbol) and an "attention" list of Symbols present in
+// the file but missing a usable Quantity/Average Price — fully
+// blank rows are ignored entirely rather than flagged.
+function extractRecordsAndAttention(objects, accountId) {
+  const records = [], attention = [];
+  objects.forEach(obj => {
+    const symbol = String(obj["Symbol"] ?? "").replace(/\u00a0/g, "").trim();
+    if (!symbol) return;
+    const rec = toHoldingRecord(obj, accountId);
+    if (rec) records.push({ symbol, ...rec });
+    else attention.push(symbol);
+  });
+  return { records, attention };
+}
+
+// Reads a local Zerodha Holdings Statement .xlsx and returns
+// holding records for Equity, Mutual Funds and Gold (Gold-ETF
+// symbols found on the Equity sheet are already split out), plus
+// each sheet's "attention" list and the account's Client ID.
+async function parseLocalZerodhaWorkbook(file) {
+  const wbData = await file.arrayBuffer();
+  const wb = XLSX.read(wbData, { type: "array", cellDates: true });
+  const findSheet = (nameSubstr) => {
+    const sn = wb.SheetNames.find(n => n.toLowerCase().includes(nameSubstr));
+    return sn ? wb.Sheets[sn] : null;
+  };
+  const readSheet = (sheet) => {
+    if (!sheet) return { objects: [], clientId: "" };
+    const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "" });
+    return { objects: extractZerodhaSheetObjects(rawRows), clientId: findClientId(rawRows) };
+  };
+  const eqSheet = readSheet(findSheet("equity") || findSheet("stock"));
+  const mfSheet = readSheet(findSheet("mutual"));
+  const clientId = eqSheet.clientId || mfSheet.clientId || "";
+
+  const eqParsed = extractRecordsAndAttention(eqSheet.objects, clientId);
+  const mfParsed = extractRecordsAndAttention(mfSheet.objects, clientId);
+
+  const equity = [], gold = [];
+  eqParsed.records.forEach(r => (isGoldSymbol(r.symbol) ? gold : equity).push(r));
+
+  return {
+    clientId,
+    equity, gold, mf: mfParsed.records,
+    attention: { equity: eqParsed.attention, mf: mfParsed.attention }
+  };
+}
+
+// Drive path: reuses the existing Holdings Apps Script contract
+// (data.stocks / data.mf / data.gold), running each row through the
+// same toHoldingRecord() so both old (Qty./Buy avg.) and new
+// (Quantity Available/Average Price) header names work. Gold-ETF
+// symbols found under "stocks" are pulled out and merged with
+// data.gold (if the deployed script still returns one).
+async function fetchDriveZerodhaHoldings() {
+  const data = await fetchHoldingsData();
+  const accountIdFor = (obj) => {
+    const keys = Object.keys(obj);
+    const k = keys.find(k => k.trim().toLowerCase() === "client id");
+    return k ? String(obj[k] || "").trim() : (data.sourceFileName || "Drive");
+  };
+  // Drive rows can each carry their own Client ID column (unlike a
+  // local file, where the whole sheet shares one), so records are
+  // built manually here instead of via extractRecordsAndAttention().
+  const buildRecords = (rows) => {
+    const records = [], attention = [];
+    (Array.isArray(rows) ? rows : []).forEach(obj => {
+      const symbol = String(obj["Symbol"] ?? "").replace(/\u00a0/g, "").trim();
+      if (!symbol) return;
+      const rec = toHoldingRecord(obj, accountIdFor(obj));
+      if (rec) records.push({ symbol, ...rec }); else attention.push(symbol);
+    });
+    return { records, attention };
+  };
+  const stocks = buildRecords(data.stocks);
+  const goldSheet = buildRecords(data.gold);
+  const mf = buildRecords(data.mf);
+
+  const equity = [], goldFromStocks = [];
+  stocks.records.forEach(r => (isGoldSymbol(r.symbol) ? goldFromStocks : equity).push(r));
+
+  return {
+    sourceLabel: data.sourceFileName || "Google Drive",
+    equity, mf: mf.records, gold: [...goldFromStocks, ...goldSheet.records],
+    attention: { equity: stocks.attention, mf: mf.attention }
+  };
+}
+
+// Merges one imported holding record into an existing row's (or a
+// brand-new row's) hidden zerodhaAccounts map, keyed by Client ID,
+// then recomputes Quantity/Invested as the sum across every account
+// on file for that holding. This is what makes importing a second
+// or third Zerodha account's file ADD to a holding instead of
+// overwriting it, while re-importing the same account's file stays
+// a safe no-op re-apply.
+function combineAccountTotals(row, rec) {
+  if (!row.zerodhaAccounts) row.zerodhaAccounts = {};
+  const accountKey = rec.accountId || "default";
+  row.zerodhaAccounts[accountKey] = { qty: rec.qty, avgPrice: rec.avgPrice, invested: rec.invested };
+  const accounts = Object.values(row.zerodhaAccounts);
+  const totalQty = accounts.reduce((s, a) => s + (Number(a.qty) || 0), 0);
+  const totalInvested = accounts.reduce((s, a) => s + (Number(a.invested) || 0), 0);
+  return { totalQty, totalInvested, accountCount: accounts.length };
+}
+
+// Builds the match/add plan for one asset class's imported records
+// against its existing tracker rows. Later occurrences of the same
+// Symbol *within this one import* win; earlier ones are reported as
+// duplicate rows in the preview rather than silently dropped.
+function planZerodhaImport(records, existingArray, matchFn) {
   const byKey = new Map();
   const duplicateKeys = new Set();
-  importedRows.forEach(r => {
-    const k = keyFn(r);
+  records.forEach(r => {
+    const k = r.symbol.toUpperCase();
     if (byKey.has(k)) duplicateKeys.add(k);
     byKey.set(k, r);
   });
-  const matched = [];
-  const added = [];
+  const matched = [], added = [];
   byKey.forEach(r => {
     const existing = existingArray.find(row => matchFn(row, r));
     if (existing) matched.push({ existing, imported: r });
@@ -1904,35 +1970,20 @@ function planAssetClass(importedRows, existingArray, keyFn, matchFn) {
   return { matched, added, duplicateKeys: [...duplicateKeys] };
 }
 
-function singleAssetPlanSummaryHTML(label, plan) {
-  let html = `<div class="import-stat-row">
-    <div class="import-stat"><div class="n">${plan.matched.length}</div><div class="l">Will Update</div></div>
-    <div class="import-stat"><div class="n">${plan.added.length}</div><div class="l">New Entries</div></div>
-    <div class="import-stat ${plan.duplicateKeys.length ? "warn" : ""}"><div class="n">${plan.duplicateKeys.length}</div><div class="l">Duplicate Rows</div></div>
-  </div>`;
-
-  if (plan.matched.length === 0 && plan.added.length === 0) {
-    html += `<p>No valid ${label} holdings found in this sheet — nothing to import.</p>`;
-    return html;
-  }
-
-  html += `<ul>`;
-  if (plan.matched.length) html += `<li>${plan.matched.length} existing entr${plan.matched.length === 1 ? "y" : "ies"} will have Quantity and Average Price overwritten: ${plan.matched.slice(0, 8).map(m => escapeAttr(m.imported.symbol)).join(", ")}${plan.matched.length > 8 ? "…" : ""}</li>`;
-  if (plan.added.length) html += `<li>${plan.added.length} new entr${plan.added.length === 1 ? "y" : "ies"} will be added: ${plan.added.slice(0, 8).map(a => escapeAttr(a.symbol)).join(", ")}${plan.added.length > 8 ? "…" : ""}</li>`;
-  if (plan.duplicateKeys.length) html += `<li class="warn">${plan.duplicateKeys.length} duplicate row(s) in the sheet — the last occurrence was used for each: ${plan.duplicateKeys.slice(0, 8).map(escapeAttr).join(", ")}</li>`;
-  html += `</ul>`;
-
-  return html;
-}
-
 function applyEquityZerodhaPlan(plan) {
   const newInvestments = [];
   plan.matched.forEach(({ existing, imported }) => {
-    existing.invested = imported.buyValue;
-    existing.units = imported.qty;
+    const totals = combineAccountTotals(existing, imported);
+    existing.units = totals.totalQty;
+    existing.invested = totals.totalInvested;
+    if (imported.sector) existing.sector = imported.sector; // don't clobber with blank
   });
   plan.added.forEach(imported => {
-    state.equity.push({ id: uid(), name: imported.symbol, invested: imported.buyValue, units: imported.qty, ltp: 0, livePricePending: true });
+    const row = { id: uid(), name: imported.symbol, invested: 0, units: 0, ltp: 0, sector: imported.sector || "", livePricePending: true };
+    const totals = combineAccountTotals(row, imported);
+    row.units = totals.totalQty;
+    row.invested = totals.totalInvested;
+    state.equity.push(row);
     newInvestments.push({ name: imported.symbol, type: "Equity" });
   });
   saveState();
@@ -1944,12 +1995,18 @@ function applyEquityZerodhaPlan(plan) {
 function applyGoldZerodhaPlan(plan) {
   const newInvestments = [];
   plan.matched.forEach(({ existing, imported }) => {
-    existing.invested = imported.buyValue;
-    existing.weight = imported.qty;
-    existing.purchaseRate = imported.buyAvg;
+    const totals = combineAccountTotals(existing, imported);
+    existing.weight = totals.totalQty;
+    existing.invested = totals.totalInvested;
+    existing.purchaseRate = totals.totalQty > 0 ? totals.totalInvested / totals.totalQty : existing.purchaseRate;
   });
   plan.added.forEach(imported => {
-    state.gold.push({ id: uid(), name: imported.symbol, form: "ETF", weight: imported.qty, purchaseRate: imported.buyAvg, invested: imported.buyValue, currentRate: 0, notes: "", livePricePending: true });
+    const row = { id: uid(), name: imported.symbol, form: "ETF", weight: 0, purchaseRate: imported.avgPrice, invested: 0, currentRate: 0, notes: "", livePricePending: true };
+    const totals = combineAccountTotals(row, imported);
+    row.weight = totals.totalQty;
+    row.invested = totals.totalInvested;
+    row.purchaseRate = totals.totalQty > 0 ? totals.totalInvested / totals.totalQty : imported.avgPrice;
+    state.gold.push(row);
     newInvestments.push({ name: imported.symbol, type: "Gold" });
   });
   saveState();
@@ -1958,38 +2015,19 @@ function applyGoldZerodhaPlan(plan) {
   return newInvestments;
 }
 
-// Looks up a fund's Symbol/Category/Sub-category on the live-price
-// Google Sheet's Mutual Funds tab (matched by fund name — Zerodha's
-// MF "Symbol" column is really the scheme name, same convention used
-// for the match itself). Returns null if the sheet has no row for
-// that name, or if categoryMap is null (lookup wasn't available).
-function lookupMFCategoryData(name, categoryMap) {
-  if (!categoryMap) return null;
-  return categoryMap.get(String(name || "").trim().toUpperCase()) || null;
-}
-
-// existing/new rows only have Symbol/Category/Sub-category overwritten
-// when the sheet actually has a non-blank value for that specific
-// field — a blank column on the sheet leaves whatever was already
-// there untouched, same "don't clobber with blank" rule used by the
-// per-tab Excel importers.
-function applyMFCategoryData(row, catData) {
-  if (!catData) return;
-  if (catData.symbol) row.symbol = catData.symbol;
-  if (catData.category) row.category = catData.category;
-  if (catData.subcategory) row.subcategory = catData.subcategory;
-}
-
-function applyMFZerodhaPlan(plan, categoryMap) {
+function applyMFZerodhaPlan(plan) {
   const newInvestments = [];
   plan.matched.forEach(({ existing, imported }) => {
-    existing.invested = imported.buyValue;
-    existing.units = imported.qty;
-    applyMFCategoryData(existing, lookupMFCategoryData(imported.symbol, categoryMap));
+    const totals = combineAccountTotals(existing, imported);
+    existing.units = totals.totalQty;
+    existing.invested = totals.totalInvested;
+    if (imported.category) existing.category = imported.category; // don't clobber with blank
   });
   plan.added.forEach(imported => {
-    const row = { id: uid(), name: imported.symbol, symbol: "", category: "", subcategory: "", invested: imported.buyValue, units: imported.qty, unitPrice: 0, remarks: "", livePricePending: true };
-    applyMFCategoryData(row, lookupMFCategoryData(imported.symbol, categoryMap));
+    const row = { id: uid(), name: imported.symbol, symbol: "", category: imported.category || "", invested: 0, units: 0, unitPrice: 0, remarks: "", livePricePending: true };
+    const totals = combineAccountTotals(row, imported);
+    row.units = totals.totalQty;
+    row.invested = totals.totalInvested;
     state.mf.push(row);
     newInvestments.push({ name: imported.symbol, type: "Mutual Fund" });
   });
@@ -1998,6 +2036,12 @@ function applyMFZerodhaPlan(plan, categoryMap) {
   renderDashboard();
   return newInvestments;
 }
+
+const ZERODHA_TAB_CONFIG = {
+  equity: { label: "Equity", statusElId: "equityFetchStatus", getExisting: () => state.equity, matchFn: (row, r) => (row.name || "").trim().toUpperCase() === r.symbol.toUpperCase(), apply: applyEquityZerodhaPlan },
+  mf:     { label: "Mutual Funds", statusElId: "mfFetchStatus", getExisting: () => state.mf, matchFn: (row, r) => (row.name || "").trim().toUpperCase() === r.symbol.toUpperCase(), apply: applyMFZerodhaPlan },
+  gold:   { label: "Gold", statusElId: "goldFetchStatus", getExisting: () => state.gold, matchFn: (row, r) => (row.name || "").trim().toUpperCase() === r.symbol.toUpperCase(), apply: applyGoldZerodhaPlan }
+};
 
 function showNewInvestmentsReminder(newInvestments) {
   if (newInvestments.length === 0) return;
@@ -2011,122 +2055,173 @@ function showNewInvestmentsReminder(newInvestments) {
   );
 }
 
-// One button per tab (Equity / Mutual Funds / Gold), each reading the
-// *same* Zerodha Console Holdings export workbook but only looking at
-// its own sheet ("Stocks" / "Mutual funds" / "Gold") and only touching
-// that one asset class's data — so importing on the Equity tab never
-// touches Mutual Funds or Gold, even though all three live in the one
-// uploaded file.
-// dataKey is the key each asset class's rows live under in the JSON
-// HOLDINGS_API_URL returns (see ZerodhaHoldingsImport.gs) — separate
-// from sheetName, which is the tab name inside the local .xlsx file;
-// the two happen to differ ("stocks" vs "Stocks") so both are kept
-// explicit rather than derived from one another.
-const ZERODHA_TAB_CONFIG = {
-  equity: { sheetName: ZERODHA_SHEETS.equity, dataKey: "stocks", label: "Equity (Stocks)", statusElId: "equityFetchStatus", getExisting: () => state.equity, apply: applyEquityZerodhaPlan },
-  mf:     { sheetName: ZERODHA_SHEETS.mf,     dataKey: "mf",     label: "Mutual Funds",    statusElId: "mfFetchStatus",     getExisting: () => state.mf,     apply: applyMFZerodhaPlan, needsCategoryEnrich: true },
-  gold:   { sheetName: ZERODHA_SHEETS.gold,   dataKey: "gold",   label: "Gold",            statusElId: "goldFetchStatus",   getExisting: () => state.gold,   apply: applyGoldZerodhaPlan }
-};
-
-// Counts, out of `names`, how many have a row in categoryMap — used
-// to tell Ganesh up front how many funds will actually get Symbol/
-// Category/Sub-category auto-filled vs. left as-is.
-function countCategoryMatches(names, categoryMap) {
-  let found = 0;
-  names.forEach(n => { if (categoryMap.has(String(n || "").trim().toUpperCase())) found++; });
-  return { found, total: names.length };
+// Builds one asset class's slice of the combined preview: match/add
+// counts, how many holdings now span more than one Zerodha account,
+// duplicate rows within this file, and rows needing attention
+// (Symbol present but Quantity/Average Price unusable).
+function buildImportGroup(assetKey, records, attention) {
+  const cfg = ZERODHA_TAB_CONFIG[assetKey];
+  const plan = planZerodhaImport(records, cfg.getExisting(), cfg.matchFn);
+  // "Combined" = this holding's account map will span more than one
+  // distinct Client ID once this import is applied — checked without
+  // mutating state, so the preview can run before Confirm.
+  const combinedNames = plan.matched
+    .filter(m => {
+      const existingKeys = new Set(Object.keys(m.existing.zerodhaAccounts || {}));
+      existingKeys.add(m.imported.accountId || "default");
+      return existingKeys.size > 1;
+    })
+    .map(m => m.imported.symbol);
+  return { assetKey, cfg, records, plan, attention, combinedNames };
 }
 
-// Shared by both the local-file and Google-Drive Zerodha import
-// paths: once rows have been parsed into {symbol, qty, buyAvg,
-// buyValue} objects (regardless of source), this builds the
-// match/add/duplicate plan, does Mutual-Fund category enrichment
-// when needed, and shows the same preview-and-confirm modal either
-// path already used before this Drive-import feature existed.
-// extraNoteHTML (optional) is prepended above the plan summary —
-// used by the Drive path to show which source file was read.
-async function runZerodhaImportFlow(assetKey, rows, extraNoteHTML) {
-  const cfg = ZERODHA_TAB_CONFIG[assetKey];
-  const norm = s => String(s || "").trim().toUpperCase();
-  const plan = planAssetClass(rows, cfg.getExisting(), r => norm(r.symbol), (row, r) => norm(row.name) === norm(r.symbol));
+function importGroupSummaryHTML(group) {
+  const { cfg, plan, attention, combinedNames } = group;
+  if (plan.matched.length === 0 && plan.added.length === 0 && attention.length === 0) return "";
+  let html = `<h4>${escapeAttr(cfg.label)}</h4>`;
+  html += `<div class="import-stat-row">
+    <div class="import-stat"><div class="n">${plan.matched.length}</div><div class="l">Existing Updated</div></div>
+    <div class="import-stat"><div class="n">${plan.added.length}</div><div class="l">New Added</div></div>
+    <div class="import-stat"><div class="n">${combinedNames.length}</div><div class="l">Multi-Account Combined</div></div>
+    <div class="import-stat ${(plan.duplicateKeys.length + attention.length) ? "warn" : ""}"><div class="n">${plan.duplicateKeys.length + attention.length}</div><div class="l">Needs Attention</div></div>
+  </div>`;
+  html += `<ul>`;
+  if (plan.matched.length) html += `<li>Quantity and Average Price will be updated for: ${plan.matched.slice(0, 8).map(m => escapeAttr(m.imported.symbol)).join(", ")}${plan.matched.length > 8 ? "…" : ""}</li>`;
+  if (plan.added.length) html += `<li>New entries will be added for: ${plan.added.slice(0, 8).map(a => escapeAttr(a.symbol)).join(", ")}${plan.added.length > 8 ? "…" : ""}</li>`;
+  if (combinedNames.length) html += `<li>Now combines more than one Zerodha account: ${combinedNames.slice(0, 8).map(escapeAttr).join(", ")}${combinedNames.length > 8 ? "…" : ""}</li>`;
+  if (plan.duplicateKeys.length) html += `<li class="warn">Duplicate rows within this file (last occurrence used): ${plan.duplicateKeys.slice(0, 8).map(escapeAttr).join(", ")}</li>`;
+  if (attention.length) html += `<li class="warn">Symbol present but Quantity/Average Price missing or unreadable — skipped: ${attention.slice(0, 8).map(escapeAttr).join(", ")}</li>`;
+  html += `</ul>`;
+  return html;
+}
 
-  // Mutual Funds only: also fetch the live-price sheet so Symbol/
-  // Category/Sub-category can be auto-filled alongside Units/
-  // Invested, instead of needing a separate manual Excel import.
-  let categoryMap = null;
-  let categoryFetchError = null;
-  let categoryHTML = "";
-  if (cfg.needsCategoryEnrich) {
-    const statusEl = document.getElementById("mfFetchStatus");
-    if (statusEl) statusEl.textContent = "Fetching Category/Sub-category/Symbol from live-price sheet...";
-    try {
-      const data = await fetchPriceData();
-      categoryMap = buildMFCategoryMap(data.mf);
-    } catch (err) {
-      categoryFetchError = err;
-    }
-    if (statusEl) statusEl.textContent = "";
-    if (categoryFetchError) {
-      categoryHTML = `<p style="color:var(--negative)">Could not fetch Symbol/Category/Sub-category from your live-price sheet (${escapeAttr(sheetErrorMessage(categoryFetchError))}). Units and Invested Amount will still be updated normally — Symbol/Category/Sub-category will be left as they are.</p>`;
-    } else {
-      const allNames = [...plan.matched.map(m => m.imported.symbol), ...plan.added.map(a => a.symbol)];
-      const stats = countCategoryMatches(allNames, categoryMap);
-      categoryHTML = `<p>${stats.found} of ${stats.total} fund(s) matched a row on your live-price sheet's Mutual Funds tab — Symbol, Category and Sub-category will be filled in for those automatically. The rest are left as-is; add them to the sheet and re-import to pick them up.</p>`;
-    }
+// Shows one combined preview across every non-empty asset-class
+// group passed in, then applies all of them together on confirm —
+// used so importing on the Equity tab (which also finds Gold-ETF
+// rows on the same sheet) shows Equity and Gold changes in a single
+// preview/confirm instead of two separate modals.
+function runCombinedImportPreview(groups, extraNoteHTML) {
+  const nonEmpty = groups.filter(g => g.plan.matched.length || g.plan.added.length || g.attention.length);
+  if (nonEmpty.length === 0) {
+    alert("No valid holdings found in that file/source — nothing to import.");
+    return;
   }
-
+  const title = "Import Zerodha Holdings — Preview";
+  const html = (extraNoteHTML || "") + nonEmpty.map(importGroupSummaryHTML).join("");
   openModal(
-    `Import Zerodha Holdings — ${cfg.label} — Preview`,
-    (extraNoteHTML || "") + singleAssetPlanSummaryHTML(cfg.label, plan) + categoryHTML,
+    title,
+    html,
     [
       { label: "Cancel", onClick: closeModal },
       {
         label: "Confirm Import", primary: true, onClick: () => {
-          const newInvestments = cfg.apply(plan, categoryMap);
+          let allNew = [];
+          nonEmpty.forEach(g => {
+            const added = g.cfg.apply(g.plan);
+            allNew = allNew.concat(added);
+          });
           closeModal();
-          showNewInvestmentsReminder(newInvestments);
+          showNewInvestmentsReminder(allNew);
         }
       }
     ]
   );
 }
 
-// Fetches already-parsed holdings from state.holdingsApiUrl (a
-// separate Apps Script Web App that scans a designated Drive folder
-// for the most recently modified Zerodha Holdings export), then hands
-// off to the shared flow above. This is the only Zerodha import path
-// now — the local-file picker version was removed per request; the
-// underlying parse/plan/apply functions are unchanged and still used
-// here.
-function setupZerodhaDriveImport(buttonId, assetKey) {
-  const cfg = ZERODHA_TAB_CONFIG[assetKey];
-  const btn = document.getElementById(buttonId);
-  if (!btn) return;
-  btn.addEventListener("click", async () => {
-    const statusEl = document.getElementById(cfg.statusElId);
-    if (statusEl) statusEl.textContent = "Fetching from Google Drive...";
-    let data;
-    try {
-      data = await fetchHoldingsData();
-    } catch (err) {
-      if (statusEl) statusEl.textContent = sheetErrorMessage(err);
-      return;
-    }
-    if (statusEl) statusEl.textContent = "";
-    const rawRows = data[cfg.dataKey];
-    if (!Array.isArray(rawRows)) {
-      alert(`The Drive import didn't return a "${cfg.dataKey}" sheet for ${cfg.label} — check the doGet() script and that the source workbook has a "${cfg.sheetName}" tab.`);
-      return;
-    }
-    const rows = parseHoldingsSheetObjects(rawRows);
-    const sourceNote = `<p class="settings-note">Source: ${escapeAttr(data.sourceFileName || "(unknown file)")}${data.fileUpdated ? " — last updated " + new Date(data.fileUpdated).toLocaleString() : ""}</p>`;
-    await runZerodhaImportFlow(assetKey, rows, sourceNote);
-  });
+const IMPORT_TAB_CONFIG = {
+  equity: { fileInputId: "importStockFile", statusElId: "equityFetchStatus" },
+  mf:     { fileInputId: "importMFFile", statusElId: "mfFetchStatus" },
+  gold:   { fileInputId: "importGoldFile", statusElId: "goldFetchStatus" }
+};
+
+// "Import" button on each tab -> choose Local file or Google Drive.
+function openImportChooser(assetKey) {
+  const label = ZERODHA_TAB_CONFIG[assetKey].label;
+  openModal(
+    `Import ${label} Holdings`,
+    `<p>Import from your Zerodha Console Holdings Statement (.xlsx). Choose a source:</p>
+     <p class="settings-note">If the file contains Gold ETF holdings (e.g. GOLDBEES), those are automatically routed to the Gold tab regardless of which tab you import from.</p>`,
+    [
+      { label: "Import from Local", onClick: () => { closeModal(); document.getElementById(IMPORT_TAB_CONFIG[assetKey].fileInputId).click(); } },
+      { label: "Import from Google Drive", primary: true, onClick: () => { closeModal(); runDriveImport(assetKey); } }
+    ]
+  );
 }
 
-setupZerodhaDriveImport("btnImportZerodhaEquityDrive", "equity");
-setupZerodhaDriveImport("btnImportZerodhaMFDrive", "mf");
-setupZerodhaDriveImport("btnImportZerodhaGoldDrive", "gold");
+document.getElementById("btnImportEquity").addEventListener("click", () => openImportChooser("equity"));
+document.getElementById("btnImportMF").addEventListener("click", () => openImportChooser("mf"));
+document.getElementById("btnImportGold").addEventListener("click", () => openImportChooser("gold"));
+
+// Local file: Equity tab reads Equity+MF-adjacent Equity sheet and
+// shows Equity+Gold together (Gold ETFs live on the Equity sheet);
+// Gold tab reads the same Equity sheet but only keeps Gold-ETF rows;
+// Mutual Funds tab reads the Mutual Funds sheet only.
+async function handleLocalZerodhaFile(assetKey, file) {
+  const statusEl = document.getElementById(IMPORT_TAB_CONFIG[assetKey].statusElId);
+  statusEl.textContent = "Reading file...";
+  let parsed;
+  try {
+    parsed = await parseLocalZerodhaWorkbook(file);
+  } catch (err) {
+    statusEl.textContent = "";
+    alert("Could not read that file. Make sure it's the unmodified Zerodha Console Holdings Statement .xlsx export.");
+    return;
+  }
+  statusEl.textContent = "";
+  const noteHTML = `<p class="settings-note">Source: local file${parsed.clientId ? " — Client ID " + escapeAttr(parsed.clientId) : ""}</p>`;
+  const groups = [];
+  if (assetKey === "equity") {
+    groups.push(buildImportGroup("equity", parsed.equity, parsed.attention.equity));
+    if (parsed.gold.length) groups.push(buildImportGroup("gold", parsed.gold, []));
+  } else if (assetKey === "gold") {
+    groups.push(buildImportGroup("gold", parsed.gold, []));
+  } else if (assetKey === "mf") {
+    groups.push(buildImportGroup("mf", parsed.mf, parsed.attention.mf));
+  }
+  runCombinedImportPreview(groups, noteHTML);
+}
+
+document.getElementById("importStockFile").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (file) await handleLocalZerodhaFile("equity", file);
+  e.target.value = "";
+});
+document.getElementById("importMFFile").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (file) await handleLocalZerodhaFile("mf", file);
+  e.target.value = "";
+});
+document.getElementById("importGoldFile").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (file) await handleLocalZerodhaFile("gold", file);
+  e.target.value = "";
+});
+
+// Google Drive: fetches from state.holdingsApiUrl (unchanged Apps
+// Script contract) and runs the same combined preview/apply flow.
+async function runDriveImport(assetKey) {
+  const statusEl = document.getElementById(IMPORT_TAB_CONFIG[assetKey].statusElId);
+  statusEl.textContent = "Fetching from Google Drive...";
+  let data;
+  try {
+    data = await fetchDriveZerodhaHoldings();
+  } catch (err) {
+    statusEl.textContent = sheetErrorMessage(err);
+    return;
+  }
+  statusEl.textContent = "";
+  const noteHTML = `<p class="settings-note">Source: ${escapeAttr(data.sourceLabel)}</p>`;
+  const groups = [];
+  if (assetKey === "equity") {
+    groups.push(buildImportGroup("equity", data.equity, data.attention.equity));
+    if (data.gold.length) groups.push(buildImportGroup("gold", data.gold, []));
+  } else if (assetKey === "gold") {
+    groups.push(buildImportGroup("gold", data.gold, []));
+  } else if (assetKey === "mf") {
+    groups.push(buildImportGroup("mf", data.mf, data.attention.mf));
+  }
+  runCombinedImportPreview(groups, noteHTML);
+}
 
 /* ============================================================
    EXPORT / IMPORT (full JSON backup)
@@ -2201,24 +2296,24 @@ function buildExcelWorkbook() {
   XLSX.utils.book_append_sheet(wb, wsSummary, "Dashboard Summary");
 
   // Stock Holdings
-  const eqRows = [["Name/Symbol", "Invested Amount", "Units", "Avg Price", "LTP", "Current Value", "P&L", "P&L %", "Alloc %"]];
+  const eqRows = [["Name/Symbol", "Invested Amount", "Units", "Avg Price", "LTP", "Current Value", "P&L", "P&L %", "Alloc %", "Sector"]];
   state.equity.forEach(r => {
     const d = equityDerived(r);
     const allocPct = eq.invested > 0 ? (Number(r.invested) / eq.invested) * 100 : 0;
-    eqRows.push([r.name, r.invested, r.units, d.avgPrice, r.ltp, d.currentValue, d.pl, d.plPct, allocPct]);
+    eqRows.push([r.name, r.invested, r.units, d.avgPrice, r.ltp, d.currentValue, d.pl, d.plPct, allocPct, r.sector]);
   });
   const wsEq = XLSX.utils.aoa_to_sheet(eqRows);
-  wsEq["!cols"] = [{ wch: 20 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 10 }];
+  wsEq["!cols"] = [{ wch: 20 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 18 }];
   XLSX.utils.book_append_sheet(wb, wsEq, "Stock Holdings");
 
   // Mutual Funds
-  const mfRows = [["Name", "Symbol", "Category", "Sub-category", "Invested Amount", "Units", "Avg Price", "NAV", "Current Value", "P&L", "P&L %", "Remarks"]];
+  const mfRows = [["Name", "Symbol", "Category", "Invested Amount", "Units", "Avg Price", "NAV", "Current Value", "P&L", "P&L %", "Remarks"]];
   state.mf.forEach(r => {
     const d = mfDerived(r);
-    mfRows.push([r.name, r.symbol, r.category, r.subcategory, r.invested, r.units, d.avgPrice, r.unitPrice, d.currentValue, d.pl, d.plPct, r.remarks]);
+    mfRows.push([r.name, r.symbol, r.category, r.invested, r.units, d.avgPrice, r.unitPrice, d.currentValue, d.pl, d.plPct, r.remarks]);
   });
   const wsMF = XLSX.utils.aoa_to_sheet(mfRows);
-  wsMF["!cols"] = [{ wch: 28 }, { wch: 14 }, { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 22 }];
+  wsMF["!cols"] = [{ wch: 28 }, { wch: 14 }, { wch: 16 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 22 }];
   XLSX.utils.book_append_sheet(wb, wsMF, "Mutual Funds");
 
   // Gold
@@ -2583,6 +2678,7 @@ setupColumnResize("col-mf-name", "#panel-mf .col-resizer");
 setupColumnResize("col-gold-name", "#panel-gold .col-resizer");
 
 updateLockButton();
+updateOfflineBanner();
 renderBrand();
 renderAll();
 maybeRunWeeklyBackup();
