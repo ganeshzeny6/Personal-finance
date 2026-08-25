@@ -512,6 +512,7 @@ function renderEquity() {
     tr.dataset.id = row.id;
     tr.innerHTML = `
       <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" placeholder="e.g. TCS.NS" ${locked ? "disabled" : ""}></td>
+      <td class="left" data-label="Sector"><input type="text" value="${escapeAttr(row.sector || "")}" data-field="sector" placeholder="e.g. IT" ${locked ? "disabled" : ""}></td>
       <td data-label="Invested Amt"><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
       <td data-label="Units"><input type="number" step="any" value="${row.units ?? ""}" data-field="units" ${locked ? "disabled" : ""}></td>
       <td class="c-avg" data-label="Avg Price">${fmtNum(d.avgPrice)}</td>
@@ -520,7 +521,6 @@ function renderEquity() {
       <td class="c-pl ${plClass(d.pl)}" data-label="P&amp;L">${fmtNum(d.pl)}</td>
       <td class="c-plpct ${plClass(d.pl)}" data-label="P&amp;L %">${fmtPct(d.plPct)}</td>
       <td class="c-alloc" data-label="Alloc %">${fmtNum(allocPct)}%</td>
-      <td class="left" data-label="Sector"><input type="text" value="${escapeAttr(row.sector || "")}" data-field="sector" placeholder="e.g. IT" ${locked ? "disabled" : ""}></td>
       <td class="row-actions"><button class="icon-btn" title="Remove">✕</button></td>
     `;
     tr.querySelectorAll("input").forEach(inp => {
@@ -1143,16 +1143,30 @@ async function refreshMFPrices() {
   if (state.mf.length === 0) return { ok: 0, fail: 0, failedRows: [], skipped: true };
   const data = await fetchPriceData();
   const navMap = buildPriceMap(data.mf, ["MF Name", "Symbol"], ["Live Price", "NAV", "Price"]);
+  // Keyed by Fund Name -> { symbol, category, subcategory } from the
+  // Mutual Funds tab of the sheet, so the Symbol column can be filled
+  // in automatically instead of requiring it to be typed by hand.
+  const categoryMap = buildMFCategoryMap(data.mf);
   let ok = 0;
   const failedRows = [];
   state.mf.forEach(row => {
-    const key = (row.symbol || "").trim().toUpperCase();
+    if (!row.symbol) {
+      const info = categoryMap.get((row.name || "").trim().toUpperCase());
+      if (info && info.symbol) row.symbol = info.symbol;
+      if (info && info.category && !row.category) row.category = info.category;
+    }
+    const symbolKey = (row.symbol || "").trim().toUpperCase();
+    const nameKey = (row.name || "").trim().toUpperCase();
+    // Prefer a Symbol match; fall back to matching by Fund Name
+    // directly (navMap is keyed by both "MF Name" and "Symbol"
+    // columns from the sheet, so a name-only row can still resolve).
+    const key = (symbolKey && navMap.has(symbolKey)) ? symbolKey : nameKey;
     if (key && navMap.has(key)) {
       row.unitPrice = navMap.get(key);
       row.livePricePending = false;
       ok++;
     } else {
-      failedRows.push({ name: row.name || "(unnamed)", key });
+      failedRows.push({ name: row.name || "(unnamed)", key: symbolKey || nameKey });
     }
   });
   saveState();
