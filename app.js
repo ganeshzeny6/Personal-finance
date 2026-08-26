@@ -1164,17 +1164,35 @@ function updateMFComputed() {
 async function refreshMFPrices() {
   if (state.mf.length === 0) return { ok: 0, fail: 0, failedRows: [], skipped: true };
   const data = await fetchPriceData();
+  // buildPriceMap() already keys this map by BOTH "MF Name" and
+  // "Symbol" from the sheet (idCandidates below), so it can be looked
+  // up either way.
   const navMap = buildPriceMap(data.mf, ["MF Name", "Symbol"], ["Live Price", "NAV", "Price"]);
+  const categoryMap = buildMFCategoryMap(data.mf);
   let ok = 0;
   const failedRows = [];
   state.mf.forEach(row => {
-    const key = (row.symbol || "").trim().toUpperCase();
-    if (key && navMap.has(key)) {
-      row.unitPrice = navMap.get(key);
+    const nameKey = (row.name || "").trim().toUpperCase();
+    const symbolKey = (row.symbol || "").trim().toUpperCase();
+    // The Symbol column is hidden from the UI (and Zerodha import never
+    // sets it), so Name is the only identifier most rows will ever
+    // have — match on that first and only fall back to a stored
+    // Symbol for older rows that already had one saved.
+    const matchKey = navMap.has(nameKey) ? nameKey : (symbolKey && navMap.has(symbolKey) ? symbolKey : "");
+    if (matchKey) {
+      row.unitPrice = navMap.get(matchKey);
       row.livePricePending = false;
       ok++;
+      // Backfill Symbol/Category from the sheet by name so they stay
+      // populated even though neither field is manually editable
+      // anymore.
+      const meta = categoryMap.get(nameKey);
+      if (meta) {
+        if (meta.symbol && !row.symbol) row.symbol = meta.symbol;
+        if (meta.category && !row.category) row.category = meta.category;
+      }
     } else {
-      failedRows.push({ name: row.name || "(unnamed)", key });
+      failedRows.push({ name: row.name || "(unnamed)", key: nameKey });
     }
   });
   saveState();
