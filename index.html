@@ -530,7 +530,8 @@
     <span class="status-tag" id="offlineTag" style="display:none;color:var(--warning)">⚠️ Offline — read-only until reconnected</span>
     <button class="btn" id="btnLockPortfolio" title="When locked, Quantity and Average Price can only change via Import Holdings">🔓 Unlocked</button>
     <button class="btn" id="btnCloudSync" title="Sign in to sync your data across devices">☁️ Sign in with Google</button>
-    <button class="btn btn-ghost" id="btnLoadDemo" title="Preview the app with sample data (replaces your current data — a backup downloads automatically first)">🧪 Demo Data</button>
+    <button class="btn btn-ghost" id="btnLoadDemo" title="Preview the app with sample data (replaces your current data — your data is saved locally first so you can restore it)">🧪 Demo Data</button>
+    <button class="btn btn-ghost" id="btnExitDemo" style="display:none" title="Exit demo mode and restore your real data">🚪 Exit Demo Data</button>
     <button class="btn btn-ghost" id="btnSettings" title="Settings">⚙️ Settings</button>
     <input type="file" id="importFile" accept="application/json">
   </div>
@@ -972,6 +973,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-08-25-3"></script>
+<script src="app.js?v=2026-08-25-4"></script>
 </body>
 </html>

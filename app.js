@@ -2351,6 +2351,28 @@ function buildDemoState() {
   // Totals: Cash 10L + Debt 60L + MF 60L (current) + Equity 50L (current) + Gold 20L (current) = ₹2,00,00,000
 }
 
+// Snapshotting the real data for demo mode uses a second localStorage
+// key rather than a JSON file download — no export, nothing leaves
+// the browser. DEMO_ACTIVE_KEY just marks "currently in demo mode" so
+// the topbar knows whether to show "Demo Data" or "Exit Demo Data";
+// DEMO_BACKUP_KEY holds the actual pre-demo state and is only written
+// when there was real data worth restoring.
+const DEMO_ACTIVE_KEY = "ledger_demo_active_v1";
+const DEMO_BACKUP_KEY = "ledger_data_pre_demo_v1";
+
+function isDemoActive() {
+  return localStorage.getItem(DEMO_ACTIVE_KEY) === "1";
+}
+
+function updateDemoButtons() {
+  const loadBtn = document.getElementById("btnLoadDemo");
+  const exitBtn = document.getElementById("btnExitDemo");
+  if (!loadBtn || !exitBtn) return;
+  const active = isDemoActive();
+  loadBtn.style.display = active ? "none" : "";
+  exitBtn.style.display = active ? "" : "none";
+}
+
 function openDemoDataModal() {
   const hasReal = !isStateEmpty(state);
   const existingCounts = (state.equity?.length || 0) + (state.debt?.length || 0) + (state.mf?.length || 0) + (state.gold?.length || 0);
@@ -2362,7 +2384,7 @@ function openDemoDataModal() {
     </div>
     <p>This loads a fully synthetic sample portfolio (5 stocks, 4 mutual funds, 4 debt entries, 2 gold holdings, plus cash) totalling around ${fmtINR(20000000)}, split roughly across the app's own default ideal allocation. Every entry is clearly named "Demo ..." — none of it is your real data.</p>
     ${hasReal
-      ? `<p class="settings-note">You currently have ${existingCounts} real ${existingCounts === 1 ? "entry" : "entries"} plus cash/settings. Clicking Confirm will <strong>automatically download a JSON backup of your current data first</strong>, then replace it with the demo portfolio. Restore your real data anytime afterwards via Settings → Import JSON.</p>`
+      ? `<p class="settings-note">You currently have ${existingCounts} real ${existingCounts === 1 ? "entry" : "entries"} plus cash/settings. Clicking Confirm saves that data locally in this browser (no file is downloaded) and swaps in the demo portfolio. Use the "Exit Demo Data" button that appears in the topbar to bring your real data straight back.</p>`
       : `<p class="settings-note">Your tracker is currently empty, so nothing will be lost.</p>`}
   `;
   openModal(
@@ -2371,16 +2393,22 @@ function openDemoDataModal() {
     [
       { label: "Cancel", onClick: closeModal },
       {
-        label: hasReal ? "Back Up & Load Demo Data" : "Load Demo Data", primary: true, onClick: () => {
-          if (hasReal) downloadBackup();
+        label: "Load Demo Data", primary: true, onClick: () => {
+          if (hasReal) {
+            localStorage.setItem(DEMO_BACKUP_KEY, JSON.stringify(state));
+          } else {
+            localStorage.removeItem(DEMO_BACKUP_KEY);
+          }
+          localStorage.setItem(DEMO_ACTIVE_KEY, "1");
           const demo = buildDemoState();
           const keepSettings = { ownerName: state.ownerName, priceApiUrl: state.priceApiUrl, holdingsApiUrl: state.holdingsApiUrl };
           state = { ...blankState(), ...demo, ...keepSettings, portfolioLocked: false };
           saveState();
           renderAll();
+          updateDemoButtons();
           closeModal();
           const tag = document.getElementById("lastUpdatedTag");
-          if (tag) tag.textContent = "Demo data loaded" + (hasReal ? " — your real data was backed up to a downloaded JSON file" : "");
+          if (tag) tag.textContent = "Demo data loaded" + (hasReal ? " — click \"Exit Demo Data\" anytime to restore your real data" : "");
         }
       }
     ]
@@ -2388,6 +2416,38 @@ function openDemoDataModal() {
 }
 
 document.getElementById("btnLoadDemo").addEventListener("click", openDemoDataModal);
+
+// Exit Demo Data: restores whatever was snapshotted to DEMO_BACKUP_KEY
+// right before entering demo mode, or — if there was nothing real to
+// restore (tracker was empty) — just clears back to a blank tracker.
+// Either way both localStorage keys are cleaned up afterwards.
+document.getElementById("btnExitDemo").addEventListener("click", () => {
+  const backupRaw = localStorage.getItem(DEMO_BACKUP_KEY);
+  const ok = confirm(
+    backupRaw
+      ? "Exit demo mode and restore your real data from before you loaded the demo?"
+      : "Exit demo mode? Your tracker was empty before the demo, so this just clears the demo data."
+  );
+  if (!ok) return;
+  if (backupRaw) {
+    try {
+      const restored = JSON.parse(backupRaw);
+      state = { ...blankState(), ...restored, ideal: { ...DEFAULT_IDEAL, ...(restored.ideal || {}) } };
+    } catch (e) {
+      alert("Could not read your saved pre-demo data — it may have been cleared from this browser. Starting from a blank tracker instead.");
+      state = blankState();
+    }
+  } else {
+    state = blankState();
+  }
+  localStorage.removeItem(DEMO_ACTIVE_KEY);
+  localStorage.removeItem(DEMO_BACKUP_KEY);
+  saveState();
+  renderAll();
+  updateDemoButtons();
+  const tag = document.getElementById("lastUpdatedTag");
+  if (tag) tag.textContent = backupRaw ? "Your real data has been restored" : "Demo data cleared";
+});
 
 /* ============================================================
    EXCEL EXPORT — full backup as a readable .xlsx workbook
@@ -2799,6 +2859,7 @@ setupColumnResize("col-mf-name", "#panel-mf .col-resizer");
 setupColumnResize("col-gold-name", "#panel-gold .col-resizer");
 
 updateLockButton();
+updateDemoButtons();
 updateOfflineBanner();
 renderBrand();
 renderAll();
