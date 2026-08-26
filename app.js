@@ -156,23 +156,6 @@ function plClass(n) {
   return n > 0 ? "pos" : n < 0 ? "neg" : "muted";
 }
 
-// Rounds a number to `decimals` places for on-screen display only —
-// used as the `value` of editable <input> fields whose stored data
-// (e.g. Invested Amt imported from Zerodha, which can carry 4-6
-// decimal places from qty x avgPrice math) is otherwise too long to
-// fit its column. The full-precision figure stays in the row object
-// untouched; this only affects what's rendered until the field is
-// actually edited by hand. Returns "" for blank/nullish input so it
-// plugs directly into an input's value="${...}" the same way the
-// raw field did.
-function roundedInputValue(v, decimals = 2) {
-  if (v === undefined || v === null || v === "") return "";
-  const n = Number(v);
-  if (isNaN(n)) return "";
-  const p = Math.pow(10, decimals);
-  return Math.round(n * p) / p;
-}
-
 /* ============================================================
    MODAL HELPER
    One generic modal, reused for the Zerodha import preview and
@@ -529,8 +512,7 @@ function renderEquity() {
     tr.dataset.id = row.id;
     tr.innerHTML = `
       <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" placeholder="e.g. TCS.NS" ${locked ? "disabled" : ""}></td>
-      <td class="left" data-label="Sector"><input type="text" value="${escapeAttr(row.sector || "")}" data-field="sector" placeholder="e.g. IT" ${locked ? "disabled" : ""}></td>
-      <td data-label="Invested Amt"><input type="number" step="any" value="${roundedInputValue(row.invested)}" data-field="invested" ${locked ? "disabled" : ""}></td>
+      <td data-label="Invested Amt"><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
       <td data-label="Units"><input type="number" step="any" value="${row.units ?? ""}" data-field="units" ${locked ? "disabled" : ""}></td>
       <td class="c-avg" data-label="Avg Price">${fmtNum(d.avgPrice)}</td>
       <td data-label="LTP"><div class="price-cell"><input type="number" step="any" value="${row.ltp ?? ""}" data-field="ltp" ${locked ? "disabled" : ""}>${pendingBadge}</div></td>
@@ -538,6 +520,7 @@ function renderEquity() {
       <td class="c-pl ${plClass(d.pl)}" data-label="P&amp;L">${fmtNum(d.pl)}</td>
       <td class="c-plpct ${plClass(d.pl)}" data-label="P&amp;L %">${fmtPct(d.plPct)}</td>
       <td class="c-alloc" data-label="Alloc %">${fmtNum(allocPct)}%</td>
+      <td class="left" data-label="Sector"><input type="text" value="${escapeAttr(row.sector || "")}" data-field="sector" placeholder="e.g. IT" ${locked ? "disabled" : ""}></td>
       <td class="row-actions"><button class="icon-btn" title="Remove">✕</button></td>
     `;
     tr.querySelectorAll("input").forEach(inp => {
@@ -909,9 +892,9 @@ function renderDebt() {
       <td class="left" data-label="Category"><input type="text" value="${escapeAttr(row.category || "")}" data-field="category" ${locked ? "disabled" : ""}></td>
       <td class="left" data-label="Sub-category"><input type="text" value="${escapeAttr(row.subcategory || "")}" data-field="subcategory" ${locked ? "disabled" : ""}></td>
       <td class="left" data-label="Account No."><input type="text" value="${escapeAttr(row.account || "")}" data-field="account" ${locked ? "disabled" : ""}></td>
-      <td data-label="Invested Amt"><input type="number" step="any" value="${roundedInputValue(row.invested)}" data-field="invested" ${locked ? "disabled" : ""}></td>
+      <td data-label="Invested Amt"><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
       <td data-label="ROI %"><input type="number" step="any" value="${row.roi ?? ""}" data-field="roi" ${locked ? "disabled" : ""}></td>
-      <td data-label="Maturity Amt"><input type="number" step="any" value="${roundedInputValue(row.maturityAmount)}" data-field="maturityAmount" ${locked ? "disabled" : ""}></td>
+      <td data-label="Maturity Amt"><input type="number" step="any" value="${row.maturityAmount ?? ""}" data-field="maturityAmount" ${locked ? "disabled" : ""}></td>
       <td class="c-profit ${plClass(d.profit)}" data-label="Profit">${fmtNum(d.profit)}</td>
       <td data-label="Invested Date"><input type="date" value="${row.investedDate || ""}" data-field="investedDate" ${locked ? "disabled" : ""}></td>
       <td class="c-maturity ${mStatus}" data-label="Maturity Date"><input type="date" value="${row.maturityDate || ""}" data-field="maturityDate" ${locked ? "disabled" : ""}></td>
@@ -1067,9 +1050,8 @@ function renderMF() {
     tr.dataset.id = row.id;
     tr.innerHTML = `
       <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" ${locked ? "disabled" : ""}></td>
-      <td class="left" data-label="Symbol"><input type="text" value="${escapeAttr(row.symbol || "")}" data-field="symbol" placeholder="Symbol" ${locked ? "disabled" : ""}></td>
       <td class="left" data-label="Category"><input type="text" value="${escapeAttr(row.category || "")}" data-field="category" ${locked ? "disabled" : ""}></td>
-      <td data-label="Invested Amt"><input type="number" step="any" value="${roundedInputValue(row.invested)}" data-field="invested" ${locked ? "disabled" : ""}></td>
+      <td data-label="Invested Amt"><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
       <td data-label="Units"><input type="number" step="any" value="${row.units ?? ""}" data-field="units" ${locked ? "disabled" : ""}></td>
       <td class="c-avg" data-label="Avg Price">${fmtNum(d.avgPrice)}</td>
       <td data-label="NAV"><div class="price-cell"><input type="number" step="any" value="${row.unitPrice ?? ""}" data-field="unitPrice" ${locked ? "disabled" : ""}>${pendingBadge}</div></td>
@@ -1160,30 +1142,16 @@ async function refreshMFPrices() {
   if (state.mf.length === 0) return { ok: 0, fail: 0, failedRows: [], skipped: true };
   const data = await fetchPriceData();
   const navMap = buildPriceMap(data.mf, ["MF Name", "Symbol"], ["Live Price", "NAV", "Price"]);
-  // Keyed by Fund Name -> { symbol, category, subcategory } from the
-  // Mutual Funds tab of the sheet, so the Symbol column can be filled
-  // in automatically instead of requiring it to be typed by hand.
-  const categoryMap = buildMFCategoryMap(data.mf);
   let ok = 0;
   const failedRows = [];
   state.mf.forEach(row => {
-    if (!row.symbol) {
-      const info = categoryMap.get((row.name || "").trim().toUpperCase());
-      if (info && info.symbol) row.symbol = info.symbol;
-      if (info && info.category && !row.category) row.category = info.category;
-    }
-    const symbolKey = (row.symbol || "").trim().toUpperCase();
-    const nameKey = (row.name || "").trim().toUpperCase();
-    // Prefer a Symbol match; fall back to matching by Fund Name
-    // directly (navMap is keyed by both "MF Name" and "Symbol"
-    // columns from the sheet, so a name-only row can still resolve).
-    const key = (symbolKey && navMap.has(symbolKey)) ? symbolKey : nameKey;
+    const key = (row.symbol || "").trim().toUpperCase();
     if (key && navMap.has(key)) {
       row.unitPrice = navMap.get(key);
       row.livePricePending = false;
       ok++;
     } else {
-      failedRows.push({ name: row.name || "(unnamed)", key: symbolKey || nameKey });
+      failedRows.push({ name: row.name || "(unnamed)", key });
     }
   });
   saveState();
@@ -1292,7 +1260,7 @@ function renderGold() {
       </td>
       <td data-label="Weight/Units"><input type="number" step="any" value="${row.weight ?? ""}" data-field="weight" ${locked ? "disabled" : ""}></td>
       <td data-label="Purchase Rate"><input type="number" step="any" value="${row.purchaseRate ?? ""}" data-field="purchaseRate" ${locked ? "disabled" : ""}></td>
-      <td data-label="Invested Amt"><input type="number" step="any" value="${roundedInputValue(row.invested)}" data-field="invested" ${locked ? "disabled" : ""}></td>
+      <td data-label="Invested Amt"><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
       <td data-label="Current Rate"><div class="price-cell"><input type="number" step="any" value="${row.currentRate ?? ""}" data-field="currentRate" ${locked ? "disabled" : ""}>${pendingBadge}</div></td>
       <td class="c-cv" data-label="Current Value">${fmtNum(d.currentValue)}</td>
       <td class="c-pl ${plClass(d.pl)}" data-label="P&amp;L">${fmtNum(d.pl)}</td>
@@ -2292,6 +2260,107 @@ document.getElementById("importFile").addEventListener("change", (e) => {
   reader.readAsText(file);
   e.target.value = "";
 });
+
+/* ============================================================
+   DEMO DATA
+   Loads a fully synthetic ~₹2 crore sample portfolio so the app
+   can be shown/previewed without exposing any real holdings.
+   Every name is clearly labelled "Demo ...", and dates are
+   computed relative to today (rather than hardcoded) so Debt's
+   maturity highlighting still demonstrates correctly whenever
+   this is run. Numbers are hand-picked to land on a clean
+   ₹2,00,00,000 net worth split roughly along the app's own
+   default ideal allocation (5/30/30/25/10).
+
+   This REPLACES whatever is currently in the tracker, so if
+   there's real data present it's backed up (silent JSON
+   download, same file downloadBackup() already produces)
+   before being overwritten — same safety-first pattern used
+   elsewhere in the app (weekly auto-backup, cloud conflict
+   resolution).
+   ============================================================ */
+
+function isoDate(d) {
+  return d.toISOString().slice(0, 10);
+}
+function demoDateMonths(offsetMonths) {
+  const d = new Date();
+  d.setMonth(d.getMonth() + offsetMonths);
+  return isoDate(d);
+}
+function demoDateDays(offsetDays) {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return isoDate(d);
+}
+
+function buildDemoState() {
+  return {
+    cash: 1000000, // ₹10,00,000
+    equity: [
+      { id: uid(), name: "Demo Tech Ltd", invested: 1000000, units: 2000, ltp: 650, sector: "IT" },
+      { id: uid(), name: "Demo Bank Corp", invested: 800000, units: 4000, ltp: 250, sector: "Banking" },
+      { id: uid(), name: "Demo Pharma Inc", invested: 900000, units: 3000, ltp: 400, sector: "Pharma" },
+      { id: uid(), name: "Demo Energy Co", invested: 700000, units: 1000, ltp: 900, sector: "Energy" },
+      { id: uid(), name: "Demo Auto Motors", invested: 800000, units: 1500, ltp: 400, sector: "Auto" }
+    ], // ₹42,00,000 invested -> ₹50,00,000 current
+    mf: [
+      { id: uid(), name: "Demo Bluechip Growth Fund", symbol: "", category: "Large Cap", invested: 1500000, units: 10000, unitPrice: 170, remarks: "Demo data" },
+      { id: uid(), name: "Demo Flexicap Fund", symbol: "", category: "Flexi Cap", invested: 1400000, units: 8000, unitPrice: 200, remarks: "Demo data" },
+      { id: uid(), name: "Demo Midcap Opportunities Fund", symbol: "", category: "Mid Cap", invested: 1300000, units: 6000, unitPrice: 250, remarks: "Demo data" },
+      { id: uid(), name: "Demo Hybrid Balanced Fund", symbol: "", category: "Hybrid", invested: 1000000, units: 4000, unitPrice: 300, remarks: "Demo data" }
+    ], // ₹52,00,000 invested -> ₹60,00,000 current
+    debt: [
+      { id: uid(), name: "Demo Fixed Deposit - Bank A", category: "Fixed Deposit", subcategory: "Bank FD", account: "DEMO-FD-001", invested: 2000000, roi: 7.1, maturityAmount: 2142000, investedDate: demoDateMonths(-12), maturityDate: demoDateDays(5), tenureMonths: 12, notes: "Demo data" },
+      { id: uid(), name: "Demo Corporate Bond", category: "Bond", subcategory: "Corporate Bond", account: "DEMO-BOND-002", invested: 1500000, roi: 8.5, maturityAmount: 1750000, investedDate: demoDateMonths(-6), maturityDate: demoDateMonths(18), tenureMonths: 24, notes: "Demo data" },
+      { id: uid(), name: "Demo Public Provident Fund", category: "PPF", subcategory: "Govt Scheme", account: "DEMO-PPF-003", invested: 1500000, roi: 7.1, maturityAmount: 2900000, investedDate: demoDateMonths(-24), maturityDate: demoDateMonths(156), tenureMonths: 180, notes: "Demo data" },
+      { id: uid(), name: "Demo National Savings Certificate", category: "NSC", subcategory: "Govt Scheme", account: "DEMO-NSC-004", invested: 1000000, roi: 7.7, maturityAmount: 1385000, investedDate: demoDateMonths(-65), maturityDate: demoDateDays(-10), tenureMonths: 60, notes: "Demo data" }
+    ], // ₹60,00,000 invested (Debt is valued at invested amount on the dashboard)
+    gold: [
+      { id: uid(), name: "Demo Gold ETF", form: "ETF", weight: 1500, purchaseRate: 700, invested: 1050000, currentRate: 800, notes: "Demo data" },
+      { id: uid(), name: "Demo Sovereign Gold Bond", form: "SGB", weight: 130, purchaseRate: 5000, invested: 650000, currentRate: 6153.85, notes: "Demo data" }
+    ] // ₹17,00,000 invested -> ₹20,00,000 current
+  };
+  // Totals: Cash 10L + Debt 60L + MF 60L (current) + Equity 50L (current) + Gold 20L (current) = ₹2,00,00,000
+}
+
+function openDemoDataModal() {
+  const hasReal = !isStateEmpty(state);
+  const existingCounts = (state.equity?.length || 0) + (state.debt?.length || 0) + (state.mf?.length || 0) + (state.gold?.length || 0);
+  const html = `
+    <div class="import-stat-row">
+      <div class="import-stat"><div class="n">${existingCounts}</div><div class="l">Current Entries</div></div>
+      <div class="import-stat"><div class="n">15</div><div class="l">Demo Entries</div></div>
+      <div class="import-stat"><div class="n">${fmtINR(20000000)}</div><div class="l">Demo Net Worth</div></div>
+    </div>
+    <p>This loads a fully synthetic sample portfolio (5 stocks, 4 mutual funds, 4 debt entries, 2 gold holdings, plus cash) totalling around ${fmtINR(20000000)}, split roughly across the app's own default ideal allocation. Every entry is clearly named "Demo ..." — none of it is your real data.</p>
+    ${hasReal
+      ? `<p class="settings-note">You currently have ${existingCounts} real ${existingCounts === 1 ? "entry" : "entries"} plus cash/settings. Clicking Confirm will <strong>automatically download a JSON backup of your current data first</strong>, then replace it with the demo portfolio. Restore your real data anytime afterwards via Settings → Import JSON.</p>`
+      : `<p class="settings-note">Your tracker is currently empty, so nothing will be lost.</p>`}
+  `;
+  openModal(
+    "Load Demo Data",
+    html,
+    [
+      { label: "Cancel", onClick: closeModal },
+      {
+        label: hasReal ? "Back Up & Load Demo Data" : "Load Demo Data", primary: true, onClick: () => {
+          if (hasReal) downloadBackup();
+          const demo = buildDemoState();
+          const keepSettings = { ownerName: state.ownerName, priceApiUrl: state.priceApiUrl, holdingsApiUrl: state.holdingsApiUrl };
+          state = { ...blankState(), ...demo, ...keepSettings, portfolioLocked: false };
+          saveState();
+          renderAll();
+          closeModal();
+          const tag = document.getElementById("lastUpdatedTag");
+          if (tag) tag.textContent = "Demo data loaded" + (hasReal ? " — your real data was backed up to a downloaded JSON file" : "");
+        }
+      }
+    ]
+  );
+}
+
+document.getElementById("btnLoadDemo").addEventListener("click", openDemoDataModal);
 
 /* ============================================================
    EXCEL EXPORT — full backup as a readable .xlsx workbook

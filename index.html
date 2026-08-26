@@ -198,7 +198,6 @@
   td input, td select{
     width:100%;min-width:80px;background:transparent;border:1px solid transparent;border-radius:5px;
     color:var(--text);font-family:var(--font-mono);font-size:12.6px;padding:5px 6px;text-align:right;
-    overflow:hidden;text-overflow:ellipsis;
   }
   td.left input, td.left select{text-align:left;font-family:var(--font-body);}
   td input:hover, td select:hover{border-color:var(--border);}
@@ -208,6 +207,18 @@
   .pos{color:var(--positive);}
   .neg{color:var(--negative);}
   .muted{color:var(--text-faint);}
+
+  /* Computed (read-only, non-input) cells: truncate with an ellipsis
+     instead of silently overflowing into the neighboring cell when a
+     value is wider than its column — most visible on large invested/
+     current-value/P&L figures. Column widths below are sized to fit
+     typical values, so this is a safety net, not the primary fix. */
+  .data-table td.c-avg, .data-table td.c-cv, .data-table td.c-pl,
+  .data-table td.c-plpct, .data-table td.c-alloc, .data-table td.c-profit,
+  .data-table td.c-years{
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
 
   .row-actions{text-align:center !important;}
   .icon-btn{background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:15px;padding:2px 6px;border-radius:5px;}
@@ -245,10 +256,10 @@
   }
   .col-resizer:hover, .col-resizer.resizing{background:var(--gold-soft);}
   table.data-table{table-layout:fixed;width:100%;}
-  #panel-equity table.data-table{min-width:1075px;}
+  #panel-equity table.data-table{min-width:1230px;}
   #panel-debt table.data-table{min-width:1615px;}
-  #panel-mf table.data-table{min-width:1580px;}
-  #panel-gold table.data-table{min-width:1130px;}
+  #panel-mf table.data-table{min-width:1400px;}
+  #panel-gold table.data-table{min-width:1295px;}
 
   /* Frozen first column (Name/Symbol) — stays put while the rest of a
      wide table scrolls horizontally. It's the leftmost column so its
@@ -519,6 +530,7 @@
     <span class="status-tag" id="offlineTag" style="display:none;color:var(--warning)">⚠️ Offline — read-only until reconnected</span>
     <button class="btn" id="btnLockPortfolio" title="When locked, Quantity and Average Price can only change via Import Holdings">🔓 Unlocked</button>
     <button class="btn" id="btnCloudSync" title="Sign in to sync your data across devices">☁️ Sign in with Google</button>
+    <button class="btn btn-ghost" id="btnLoadDemo" title="Preview the app with sample data (replaces your current data — a backup downloads automatically first)">🧪 Demo Data</button>
     <button class="btn btn-ghost" id="btnSettings" title="Settings">⚙️ Settings</button>
     <input type="file" id="importFile" accept="application/json">
   </div>
@@ -653,15 +665,14 @@
     <div class="table-scroll">
       <table class="data-table">
         <colgroup>
-          <col id="col-eq-name" style="width:180px">
-          <col style="width:150px"><col style="width:125px"><col style="width:70px">
-          <col style="width:80px"><col style="width:70px"><col style="width:110px">
-          <col style="width:100px"><col style="width:65px"><col style="width:80px"><col style="width:45px">
+          <col id="col-eq-name" style="width:200px">
+          <col style="width:130px"><col style="width:90px"><col style="width:100px">
+          <col style="width:110px"><col style="width:140px"><col style="width:120px">
+          <col style="width:90px"><col style="width:85px"><col style="width:120px"><col style="width:45px">
         </colgroup>
         <thead>
           <tr>
             <th class="left sortable resizable sticky-col" data-col="name">Stock / Symbol<span class="col-resizer"></span></th>
-            <th class="left sortable" data-col="sector">Sector</th>
             <th class="sortable" data-col="invested">Invested Amt</th>
             <th class="sortable" data-col="units">Units</th>
             <th class="sortable" data-col="avgPrice">Avg Price</th>
@@ -670,6 +681,7 @@
             <th class="sortable" data-col="pl">P&amp;L</th>
             <th class="sortable" data-col="plPct">P&amp;L %</th>
             <th class="sortable" data-col="allocPct">Alloc %</th>
+            <th class="left sortable" data-col="sector">Sector</th>
             <th class="row-actions">—</th>
           </tr>
         </thead>
@@ -677,13 +689,13 @@
         <tfoot>
           <tr>
             <td class="left sticky-col">Total</td>
-            <td></td>
             <td id="eqTotalInvested">₹0</td>
             <td>—</td><td>—</td><td>—</td>
             <td id="eqTotalCurrent">₹0</td>
             <td id="eqTotalPL">₹0</td>
             <td id="eqTotalPLPct">0%</td>
             <td>100%</td>
+            <td></td>
             <td></td>
           </tr>
         </tfoot>
@@ -819,7 +831,6 @@
       <select id="mfMobileSort">
         <option value="">Sort: default</option>
         <option value="name">Name</option>
-        <option value="symbol">Symbol</option>
         <option value="category">Category</option>
         <option value="invested">Invested Amt</option>
         <option value="units">Units</option>
@@ -836,16 +847,15 @@
     <div class="table-scroll">
       <table class="data-table">
         <colgroup>
-          <col id="col-mf-name" style="width:250px">
-          <col style="width:170px"><col style="width:150px">
-          <col style="width:130px"><col style="width:100px"><col style="width:90px">
-          <col style="width:100px"><col style="width:120px"><col style="width:120px"><col style="width:85px">
-          <col style="width:80px"><col style="width:140px"><col style="width:45px">
+          <col id="col-mf-name" style="width:200px">
+          <col style="width:120px">
+          <col style="width:140px"><col style="width:90px"><col style="width:100px">
+          <col style="width:110px"><col style="width:140px"><col style="width:130px"><col style="width:90px">
+          <col style="width:85px"><col style="width:150px"><col style="width:45px">
         </colgroup>
         <thead>
           <tr>
             <th class="left sortable resizable sticky-col" data-col="name">Name<span class="col-resizer"></span></th>
-            <th class="left sortable" data-col="symbol">Symbol</th>
             <th class="left sortable" data-col="category">Category</th>
             <th class="sortable" data-col="invested">Invested Amt</th>
             <th class="sortable" data-col="units">Units</th>
@@ -863,7 +873,7 @@
         <tfoot>
           <tr>
             <td class="left sticky-col">Total</td>
-            <td></td><td></td>
+            <td></td>
             <td id="mfTotalInvested">₹0</td>
             <td></td><td></td><td></td>
             <td id="mfTotalCurrent">₹0</td>
@@ -930,10 +940,10 @@
     <div class="table-scroll">
       <table class="data-table">
         <colgroup>
-          <col id="col-gold-name" style="width:170px">
-          <col style="width:90px"><col style="width:100px"><col style="width:100px">
-          <col style="width:100px"><col style="width:100px"><col style="width:110px">
-          <col style="width:90px"><col style="width:75px"><col style="width:150px"><col style="width:45px">
+          <col id="col-gold-name" style="width:190px">
+          <col style="width:90px"><col style="width:110px"><col style="width:110px">
+          <col style="width:130px"><col style="width:120px"><col style="width:140px">
+          <col style="width:120px"><col style="width:90px"><col style="width:150px"><col style="width:45px">
         </colgroup>
         <thead>
           <tr>
@@ -979,6 +989,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-08-25-3"></script>
+<script src="app.js?v=2026-08-25-2"></script>
 </body>
 </html>
