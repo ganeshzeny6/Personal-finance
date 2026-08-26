@@ -156,6 +156,22 @@ function plClass(n) {
   return n > 0 ? "pos" : n < 0 ? "neg" : "muted";
 }
 
+// Rounds a numeric field to 2 decimal places FOR DISPLAY ONLY (e.g. an
+// <input>'s value attribute). The underlying row[field] in state is
+// never touched here — full-precision numbers (as fetched live, or
+// computed during Zerodha import as qty * avgPrice) keep flowing
+// through every calculation untouched. Because the input's displayed
+// value only changes visually and the user hasn't edited anything, no
+// `change` event fires, so this never silently rewrites stored data.
+// Whole numbers render without a trailing ".00" (e.g. units of 2000
+// stays "2000", not "2000.00").
+function roundedInputValue(val) {
+  if (val === undefined || val === null || val === "") return "";
+  const n = Number(val);
+  if (isNaN(n)) return "";
+  return String(Math.round(n * 100) / 100);
+}
+
 /* ============================================================
    MODAL HELPER
    One generic modal, reused for the Zerodha import preview and
@@ -422,11 +438,11 @@ function updateLockButton() {
   if (state.portfolioLocked) {
     btn.textContent = "🔒 Locked";
     btn.classList.add("locked");
-    btn.title = "Portfolio locked — Equity/Debt/Mutual Funds/Gold fields, Cash on hand, and Ideal % are read-only until unlocked (or, for Equity/MF/Gold Units & Invested, via Import Holdings). Click to unlock.";
+    btn.title = "Portfolio locked — Debt fields, Cash on hand, Ideal %, and the Sector/Remarks/Notes fields on Equity/Mutual Funds/Gold are read-only until unlocked. (Equity/MF/Gold's other fields are always driven by Import Holdings and live-price refresh, locked or not.) Click to unlock.";
   } else {
     btn.textContent = "🔓 Unlocked";
     btn.classList.remove("locked");
-    btn.title = "Click to lock all data fields (Equity, Debt, Mutual Funds, Gold, Cash, Ideal %) against accidental edits.";
+    btn.title = "Click to lock Debt, Cash, Ideal %, and Equity/MF/Gold's Sector/Remarks/Notes fields against accidental edits.";
   }
 }
 
@@ -496,12 +512,17 @@ function renderEquity() {
   const displayRows = applySortFilter("equity", state.equity, equityGetSearchText, equityGetSortValue);
 
   if (state.equity.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="11">No stocks added yet. Click "+ Add stock" to begin.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="11">No stocks yet. Use "Import Holdings" to bring in your Zerodha Console export.</td></tr>';
   } else if (displayRows.length === 0) {
     tbody.innerHTML = '<tr class="empty-row"><td colspan="11">No stocks match this filter.</td></tr>';
   }
 
-  const locked = isReadOnly();
+  // Name, Invested, Units and LTP are only ever meant to change via
+  // Zerodha Holdings import or the automatic live-price refresh now —
+  // they're permanently read-only regardless of the Lock Portfolio
+  // toggle. Sector is the one field left for manual annotation, and
+  // still follows the Lock Portfolio toggle like the rest of the app.
+  const notesLocked = isReadOnly();
   displayRows.forEach(row => {
     const d = equityDerived(row);
     // Alloc % reflects each stock's share of total invested capital,
@@ -511,16 +532,16 @@ function renderEquity() {
     const tr = document.createElement("tr");
     tr.dataset.id = row.id;
     tr.innerHTML = `
-      <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" placeholder="e.g. TCS.NS" ${locked ? "disabled" : ""}></td>
-      <td data-label="Invested Amt"><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
-      <td data-label="Units"><input type="number" step="any" value="${row.units ?? ""}" data-field="units" ${locked ? "disabled" : ""}></td>
+      <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" placeholder="e.g. TCS.NS" disabled></td>
+      <td class="left" data-label="Sector"><input type="text" value="${escapeAttr(row.sector || "")}" data-field="sector" placeholder="e.g. IT" ${notesLocked ? "disabled" : ""}></td>
+      <td data-label="Invested Amt"><input type="number" step="any" value="${roundedInputValue(row.invested)}" data-field="invested" disabled></td>
+      <td data-label="Units"><input type="number" step="any" value="${roundedInputValue(row.units)}" data-field="units" disabled></td>
       <td class="c-avg" data-label="Avg Price">${fmtNum(d.avgPrice)}</td>
-      <td data-label="LTP"><div class="price-cell"><input type="number" step="any" value="${row.ltp ?? ""}" data-field="ltp" ${locked ? "disabled" : ""}>${pendingBadge}</div></td>
+      <td data-label="LTP"><div class="price-cell"><input type="number" step="any" value="${roundedInputValue(row.ltp)}" data-field="ltp" disabled>${pendingBadge}</div></td>
       <td class="c-cv" data-label="Current Value">${fmtNum(d.currentValue)}</td>
       <td class="c-pl ${plClass(d.pl)}" data-label="P&amp;L">${fmtNum(d.pl)}</td>
       <td class="c-plpct ${plClass(d.pl)}" data-label="P&amp;L %">${fmtPct(d.plPct)}</td>
       <td class="c-alloc" data-label="Alloc %">${fmtNum(allocPct)}%</td>
-      <td class="left" data-label="Sector"><input type="text" value="${escapeAttr(row.sector || "")}" data-field="sector" placeholder="e.g. IT" ${locked ? "disabled" : ""}></td>
       <td class="row-actions"><button class="icon-btn" title="Remove">✕</button></td>
     `;
     tr.querySelectorAll("input").forEach(inp => {
@@ -593,12 +614,10 @@ function updateEquityComputed() {
   mobPlCell.className = plClass(totals.pl);
 }
 
-document.getElementById("btnAddStock").addEventListener("click", () => {
-  state.equity.push({ id: uid(), name: "", invested: 0, units: 0, ltp: 0, sector: "" });
-  saveState();
-  renderEquity();
-  renderDashboard();
-});
+// Equity rows are no longer created by hand — Name, Invested, Units
+// and LTP are all driven by Zerodha Holdings import (new symbols get
+// added automatically there) plus the automatic live-price refresh,
+// so there's no "+ Add stock" entry point left in the UI.
 
 /* ---- live price fetch: shared Google Sheet CSV helpers ----
    All three asset classes (Stocks, Mutual Funds, Gold ETFs) use
@@ -802,9 +821,9 @@ async function runEquityRefresh(statusEl) {
     (result.fail > 0 ? " See details below." : "");
 }
 
-document.getElementById("btnRefreshStocks").addEventListener("click", () => {
-  runEquityRefresh(document.getElementById("equityFetchStatus"));
-});
+// The manual "Refresh live prices" button is gone — see the 30-second
+// auto-refresh interval set up in the INIT section, which calls
+// runEquityRefresh() the same way this button used to.
 
 /* ============================================================
    DEBT TAB
@@ -892,13 +911,13 @@ function renderDebt() {
       <td class="left" data-label="Category"><input type="text" value="${escapeAttr(row.category || "")}" data-field="category" ${locked ? "disabled" : ""}></td>
       <td class="left" data-label="Sub-category"><input type="text" value="${escapeAttr(row.subcategory || "")}" data-field="subcategory" ${locked ? "disabled" : ""}></td>
       <td class="left" data-label="Account No."><input type="text" value="${escapeAttr(row.account || "")}" data-field="account" ${locked ? "disabled" : ""}></td>
-      <td data-label="Invested Amt"><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
-      <td data-label="ROI %"><input type="number" step="any" value="${row.roi ?? ""}" data-field="roi" ${locked ? "disabled" : ""}></td>
-      <td data-label="Maturity Amt"><input type="number" step="any" value="${row.maturityAmount ?? ""}" data-field="maturityAmount" ${locked ? "disabled" : ""}></td>
+      <td data-label="Invested Amt"><input type="number" step="any" value="${roundedInputValue(row.invested)}" data-field="invested" ${locked ? "disabled" : ""}></td>
+      <td data-label="ROI %"><input type="number" step="any" value="${roundedInputValue(row.roi)}" data-field="roi" ${locked ? "disabled" : ""}></td>
+      <td data-label="Maturity Amt"><input type="number" step="any" value="${roundedInputValue(row.maturityAmount)}" data-field="maturityAmount" ${locked ? "disabled" : ""}></td>
       <td class="c-profit ${plClass(d.profit)}" data-label="Profit">${fmtNum(d.profit)}</td>
       <td data-label="Invested Date"><input type="date" value="${row.investedDate || ""}" data-field="investedDate" ${locked ? "disabled" : ""}></td>
       <td class="c-maturity ${mStatus}" data-label="Maturity Date"><input type="date" value="${row.maturityDate || ""}" data-field="maturityDate" ${locked ? "disabled" : ""}></td>
-      <td data-label="Tenure (Mo)"><input type="number" step="any" value="${row.tenureMonths ?? ""}" data-field="tenureMonths" ${locked ? "disabled" : ""}></td>
+      <td data-label="Tenure (Mo)"><input type="number" step="any" value="${roundedInputValue(row.tenureMonths)}" data-field="tenureMonths" ${locked ? "disabled" : ""}></td>
       <td class="c-years" data-label="Tenure (Yr)">${fmtNum(d.years, 1)}</td>
       <td class="left" data-label="Notes"><input type="text" value="${escapeAttr(row.notes || "")}" data-field="notes" ${locked ? "disabled" : ""}></td>
       <td class="row-actions"><button class="icon-btn" title="Remove">✕</button></td>
@@ -1036,12 +1055,17 @@ function renderMF() {
   const displayRows = applySortFilter("mf", state.mf, mfGetSearchText, mfGetSortValue);
 
   if (state.mf.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="12">No mutual funds added yet. Click "+ Add fund" to begin.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="12">No mutual funds yet. Use "Import Holdings" to bring in your Zerodha Console export.</td></tr>';
   } else if (displayRows.length === 0) {
     tbody.innerHTML = '<tr class="empty-row"><td colspan="12">No funds match this filter.</td></tr>';
   }
 
-  const locked = isReadOnly();
+  // Name, Category, Invested, Units and NAV are only ever meant to
+  // change via Zerodha Holdings import or the automatic live-NAV
+  // refresh now — they're permanently read-only regardless of the
+  // Lock Portfolio toggle. Remarks is the one field left for manual
+  // annotation, and still follows the Lock Portfolio toggle.
+  const notesLocked = isReadOnly();
   displayRows.forEach(row => {
     const d = mfDerived(row);
     const allocPct = totals.current > 0 ? (d.currentValue / totals.current) * 100 : 0;
@@ -1049,17 +1073,17 @@ function renderMF() {
     const tr = document.createElement("tr");
     tr.dataset.id = row.id;
     tr.innerHTML = `
-      <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" ${locked ? "disabled" : ""}></td>
-      <td class="left" data-label="Category"><input type="text" value="${escapeAttr(row.category || "")}" data-field="category" ${locked ? "disabled" : ""}></td>
-      <td data-label="Invested Amt"><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
-      <td data-label="Units"><input type="number" step="any" value="${row.units ?? ""}" data-field="units" ${locked ? "disabled" : ""}></td>
+      <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" disabled></td>
+      <td class="left" data-label="Category"><input type="text" value="${escapeAttr(row.category || "")}" data-field="category" disabled></td>
+      <td data-label="Invested Amt"><input type="number" step="any" value="${roundedInputValue(row.invested)}" data-field="invested" disabled></td>
+      <td data-label="Units"><input type="number" step="any" value="${roundedInputValue(row.units)}" data-field="units" disabled></td>
       <td class="c-avg" data-label="Avg Price">${fmtNum(d.avgPrice)}</td>
-      <td data-label="NAV"><div class="price-cell"><input type="number" step="any" value="${row.unitPrice ?? ""}" data-field="unitPrice" ${locked ? "disabled" : ""}>${pendingBadge}</div></td>
+      <td data-label="NAV"><div class="price-cell"><input type="number" step="any" value="${roundedInputValue(row.unitPrice)}" data-field="unitPrice" disabled>${pendingBadge}</div></td>
       <td class="c-cv" data-label="Current Value">${fmtNum(d.currentValue)}</td>
       <td class="c-pl ${plClass(d.pl)}" data-label="P&amp;L">${fmtNum(d.pl)}</td>
       <td class="c-plpct ${plClass(d.pl)}" data-label="P&amp;L %">${fmtPct(d.plPct)}</td>
       <td class="c-alloc" data-label="Alloc %">${fmtNum(allocPct)}%</td>
-      <td class="left" data-label="Remarks"><input type="text" value="${escapeAttr(row.remarks || "")}" data-field="remarks" ${locked ? "disabled" : ""}></td>
+      <td class="left" data-label="Remarks"><input type="text" value="${escapeAttr(row.remarks || "")}" data-field="remarks" ${notesLocked ? "disabled" : ""}></td>
       <td class="row-actions"><button class="icon-btn" title="Remove">✕</button></td>
     `;
     tr.querySelectorAll("input").forEach(inp => {
@@ -1129,12 +1153,11 @@ function updateMFComputed() {
   mobPlCell2.className = plClass(totals.pl);
 }
 
-document.getElementById("btnAddMF").addEventListener("click", () => {
-  state.mf.push({ id: uid(), name: "", symbol: "", category: "", invested: 0, units: 0, unitPrice: 0, remarks: "" });
-  saveState();
-  renderMF();
-  renderDashboard();
-});
+// Mutual Fund rows are no longer created by hand — Name, Category,
+// Invested, Units and NAV are all driven by Zerodha Holdings import
+// plus the automatic live-NAV refresh, so there's no "+ Add fund"
+// entry point left in the UI.
+
 
 /* ---- live NAV fetch: mutual funds (Google Sheet, refreshed by Apps Script) ---- */
 
@@ -1179,9 +1202,9 @@ async function runMFRefresh(statusEl) {
     (result.fail > 0 ? " See details below." : "");
 }
 
-document.getElementById("btnRefreshMF").addEventListener("click", () => {
-  runMFRefresh(document.getElementById("mfFetchStatus"));
-});
+// The manual "Refresh live NAV" button is gone — see the 30-second
+// auto-refresh interval set up in the INIT section, which calls
+// runMFRefresh() the same way this button used to.
 
 /* ============================================================
    GOLD TAB
@@ -1237,35 +1260,40 @@ function renderGold() {
   const displayRows = applySortFilter("gold", state.gold, goldGetSearchText, goldGetSortValue);
 
   if (state.gold.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="11">No gold holdings yet. Click "+ Add holding" to begin.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="11">No gold holdings yet. Use "Import Holdings" to bring in your Zerodha Console export.</td></tr>';
   } else if (displayRows.length === 0) {
     tbody.innerHTML = '<tr class="empty-row"><td colspan="11">No holdings match this filter.</td></tr>';
   }
 
-  const locked = isReadOnly();
+  // Name, Form, Weight, Purchase Rate, Invested and Current Rate are
+  // only ever meant to change via Zerodha Holdings import or the
+  // automatic live-price refresh now — they're permanently read-only
+  // regardless of the Lock Portfolio toggle. Notes is the one field
+  // left for manual annotation, and still follows the toggle.
+  const notesLocked = isReadOnly();
   displayRows.forEach(row => {
     const d = goldDerived(row);
     const pendingBadge = row.livePricePending ? '<span class="pending-badge">Pending</span>' : "";
     const tr = document.createElement("tr");
     tr.dataset.id = row.id;
     tr.innerHTML = `
-      <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" placeholder="e.g. GOLDBEES.NS" ${locked ? "disabled" : ""}></td>
+      <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" placeholder="e.g. GOLDBEES.NS" disabled></td>
       <td class="left" data-label="Form">
-        <select data-field="form" ${locked ? "disabled" : ""}>
+        <select data-field="form" disabled>
           <option value="Physical" ${row.form === "Physical" ? "selected" : ""}>Physical</option>
           <option value="Digital" ${row.form === "Digital" ? "selected" : ""}>Digital</option>
           <option value="SGB" ${row.form === "SGB" ? "selected" : ""}>SGB</option>
           <option value="ETF" ${row.form === "ETF" ? "selected" : ""}>ETF</option>
         </select>
       </td>
-      <td data-label="Weight/Units"><input type="number" step="any" value="${row.weight ?? ""}" data-field="weight" ${locked ? "disabled" : ""}></td>
-      <td data-label="Purchase Rate"><input type="number" step="any" value="${row.purchaseRate ?? ""}" data-field="purchaseRate" ${locked ? "disabled" : ""}></td>
-      <td data-label="Invested Amt"><input type="number" step="any" value="${row.invested ?? ""}" data-field="invested" ${locked ? "disabled" : ""}></td>
-      <td data-label="Current Rate"><div class="price-cell"><input type="number" step="any" value="${row.currentRate ?? ""}" data-field="currentRate" ${locked ? "disabled" : ""}>${pendingBadge}</div></td>
+      <td data-label="Weight/Units"><input type="number" step="any" value="${roundedInputValue(row.weight)}" data-field="weight" disabled></td>
+      <td data-label="Purchase Rate"><input type="number" step="any" value="${roundedInputValue(row.purchaseRate)}" data-field="purchaseRate" disabled></td>
+      <td data-label="Invested Amt"><input type="number" step="any" value="${roundedInputValue(row.invested)}" data-field="invested" disabled></td>
+      <td data-label="Current Rate"><div class="price-cell"><input type="number" step="any" value="${roundedInputValue(row.currentRate)}" data-field="currentRate" disabled>${pendingBadge}</div></td>
       <td class="c-cv" data-label="Current Value">${fmtNum(d.currentValue)}</td>
       <td class="c-pl ${plClass(d.pl)}" data-label="P&amp;L">${fmtNum(d.pl)}</td>
       <td class="c-plpct ${plClass(d.pl)}" data-label="P&amp;L %">${fmtPct(d.plPct)}</td>
-      <td class="left" data-label="Notes"><input type="text" value="${escapeAttr(row.notes || "")}" data-field="notes" ${locked ? "disabled" : ""}></td>
+      <td class="left" data-label="Notes"><input type="text" value="${escapeAttr(row.notes || "")}" data-field="notes" ${notesLocked ? "disabled" : ""}></td>
       <td class="row-actions"><button class="icon-btn" title="Remove">✕</button></td>
     `;
     tr.querySelectorAll("input, select").forEach(inp => {
@@ -1332,12 +1360,11 @@ function updateGoldComputed() {
   mobPlCell2.className = plClass(totals.pl);
 }
 
-document.getElementById("btnAddGold").addEventListener("click", () => {
-  state.gold.push({ id: uid(), name: "", form: "ETF", weight: 0, purchaseRate: 0, invested: 0, currentRate: 0, notes: "" });
-  saveState();
-  renderGold();
-  renderDashboard();
-});
+// Gold rows are no longer created by hand — Name, Form, Weight,
+// Purchase Rate, Invested and Current Rate are all driven by Zerodha
+// Holdings import plus the automatic live-price refresh, so there's
+// no "+ Add holding" entry point left in the UI.
+
 
 /* ---- live price fetch: gold ETFs (Google Sheet — ETFs trade like stocks) ---- */
 
@@ -1382,9 +1409,9 @@ async function runGoldRefresh(statusEl) {
     (result.fail > 0 ? " See details below." : "");
 }
 
-document.getElementById("btnRefreshGold").addEventListener("click", () => {
-  runGoldRefresh(document.getElementById("goldFetchStatus"));
-});
+// The manual "Refresh live prices" button is gone — see the 30-second
+// auto-refresh interval set up in the INIT section, which calls
+// runGoldRefresh() the same way this button used to.
 
 /* ============================================================
    DASHBOARD
@@ -2762,15 +2789,9 @@ setupMobileSort("debt", "debtMobileSort", "debtMobileSortDir", "#panel-debt thea
 setupMobileSort("mf", "mfMobileSort", "mfMobileSortDir", "#panel-mf thead", () => { renderMF(); });
 setupMobileSort("gold", "goldMobileSort", "goldMobileSortDir", "#panel-gold thead", () => { renderGold(); });
 
-setupOverflowToggle("equityOverflowToggle", "equityToolbarSecondary");
 setupOverflowToggle("debtOverflowToggle", "debtToolbarSecondary");
-setupOverflowToggle("mfOverflowToggle", "mfToolbarSecondary");
-setupOverflowToggle("goldOverflowToggle", "goldToolbarSecondary");
 
-setupFabAdd("fabAddStock", "btnAddStock");
 setupFabAdd("fabAddDebt", "btnAddDebt");
-setupFabAdd("fabAddMF", "btnAddMF");
-setupFabAdd("fabAddGold", "btnAddGold");
 
 setupColumnResize("col-eq-name", "#panel-equity .col-resizer");
 setupColumnResize("col-debt-name", "#panel-debt .col-resizer");
@@ -2784,10 +2805,17 @@ renderAll();
 maybeRunWeeklyBackup();
 initCloudSync();
 
-// Auto-refresh live prices on open, per tab (Debt is intentionally
-// skipped — it has no live-price mechanism). Runs quietly in the
-// background; each tab's own status tag and fail panel update in
-// place once its fetch resolves, same as clicking Refresh by hand.
-runEquityRefresh(document.getElementById("equityFetchStatus"));
-runMFRefresh(document.getElementById("mfFetchStatus"));
-runGoldRefresh(document.getElementById("goldFetchStatus"));
+// Live-price auto-refresh, per tab (Debt is intentionally skipped —
+// it has no live-price mechanism). Runs once immediately on load,
+// then every 30 seconds in the background; each tab's own status tag
+// and fail panel update in place once a fetch resolves. There's no
+// manual "Refresh" button anymore — Equity/MF/Gold data now only
+// changes via this auto-refresh or a Zerodha Holdings import.
+const LIVE_REFRESH_INTERVAL_MS = 30000;
+function runAllLiveRefreshes() {
+  runEquityRefresh(document.getElementById("equityFetchStatus"));
+  runMFRefresh(document.getElementById("mfFetchStatus"));
+  runGoldRefresh(document.getElementById("goldFetchStatus"));
+}
+runAllLiveRefreshes();
+setInterval(runAllLiveRefreshes, LIVE_REFRESH_INTERVAL_MS);

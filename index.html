@@ -616,17 +616,12 @@
   <!-- ============ EQUITY ============ -->
   <section class="panel" id="panel-equity">
     <h2 class="section-title">Equity — Stocks</h2>
-    <p class="section-sub">Track individual stock holdings. Live LTP is fetched from your Google Sheet (matched by Symbol), or you can edit it manually.</p>
+    <p class="section-sub">Track individual stock holdings. Units, Avg Price and LTP are driven by Zerodha Holdings import and an automatic live-price refresh every 30 seconds — only Sector can be edited by hand.</p>
 
     <div class="table-toolbar">
       <div class="left-group">
-        <button class="btn btn-primary" id="btnAddStock">+ Add stock</button>
-        <div class="toolbar-secondary" id="equityToolbarSecondary">
-          <button class="btn" id="btnRefreshStocks">Refresh live prices</button>
-          <button class="btn btn-ghost" id="btnImportEquity">Import</button>
-          <input type="file" id="importStockFile" accept=".xlsx,.xls" style="display:none">
-        </div>
-        <button class="btn toolbar-overflow-toggle" id="equityOverflowToggle" title="More actions">⋯</button>
+        <button class="btn btn-primary" id="btnImportEquity">Import Holdings</button>
+        <input type="file" id="importStockFile" accept=".xlsx,.xls" style="display:none">
         <input type="text" class="filter-input" id="equityFilter" placeholder="Filter...">
         <span class="status-tag" id="equityFetchStatus"></span>
       </div>
@@ -649,6 +644,7 @@
       <select id="equityMobileSort">
         <option value="">Sort: default</option>
         <option value="name">Name</option>
+        <option value="sector">Sector</option>
         <option value="invested">Invested Amt</option>
         <option value="units">Units</option>
         <option value="ltp">LTP</option>
@@ -656,7 +652,6 @@
         <option value="pl">P&amp;L</option>
         <option value="plPct">P&amp;L %</option>
         <option value="allocPct" selected>Alloc %</option>
-        <option value="sector">Sector</option>
       </select>
       <button class="mobile-sort-dir" id="equityMobileSortDir" title="Toggle ascending/descending">↓</button>
     </div>
@@ -666,13 +661,15 @@
       <table class="data-table">
         <colgroup>
           <col id="col-eq-name" style="width:200px">
+          <col style="width:120px">
           <col style="width:130px"><col style="width:90px"><col style="width:100px">
           <col style="width:110px"><col style="width:140px"><col style="width:120px">
-          <col style="width:90px"><col style="width:85px"><col style="width:120px"><col style="width:45px">
+          <col style="width:90px"><col style="width:85px"><col style="width:45px">
         </colgroup>
         <thead>
           <tr>
             <th class="left sortable resizable sticky-col" data-col="name">Stock / Symbol<span class="col-resizer"></span></th>
+            <th class="left sortable" data-col="sector">Sector</th>
             <th class="sortable" data-col="invested">Invested Amt</th>
             <th class="sortable" data-col="units">Units</th>
             <th class="sortable" data-col="avgPrice">Avg Price</th>
@@ -681,7 +678,6 @@
             <th class="sortable" data-col="pl">P&amp;L</th>
             <th class="sortable" data-col="plPct">P&amp;L %</th>
             <th class="sortable" data-col="allocPct">Alloc %</th>
-            <th class="left sortable" data-col="sector">Sector</th>
             <th class="row-actions">—</th>
           </tr>
         </thead>
@@ -689,6 +685,7 @@
         <tfoot>
           <tr>
             <td class="left sticky-col">Total</td>
+            <td></td>
             <td id="eqTotalInvested">₹0</td>
             <td>—</td><td>—</td><td>—</td>
             <td id="eqTotalCurrent">₹0</td>
@@ -696,12 +693,10 @@
             <td id="eqTotalPLPct">0%</td>
             <td>100%</td>
             <td></td>
-            <td></td>
           </tr>
         </tfoot>
       </table>
     </div>
-    <button class="fab-add" id="fabAddStock" title="Add stock" aria-label="Add stock">+</button>
   </section>
 
   <!-- ============ DEBT ============ -->
@@ -798,17 +793,12 @@
   <!-- ============ MUTUAL FUNDS ============ -->
   <section class="panel" id="panel-mf">
     <h2 class="section-title">Mutual Funds</h2>
-    <p class="section-sub">Equity mutual fund holdings. NAV is fetched live from your Google Sheet, matched by the Symbol column.</p>
+    <p class="section-sub">Equity mutual fund holdings. Units, Category and NAV are driven by Zerodha Holdings import and an automatic live-NAV refresh every 30 seconds — only Remarks can be edited by hand.</p>
 
     <div class="table-toolbar">
       <div class="left-group">
-        <button class="btn btn-primary" id="btnAddMF">+ Add fund</button>
-        <div class="toolbar-secondary" id="mfToolbarSecondary">
-          <button class="btn" id="btnRefreshMF">Refresh live NAV</button>
-          <button class="btn btn-ghost" id="btnImportMF">Import</button>
-          <input type="file" id="importMFFile" accept=".xlsx,.xls" style="display:none">
-        </div>
-        <button class="btn toolbar-overflow-toggle" id="mfOverflowToggle" title="More actions">⋯</button>
+        <button class="btn btn-primary" id="btnImportMF">Import Holdings</button>
+        <input type="file" id="importMFFile" accept=".xlsx,.xls" style="display:none">
         <input type="text" class="filter-input" id="mfFilter" placeholder="Filter...">
         <span class="status-tag" id="mfFetchStatus"></span>
       </div>
@@ -885,23 +875,17 @@
         </tfoot>
       </table>
     </div>
-    <button class="fab-add" id="fabAddMF" title="Add fund" aria-label="Add fund">+</button>
   </section>
 
   <!-- ============ GOLD ============ -->
   <section class="panel" id="panel-gold">
     <h2 class="section-title">Gold</h2>
-    <p class="section-sub">Gold ETF holdings. Current Rate is fetched live from your Google Sheet (matched by Symbol, same mechanism as stocks since ETFs trade on the exchange), or edit it manually.</p>
+    <p class="section-sub">Gold ETF holdings. Weight, Purchase Rate, Invested Amt and Current Rate are driven by Zerodha Holdings import and an automatic live-price refresh every 30 seconds — only Notes can be edited by hand.</p>
 
     <div class="table-toolbar">
       <div class="left-group">
-        <button class="btn btn-primary" id="btnAddGold">+ Add holding</button>
-        <div class="toolbar-secondary" id="goldToolbarSecondary">
-          <button class="btn" id="btnRefreshGold">Refresh live prices</button>
-          <button class="btn btn-ghost" id="btnImportGold">Import</button>
-          <input type="file" id="importGoldFile" accept=".xlsx,.xls" style="display:none">
-        </div>
-        <button class="btn toolbar-overflow-toggle" id="goldOverflowToggle" title="More actions">⋯</button>
+        <button class="btn btn-primary" id="btnImportGold">Import Holdings</button>
+        <input type="file" id="importGoldFile" accept=".xlsx,.xls" style="display:none">
         <input type="text" class="filter-input" id="goldFilter" placeholder="Filter...">
         <span class="status-tag" id="goldFetchStatus"></span>
       </div>
@@ -974,7 +958,6 @@
         </tfoot>
       </table>
     </div>
-    <button class="fab-add" id="fabAddGold" title="Add holding" aria-label="Add holding">+</button>
   </section>
 
 </main>
@@ -989,6 +972,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-08-25-2"></script>
+<script src="app.js?v=2026-08-25-3"></script>
 </body>
 </html>
