@@ -3148,11 +3148,11 @@ function openDrivePicker(accessToken, options) {
       .setIncludeFolders(false)
       .setSelectFolderEnabled(false)
       .setMimeTypes("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.google-apps.spreadsheet");
-    const picker = new google.picker.PickerBuilder()
+    const pickerBuilder = new google.picker.PickerBuilder()
       .setOAuthToken(accessToken)
       .setDeveloperKey(state.googleDriveApiKey);
-    if (multiSelect) picker.enableFeature(google.picker.Feature.MULTISELECT_ENABLED);
-    picker
+    if (multiSelect) pickerBuilder.enableFeature(google.picker.Feature.MULTISELECT_ENABLED);
+    const picker = pickerBuilder
       .addView(view)
       .setCallback((data) => {
         if (data.action === google.picker.Action.PICKED) {
