@@ -2197,9 +2197,21 @@ function showScreenerImportPreview(newRows, statusEl) {
   );
 }
 
-document.getElementById("btnImportScreener").addEventListener("click", () => {
-  document.getElementById("importScreenerFile").click();
-});
+// "Import Screener Data" -> choose Local file or Google Drive, mirroring
+// openImportChooser()'s pattern for Zerodha Holdings import.
+function openScreenerImportChooser() {
+  openModal(
+    "Import Screener Data",
+    `<p>Import fundamentals from a Screener export (.xlsx) — matched to your Equity holdings by Symbol. Choose a source:</p>
+     <p class="settings-note">Re-importing replaces the whole Screener dataset, whichever source you pick.</p>`,
+    [
+      { label: "Import from Local File", onClick: () => { closeModal(); document.getElementById("importScreenerFile").click(); } },
+      { label: "Import from Google Drive", primary: true, onClick: () => { closeModal(); runScreenerDriveImportPicker(); } }
+    ]
+  );
+}
+
+document.getElementById("btnImportScreener").addEventListener("click", openScreenerImportChooser);
 
 document.getElementById("importScreenerFile").addEventListener("change", async (e) => {
   const file = e.target.files[0];
@@ -2218,6 +2230,56 @@ document.getElementById("importScreenerFile").addEventListener("change", async (
   }
   e.target.value = "";
 });
+
+// Google Drive source for Screener import: reuses the exact same
+// Picker/OAuth plumbing as the Zerodha Holdings Drive import
+// (ensurePickerLoaded/ensureGisLoaded/requestDriveAccessToken/
+// openDrivePicker/downloadDriveFileAsArrayBuffer — all defined
+// above), just single-select and feeding into
+// parseScreenerWorkbookRows() + showScreenerImportPreview() instead
+// of the Zerodha flow. Uses the same Google Drive Client ID/API Key
+// from Settings, so no separate setup is needed if Holdings import
+// from Drive is already configured.
+async function runScreenerDriveImportPicker() {
+  const statusEl = document.getElementById("screenerImportStatus");
+  if (!state.googleDriveClientId || !state.googleDriveApiKey) {
+    alert('Google Drive import needs a one-time setup: add a "Google Drive Client ID" and "Google Drive API Key" in Settings. See the note there for how to create them in Google Cloud Console.');
+    return;
+  }
+  if (statusEl) statusEl.textContent = "Opening Google Drive...";
+  let files, accessToken;
+  try {
+    await ensurePickerLoaded();
+    await ensureGisLoaded();
+    accessToken = await requestDriveAccessToken();
+    files = await openDrivePicker(accessToken, { multiSelect: false });
+  } catch (err) {
+    if (statusEl) statusEl.textContent = "";
+    alert("Could not open Google Drive: " + (err && err.message ? err.message : "unknown error"));
+    return;
+  }
+  if (!files || files.length === 0) { if (statusEl) statusEl.textContent = ""; return; } // person cancelled the picker
+
+  const file = files[0];
+  let rows;
+  try {
+    if (statusEl) statusEl.textContent = `Downloading "${file.name}"...`;
+    const arrayBuffer = await downloadDriveFileAsArrayBuffer(file, accessToken);
+    if (statusEl) statusEl.textContent = `Reading "${file.name}"...`;
+    rows = workbookRowsFromArrayBuffer(arrayBuffer);
+  } catch (err) {
+    if (statusEl) statusEl.textContent = "";
+    alert(err && err.message ? err.message : 'Could not read that file from Drive. Expected a header row including a "symbol" column, plus columns like book_value, eps, industry_pe, roe, roce, etc.');
+    return;
+  }
+  if (statusEl) statusEl.textContent = "";
+  const newRows = parseScreenerWorkbookRows(rows);
+  if (newRows.length === 0) {
+    alert('No valid Screener rows found in that file — make sure it has a "symbol" column header and at least one data row.');
+    return;
+  }
+  showScreenerImportPreview(newRows, statusEl);
+}
 
 // The Cash on hand field displays a formatted currency value
 // (matching the look of the other stat cards) whenever it isn't
@@ -2246,12 +2308,16 @@ document.getElementById("importScreenerFile").addEventListener("change", async (
    in that tab — existing entries are never overwritten.
    ============================================================ */
 
-async function readWorkbookRows(file) {
-  const data = await file.arrayBuffer();
+function workbookRowsFromArrayBuffer(data) {
   const wb = XLSX.read(data, { type: "array", cellDates: true });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "" });
   return rows.filter(r => r.some(c => String(c).trim() !== ""));
+}
+
+async function readWorkbookRows(file) {
+  const data = await file.arrayBuffer();
+  return workbookRowsFromArrayBuffer(data);
 }
 
 // A blank cell (undefined/null/empty-after-trim) means "no update for
@@ -3043,7 +3109,8 @@ function requestDriveAccessToken() {
 // enabled, so several account exports can be picked in one go) and
 // resolves with the chosen files as an array of { id, name, mimeType
 // }, or null if cancelled.
-function openDrivePicker(accessToken) {
+function openDrivePicker(accessToken, options) {
+  const multiSelect = !options || options.multiSelect !== false;
   return new Promise((resolve) => {
     const view = new google.picker.DocsView()
       .setIncludeFolders(false)
@@ -3051,9 +3118,10 @@ function openDrivePicker(accessToken) {
       .setMimeTypes("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.google-apps.spreadsheet");
     const picker = new google.picker.PickerBuilder()
       .setOAuthToken(accessToken)
-      .setDeveloperKey(state.googleDriveApiKey)
+      .setDeveloperKey(state.googleDriveApiKey);
+    if (multiSelect) picker.enableFeature(google.picker.Feature.MULTISELECT_ENABLED);
+    picker
       .addView(view)
-      .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
       .setCallback((data) => {
         if (data.action === google.picker.Action.PICKED) {
           resolve(data.docs || []);
