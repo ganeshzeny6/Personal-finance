@@ -95,6 +95,12 @@ function blankState() {
     debt: [],
     mf: [],
     gold: [],
+    // Stock Analysis tab: one row per imported Screener export, keyed
+    // for lookup by `symbol` (uppercased at import time). Values are
+    // cleaned to plain numbers where possible (currency/comma/%
+    // stripped) — see parseScreenerNum(). Never edited by hand;
+    // wholesale-replaced on each "Import Screener Data".
+    screenerData: [],
     lastSaved: null,
     lastBackup: null,
     // When true, Quantity/Units and Average Price/Invested fields on
@@ -228,7 +234,8 @@ const tableUI = {
   equity: { sortCol: "allocPct", sortDir: -1, filter: "" },
   debt:   { sortCol: "maturityDate", sortDir: 1, filter: "" },
   mf:     { sortCol: "allocPct", sortDir: -1, filter: "" },
-  gold:   { sortCol: null, sortDir: 1, filter: "" }
+  gold:   { sortCol: null, sortDir: 1, filter: "" },
+  stockanalysis: { sortCol: null, sortDir: 1, filter: "" }
 };
 
 // Applies filter then sort to `rows`, given per-row lookup
@@ -428,6 +435,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     document.getElementById("panel-" + btn.dataset.tab).classList.add("active");
     if (btn.dataset.tab === "dashboard") renderDashboard();
     if (btn.dataset.tab === "insights") renderInsights();
+    if (btn.dataset.tab === "stockanalysis") renderStockAnalysis();
   });
 });
 
@@ -1514,6 +1522,9 @@ function renderDashboard() {
   // 30-second auto price refresh); renderInsights() itself no-ops if
   // that tab isn't currently open.
   renderInsights();
+  // Stock Analysis joins live off Equity's LTP/Sector, so it needs the
+  // same refresh trigger — cheap enough (no chart) to just always run.
+  renderStockAnalysis();
 }
 
 function renderPieChart(classes, netWorth) {
@@ -1752,6 +1763,356 @@ function renderInsights() {
     }
   }
 }
+
+/* ============================================================
+   STOCK ANALYSIS TAB
+   Read-only fundamentals view: joins each Equity holding (Stock/
+   Symbol, Sector, LTP — all from the Equity tab, never duplicated
+   here) against an imported Screener dataset (state.screenerData,
+   matched by Symbol). PE, P/B, Yield, Buy Reco and the Financial-
+   sector P/B highlight are always calculated in-app from LTP +
+   the Screener's EPS/Book Value/Industry PE — never taken as a
+   pre-computed column from the source file. No fields here are
+   ever hand-edited; the only inputs are a filter box and the
+   Import Screener Data file picker.
+   ============================================================ */
+
+// Cleans a Screener cell into a plain number: strips ₹, thousands
+// commas (including Indian-style lakh/crore grouping), "Cr."/"Cr"
+// suffixes and "%" signs. Returns null (not 0) for blank/"-"/
+// unparseable cells, so downstream calculations can tell "missing"
+// apart from "zero" and skip gracefully instead of showing a
+// misleading 0.
+function parseScreenerNum(v) {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number") return isNaN(v) ? null : v;
+  let s = String(v).trim();
+  if (s === "" || s === "-" || s.toUpperCase() === "N/A") return null;
+  s = s.replace(/₹/g, "").replace(/Cr\.?/gi, "").replace(/,/g, "").replace(/%/g, "").trim();
+  const n = parseFloat(s);
+  return isNaN(n) ? null : n;
+}
+
+// The Screener's `high_low` column packs 52-week High and Low into
+// one cell as "High/Low" (e.g. "₹3,350/1,976"). Splits and cleans
+// both sides; returns nulls if the cell doesn't look like that shape.
+function parseHighLow(v) {
+  if (v === null || v === undefined) return { high: null, low: null };
+  const s = String(v).trim();
+  const parts = s.split("/");
+  if (parts.length !== 2) return { high: null, low: null };
+  return { high: parseScreenerNum(parts[0]), low: parseScreenerNum(parts[1]) };
+}
+
+// Builds a Map from Symbol (trimmed, uppercased) to that Screener
+// row's cleaned fields — the single lookup used to join Screener
+// data onto each Equity holding by Symbol.
+function buildScreenerMap() {
+  const map = new Map();
+  (state.screenerData || []).forEach(row => {
+    const key = String(row.symbol || "").trim().toUpperCase();
+    if (key) map.set(key, row);
+  });
+  return map;
+}
+
+// Computes every derived Stock Analysis field for one Equity row.
+// `screener` is the matched Screener row (already-cleaned numbers)
+// or undefined if no Screener data has been imported for this
+// Symbol yet — every derived value degrades to null in that case
+// rather than showing a misleading 0.
+function stockAnalysisDerived(equityRow, screener) {
+  const ltp = Number(equityRow.ltp) || 0;
+  const sector = equityRow.sector || "";
+  const eps = screener ? screener.eps : null;
+  const bookValue = screener ? screener.book_value : null;
+  const industryPe = screener ? screener.industry_pe : null;
+  const industryPbv = screener ? screener.industry_pbv : null;
+  const hl = screener ? parseHighLow(screener.high_low) : { high: null, low: null };
+
+  // PE and P/B are ALWAYS computed here from LTP — never read as a
+  // pre-calculated column from the Screener file, per spec.
+  const pe = (ltp > 0 && eps !== null && eps > 0) ? ltp / eps : null;
+  const pb = (ltp > 0 && bookValue !== null && bookValue > 0) ? ltp / bookValue : null;
+  const yieldPct = (pe !== null && pe > 0) ? (1 / pe) * 100 : null;
+
+  const buyReco = (pe !== null && industryPe !== null) ? (pe < industryPe) : null;
+
+  // Financial-sector P/B highlight: strongest applicable band wins
+  // (checked from tightest threshold outward), and only applies when
+  // the holding's own Sector (from the Equity tab) looks Financial.
+  let pbClass = "";
+  if (pb !== null && /financ/i.test(sector)) {
+    if (pb < 1) pbClass = "pb-green";
+    else if (pb < 1.5) pbClass = "pb-yellow";
+    else if (pb < 2) pbClass = "pb-orange";
+  }
+
+  const gainFromLow = (hl.low !== null && hl.low > 0 && ltp > 0) ? ((ltp - hl.low) / hl.low) * 100 : null;
+  const dropFromHigh = (hl.high !== null && hl.high > 0 && ltp > 0) ? ((hl.high - ltp) / hl.high) * 100 : null;
+
+  return {
+    ltp, sector,
+    low52: hl.low, high52: hl.high, gainFromLow, dropFromHigh,
+    eps, pe, industryPe, buyReco,
+    bookValue, pb, pbClass, industryPbv,
+    yieldPct,
+    dividendYield: screener ? pctOrNull(screener.dividend_yield) : null,
+    roe: screener ? pctOrNull(screener.roe) : null,
+    roce: screener ? pctOrNull(screener.roce) : null,
+    debtToEquity: screener ? screener.debt_to_equity : null,
+    promoterHolding: screener ? pctOrNull(screener.promoter_holding) : null,
+    epsGrowth3y: screener ? pctOrNull(screener.eps_growth_3years) : null,
+    epsGrowth5y: screener ? pctOrNull(screener.eps_growth_5years) : null,
+    salesGrowth5y: screener ? pctOrNull(screener.sales_growth_5years) : null,
+    qtrProfitVar: screener ? pctOrNull(screener.qtr_profit_var) : null,
+    qtrSalesVar: screener ? pctOrNull(screener.qtr_sales_var) : null
+  };
+}
+
+// Screener fractions (0.518) are stored as-is by the importer;
+// convert to a percentage (51.8) at display/calc time here, in one
+// place, so every fraction-based field is handled consistently.
+function pctOrNull(v) {
+  return (v === null || v === undefined) ? null : v * 100;
+}
+
+// Renders a derived numeric field as fixed-decimal text, or an
+// em-dash when the underlying Screener data hasn't been imported
+// yet for that holding — distinguishes "missing data" from "0".
+function fmtOrDash(v, decimals = 2, suffix = "") {
+  return (v === null || v === undefined) ? '<span class="muted">—</span>' : fmtNum(v, decimals) + suffix;
+}
+
+function stockAnalysisGetSearchText(row, screener, d) {
+  return [row.name, row.sector, d.eps, d.pe, d.industryPe, d.bookValue, d.pb].join(" ");
+}
+
+function stockAnalysisGetSortValue(d, col) {
+  switch (col) {
+    case "name": return d._name;
+    case "sector": return d.sector || "";
+    case "ltp": return d.ltp;
+    case "low52": return d.low52 ?? -Infinity;
+    case "high52": return d.high52 ?? -Infinity;
+    case "gainFromLow": return d.gainFromLow ?? -Infinity;
+    case "dropFromHigh": return d.dropFromHigh ?? -Infinity;
+    case "eps": return d.eps ?? -Infinity;
+    case "pe": return d.pe ?? -Infinity;
+    case "industryPe": return d.industryPe ?? -Infinity;
+    case "bookValue": return d.bookValue ?? -Infinity;
+    case "pb": return d.pb ?? -Infinity;
+    case "roe": return d.roe ?? -Infinity;
+    case "roce": return d.roce ?? -Infinity;
+    default: return 0;
+  }
+}
+
+function renderStockAnalysis() {
+  const tbody = document.getElementById("stockAnalysisTableBody");
+  if (!tbody) return;
+  const screenerMap = buildScreenerMap();
+
+  let rows = state.equity.map(row => {
+    const screener = screenerMap.get((row.name || "").trim().toUpperCase());
+    const d = stockAnalysisDerived(row, screener);
+    d._name = row.name || "";
+    return { row, screener, d };
+  });
+
+  const ui = tableUI.stockanalysis;
+  if (ui.filter) {
+    const q = ui.filter.toLowerCase();
+    rows = rows.filter(({ row, screener, d }) => stockAnalysisGetSearchText(row, screener, d).toLowerCase().includes(q));
+  }
+  if (ui.sortCol) {
+    rows = [...rows].sort((a, b) => {
+      let va = stockAnalysisGetSortValue(a.d, ui.sortCol);
+      let vb = stockAnalysisGetSortValue(b.d, ui.sortCol);
+      if (typeof va === "string" || typeof vb === "string") {
+        va = String(va ?? "").toLowerCase();
+        vb = String(vb ?? "").toLowerCase();
+        return va < vb ? -ui.sortDir : va > vb ? ui.sortDir : 0;
+      }
+      return ((va || 0) - (vb || 0)) * ui.sortDir;
+    });
+  }
+
+  tbody.innerHTML = "";
+  if (state.equity.length === 0) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="25">No Equity holdings yet — add stocks on the Equity tab first.</td></tr>';
+    return;
+  }
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="25">No holdings match this filter.</td></tr>';
+    return;
+  }
+
+  rows.forEach(({ row, d }) => {
+    const tr = document.createElement("tr");
+    const buyHTML = d.buyReco === null
+      ? '<span class="muted">—</span>'
+      : d.buyReco
+        ? '<span class="buy-badge buy">Buy</span>'
+        : '<span class="buy-badge no">Hold</span>';
+    tr.innerHTML = `
+      <td class="left sticky-col" data-label="Stock / Symbol">${escapeAttr(row.name || "")}</td>
+      <td class="left" data-label="Sector">${escapeAttr(d.sector || "—")}</td>
+      <td data-label="LTP">${fmtNum(d.ltp)}</td>
+      <td data-label="52W Low">${fmtOrDash(d.low52)}</td>
+      <td data-label="52W High">${fmtOrDash(d.high52)}</td>
+      <td class="${d.gainFromLow > 0 ? 'pos' : ''}" data-label="Gain from Low %">${fmtOrDash(d.gainFromLow, 1, "%")}</td>
+      <td class="${d.dropFromHigh > 0 ? 'neg' : ''}" data-label="Drop from High %">${fmtOrDash(d.dropFromHigh, 1, "%")}</td>
+      <td data-label="EPS">${fmtOrDash(d.eps)}</td>
+      <td data-label="PE">${fmtOrDash(d.pe)}</td>
+      <td data-label="Industry PE">${fmtOrDash(d.industryPe)}</td>
+      <td class="left" data-label="Buy Reco">${buyHTML}</td>
+      <td data-label="Book Value">${fmtOrDash(d.bookValue)}</td>
+      <td class="${d.pbClass}" data-label="P/B">${fmtOrDash(d.pb)}</td>
+      <td data-label="Industry P/B">${fmtOrDash(d.industryPbv)}</td>
+      <td data-label="Yield %">${fmtOrDash(d.yieldPct, 2, "%")}</td>
+      <td data-label="Div Yield %">${fmtOrDash(d.dividendYield, 2, "%")}</td>
+      <td data-label="ROE %">${fmtOrDash(d.roe, 1, "%")}</td>
+      <td data-label="ROCE %">${fmtOrDash(d.roce, 1, "%")}</td>
+      <td data-label="Debt/Equity">${fmtOrDash(d.debtToEquity)}</td>
+      <td data-label="Promoter Hold %">${fmtOrDash(d.promoterHolding, 1, "%")}</td>
+      <td data-label="EPS Gr. 3Y %">${fmtOrDash(d.epsGrowth3y, 1, "%")}</td>
+      <td data-label="EPS Gr. 5Y %">${fmtOrDash(d.epsGrowth5y, 1, "%")}</td>
+      <td data-label="Sales Gr. 5Y %">${fmtOrDash(d.salesGrowth5y, 1, "%")}</td>
+      <td data-label="Qtr Profit Var %">${fmtOrDash(d.qtrProfitVar, 1, "%")}</td>
+      <td data-label="Qtr Sales Var %">${fmtOrDash(d.qtrSalesVar, 1, "%")}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+/* ---- Import Screener Data (.xlsx) ----
+   Header-name-driven (not positional) so column order in the
+   source file doesn't matter — matches the exact header text from
+   a Screener export (e.g. "symbol", "book_value", "industry_pe"),
+   case-insensitively. Every recognized numeric column is cleaned
+   via parseScreenerNum() at import time (not at render time), so
+   renderStockAnalysis() always works with plain numbers or null.
+   Replaces the whole dataset on import — same full-overwrite
+   pattern Debt import already uses, since a partial merge-by-symbol
+   has no real advantage here and adds complexity.
+*/
+
+// Every field this tab consumes, plus its accepted header spelling(s)
+// in the source file. Extend this list if a future export adds more
+// Screener columns the tab should pick up.
+const SCREENER_FIELD_MAP = {
+  symbol: ["symbol"],
+  book_value: ["book_value"],
+  debt_to_equity: ["debt_to_equity"],
+  dividend_yield: ["dividend_yield"],
+  eps: ["eps"],
+  eps_growth_3years: ["eps_growth_3years"],
+  eps_growth_5years: ["eps_growth_5years"],
+  high_low: ["high_low"],
+  industry_pbv: ["industry_pbv"],
+  industry_pe: ["industry_pe"],
+  mar_cap_5yrs_back: ["mar_cap_5yrs_back"],
+  profit_var_5yrs: ["profit_var_5yrs"],
+  promoter_holding: ["promoter_holding"],
+  qtr_profit_var: ["qtr_profit_var"],
+  qtr_sales_var: ["qtr_sales_var"],
+  return_on_assets: ["return_on_assets"],
+  roce: ["roce"],
+  roe: ["roe"],
+  sales_growth_5years: ["sales_growth_5years"]
+};
+
+function parseScreenerWorkbookRows(headerRows) {
+  if (headerRows.length === 0) return [];
+  const headers = headerRows[0].map(h => String(h ?? "").trim().toLowerCase());
+  const colIndexFor = (candidates) => headers.findIndex(h => candidates.includes(h));
+  const symbolIdx = colIndexFor(SCREENER_FIELD_MAP.symbol);
+  if (symbolIdx === -1) return [];
+
+  const fieldIndexes = {};
+  Object.keys(SCREENER_FIELD_MAP).forEach(field => {
+    if (field === "symbol") return;
+    fieldIndexes[field] = colIndexFor(SCREENER_FIELD_MAP[field]);
+  });
+
+  return headerRows.slice(1).map(r => {
+    const symbol = String(r[symbolIdx] ?? "").trim().toUpperCase();
+    if (!symbol) return null;
+    const out = { symbol };
+    Object.keys(fieldIndexes).forEach(field => {
+      const idx = fieldIndexes[field];
+      if (idx === -1) { out[field] = null; return; }
+      // high_low is a "High/Low" text cell, not a plain number —
+      // kept as a raw string here and parsed by parseHighLow() at
+      // render time.
+      out[field] = field === "high_low" ? String(r[idx] ?? "").trim() : parseScreenerNum(r[idx]);
+    });
+    return out;
+  }).filter(Boolean);
+}
+
+function showScreenerImportPreview(newRows, statusEl) {
+  const existingCount = (state.screenerData || []).length;
+  const previewRows = newRows.slice(0, 10).map(r => `
+    <tr>
+      <td class="left">${escapeAttr(r.symbol)}</td>
+      <td class="left">${r.eps ?? "—"}</td>
+      <td class="left">${r.book_value ?? "—"}</td>
+      <td class="left">${r.industry_pe ?? "—"}</td>
+    </tr>`).join("");
+  const html = `
+    <div class="import-stat-row">
+      <div class="import-stat"><div class="n">${existingCount}</div><div class="l">Current Rows</div></div>
+      <div class="import-stat"><div class="n">${newRows.length}</div><div class="l">Rows In File</div></div>
+      <div class="import-stat ${existingCount ? "warn" : ""}"><div class="n">${existingCount}</div><div class="l">Will Be Replaced</div></div>
+    </div>
+    <p>This <strong>replaces all ${existingCount} existing Screener ${existingCount === 1 ? "row" : "rows"}</strong> with the ${newRows.length} row${newRows.length === 1 ? "" : "s"} from this file — nothing is merged.</p>
+    <table>
+      <thead><tr><th class="left">Symbol</th><th class="left">EPS</th><th class="left">Book Value</th><th class="left">Industry PE</th></tr></thead>
+      <tbody>${previewRows}</tbody>
+    </table>
+    ${newRows.length > 10 ? `<p class="settings-note">…and ${newRows.length - 10} more.</p>` : ""}
+  `;
+  openModal(
+    "Import Screener Data — Preview",
+    html,
+    [
+      { label: "Cancel", onClick: () => { closeModal(); statusEl.textContent = ""; } },
+      {
+        label: `Replace ${existingCount} ${existingCount === 1 ? "row" : "rows"}`, primary: true, onClick: () => {
+          state.screenerData = newRows;
+          saveState();
+          renderStockAnalysis();
+          closeModal();
+          statusEl.textContent = `Imported ${newRows.length} Screener row${newRows.length === 1 ? "" : "s"}.`;
+        }
+      }
+    ]
+  );
+}
+
+document.getElementById("btnImportScreener").addEventListener("click", () => {
+  document.getElementById("importScreenerFile").click();
+});
+
+document.getElementById("importScreenerFile").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  const statusEl = document.getElementById("screenerImportStatus");
+  if (!file) return;
+  try {
+    const rows = await readWorkbookRows(file);
+    const newRows = parseScreenerWorkbookRows(rows);
+    if (newRows.length === 0) {
+      alert('No valid Screener rows found — make sure the file has a "symbol" column header and at least one data row.');
+    } else {
+      showScreenerImportPreview(newRows, statusEl);
+    }
+  } catch (err) {
+    alert("Could not read that Excel file. Expected a header row including a \"symbol\" column, plus columns like book_value, eps, industry_pe, roe, roce, etc.");
+  }
+  e.target.value = "";
+});
 
 // The Cash on hand field displays a formatted currency value
 // (matching the look of the other stat cards) whenever it isn't
@@ -3259,6 +3620,7 @@ function renderAll() {
   renderDebt();
   renderMF();
   renderGold();
+  renderStockAnalysis();
   renderDashboard();
   const tag = document.getElementById("lastUpdatedTag");
   tag.textContent = state.lastSaved ? "Saved " + new Date(state.lastSaved).toLocaleTimeString() : "Not saved yet";
@@ -3268,16 +3630,19 @@ setupSortAndFilter("equity", "#panel-equity thead", "equityFilter", () => { rend
 setupSortAndFilter("debt", "#panel-debt thead", "debtFilter", () => { renderDebt(); });
 setupSortAndFilter("mf", "#panel-mf thead", "mfFilter", () => { renderMF(); });
 setupSortAndFilter("gold", "#panel-gold thead", "goldFilter", () => { renderGold(); });
+setupSortAndFilter("stockanalysis", "#panel-stockanalysis thead", "stockAnalysisFilter", () => { renderStockAnalysis(); });
 
 markInitialSortIndicator("equity", "#panel-equity thead");
 markInitialSortIndicator("debt", "#panel-debt thead");
 markInitialSortIndicator("mf", "#panel-mf thead");
 markInitialSortIndicator("gold", "#panel-gold thead");
+markInitialSortIndicator("stockanalysis", "#panel-stockanalysis thead");
 
 setupMobileSort("equity", "equityMobileSort", "equityMobileSortDir", "#panel-equity thead", () => { renderEquity(); });
 setupMobileSort("debt", "debtMobileSort", "debtMobileSortDir", "#panel-debt thead", () => { renderDebt(); });
 setupMobileSort("mf", "mfMobileSort", "mfMobileSortDir", "#panel-mf thead", () => { renderMF(); });
 setupMobileSort("gold", "goldMobileSort", "goldMobileSortDir", "#panel-gold thead", () => { renderGold(); });
+setupMobileSort("stockanalysis", "stockAnalysisMobileSort", "stockAnalysisMobileSortDir", "#panel-stockanalysis thead", () => { renderStockAnalysis(); });
 
 setupOverflowToggle("debtOverflowToggle", "debtToolbarSecondary");
 
@@ -3287,6 +3652,7 @@ setupColumnResize("col-eq-name", "#panel-equity .col-resizer");
 setupColumnResize("col-debt-name", "#panel-debt .col-resizer");
 setupColumnResize("col-mf-name", "#panel-mf .col-resizer");
 setupColumnResize("col-gold-name", "#panel-gold .col-resizer");
+setupColumnResize("col-sa-name", "#panel-stockanalysis .col-resizer");
 
 updateLockButton();
 updateDemoButtons();

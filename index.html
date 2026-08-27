@@ -276,6 +276,20 @@
   #panel-debt table.data-table{min-width:1615px;}
   #panel-mf table.data-table{min-width:1400px;}
   #panel-gold table.data-table{min-width:1295px;}
+  #panel-stockanalysis table.data-table{min-width:2350px;}
+
+  /* Stock Analysis: Buy recommendation badge + Financial-sector P/B
+     highlight bands (green < 1, yellow < 1.5, orange < 2 — strongest
+     applicable wins, checked in that order in JS). */
+  .buy-badge{
+    display:inline-block;font-family:var(--font-body);font-size:10.5px;font-weight:600;
+    padding:2px 7px;border-radius:5px;letter-spacing:.02em;
+  }
+  .buy-badge.buy{background:var(--positive-soft);color:var(--positive);}
+  .buy-badge.no{background:var(--surface-2);color:var(--text-faint);}
+  td.pb-green{background:var(--positive-soft);color:var(--positive);font-weight:600;}
+  td.pb-yellow{background:var(--warning-soft);color:var(--warning);font-weight:600;}
+  td.pb-orange{background:#e0893322;color:#e08933;font-weight:600;}
 
   /* Frozen first column (Name/Symbol) — stays put while the rest of a
      wide table scrolls horizontally. It's the leftmost column so its
@@ -563,6 +577,7 @@
   <button class="tab-btn" data-tab="mf">Mutual Funds</button>
   <button class="tab-btn" data-tab="gold">Gold</button>
   <button class="tab-btn" data-tab="insights">Insights</button>
+  <button class="tab-btn" data-tab="stockanalysis">Stock Analysis</button>
 </div>
 
 <main>
@@ -1021,6 +1036,81 @@
     </div>
   </section>
 
+  <!-- ============ STOCK ANALYSIS ============ -->
+  <section class="panel" id="panel-stockanalysis">
+    <h2 class="section-title">Stock Analysis</h2>
+    <p class="section-sub">Fundamentals for your Equity holdings — Stock/Symbol, Sector and LTP come straight from the Equity tab; everything else is joined in from imported Screener data by Symbol. PE, P/B and Yield are always calculated here, never taken pre-computed from the source file.</p>
+
+    <div class="table-toolbar">
+      <div class="left-group">
+        <input type="text" class="filter-input" id="stockAnalysisFilter" placeholder="Filter...">
+        <button class="btn" id="btnImportScreener">Import Screener Data</button>
+        <input type="file" id="importScreenerFile" accept=".xlsx,.xls">
+        <span class="status-tag" id="screenerImportStatus"></span>
+      </div>
+    </div>
+    <div class="mobile-sort-row">
+      <select id="stockAnalysisMobileSort">
+        <option value="">Sort: default</option>
+        <option value="name">Name</option>
+        <option value="sector">Sector</option>
+        <option value="ltp">LTP</option>
+        <option value="pe">PE</option>
+        <option value="industryPe">Industry PE</option>
+        <option value="pb">P/B</option>
+        <option value="roe">ROE %</option>
+        <option value="roce">ROCE %</option>
+      </select>
+      <button class="mobile-sort-dir" id="stockAnalysisMobileSortDir" title="Toggle ascending/descending">↑</button>
+    </div>
+
+    <div class="table-scroll">
+      <table class="data-table">
+        <colgroup>
+          <col id="col-sa-name" style="width:150px">
+          <col style="width:120px"><col style="width:90px">
+          <col style="width:90px"><col style="width:90px"><col style="width:95px"><col style="width:95px">
+          <col style="width:80px"><col style="width:80px"><col style="width:95px"><col style="width:90px">
+          <col style="width:90px"><col style="width:80px"><col style="width:95px"><col style="width:90px">
+          <col style="width:80px"><col style="width:75px"><col style="width:75px"><col style="width:105px">
+          <col style="width:105px"><col style="width:100px"><col style="width:100px"><col style="width:100px">
+          <col style="width:105px"><col style="width:125px">
+        </colgroup>
+        <thead>
+          <tr>
+            <th class="left sortable resizable sticky-col" data-col="name">Stock / Symbol<span class="col-resizer"></span></th>
+            <th class="left sortable" data-col="sector">Sector</th>
+            <th class="sortable" data-col="ltp">LTP</th>
+            <th class="sortable" data-col="low52">52W Low</th>
+            <th class="sortable" data-col="high52">52W High</th>
+            <th class="sortable" data-col="gainFromLow">Gain from Low %</th>
+            <th class="sortable" data-col="dropFromHigh">Drop from High %</th>
+            <th class="sortable" data-col="eps">EPS</th>
+            <th class="sortable" data-col="pe">PE</th>
+            <th class="sortable" data-col="industryPe">Industry PE</th>
+            <th class="left sortable" data-col="buyReco">Buy Reco</th>
+            <th class="sortable" data-col="bookValue">Book Value</th>
+            <th class="sortable" data-col="pb">P/B</th>
+            <th class="sortable" data-col="industryPbv">Industry P/B</th>
+            <th class="sortable" data-col="yieldPct">Yield %</th>
+            <th class="sortable" data-col="dividendYield">Div Yield %</th>
+            <th class="sortable" data-col="roe">ROE %</th>
+            <th class="sortable" data-col="roce">ROCE %</th>
+            <th class="sortable" data-col="debtToEquity">Debt/Equity</th>
+            <th class="sortable" data-col="promoterHolding">Promoter Hold %</th>
+            <th class="sortable" data-col="epsGrowth3y">EPS Gr. 3Y %</th>
+            <th class="sortable" data-col="epsGrowth5y">EPS Gr. 5Y %</th>
+            <th class="sortable" data-col="salesGrowth5y">Sales Gr. 5Y %</th>
+            <th class="sortable" data-col="qtrProfitVar">Qtr Profit Var %</th>
+            <th class="sortable" data-col="qtrSalesVar">Qtr Sales Var %</th>
+          </tr>
+        </thead>
+        <tbody id="stockAnalysisTableBody"></tbody>
+      </table>
+    </div>
+    <p class="settings-note">"Import Screener Data" reads an .xlsx with a header row (symbol, book_value, eps, industry_pe, roe, roce, etc. — same column names your Screener export uses) and matches each row to an Equity holding by Symbol. Re-importing replaces the whole Screener dataset.</p>
+  </section>
+
 </main>
 
 <footer class="app-footer">All data stays in this browser (localStorage) unless you export it or sign in to sync via Google. Nothing is sent to any server except live price lookups and, if signed in, your own Firestore document.</footer>
@@ -1033,6 +1123,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-08-27-1"></script>
+<script src="app.js?v=2026-08-27-2"></script>
 </body>
 </html>
