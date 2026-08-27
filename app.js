@@ -3206,11 +3206,11 @@ function openSettingsModal() {
     <p class="settings-note" style="margin-top:0">"Import from Google Drive" opens a picker so you browse and choose the exact Zerodha Holdings .xlsx file — it never gets standing access to your whole Drive, only the file you pick. One-time setup in <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a>: enable the "Google Picker API" and "Google Drive API", create an OAuth 2.0 Client ID (Web application) with this site's URL under Authorized JavaScript origins, and create an API key (restrict it to the Picker API). Paste both below.</p>
     <div class="settings-field">
       <label for="settingsGoogleDriveClientId">Google Drive OAuth Client ID</label>
-      <input type="text" id="settingsGoogleDriveClientId" placeholder="xxxxxxxxxx.apps.googleusercontent.com" value="${escapeAttr(state.googleDriveClientId || "")}">
+      <input type="text" id="settingsGoogleDriveClientId" placeholder="xxxxxxxxxx.apps.googleusercontent.com" value="${escapeAttr(state.googleDriveClientId || "638244383857-oe1ea4pb1l64a79d34d7j64uclmpmqv9.apps.googleusercontent.com")}">
     </div>
     <div class="settings-field">
       <label for="settingsGoogleDriveApiKey">Google Drive API Key</label>
-      <input type="text" id="settingsGoogleDriveApiKey" placeholder="AIza..." value="${escapeAttr(state.googleDriveApiKey || "")}">
+      <input type="text" id="settingsGoogleDriveApiKey" placeholder="AIza..." value="${escapeAttr(state.googleDriveApiKey || "AIzaSyB0waRuXkp9Bh1k0CcmSea-BXcM6yY8WQs")}">
     </div>
 
     <h4>Import Investments</h4>
