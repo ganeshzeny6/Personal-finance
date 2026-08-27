@@ -2210,41 +2210,63 @@ function combineAccountTotals(row, rec) {
 }
 
 // Builds the match/add plan for one asset class's imported records
-// against its existing tracker rows. Later occurrences of the same
-// Symbol *within this one import* win; earlier ones are reported as
-// duplicate rows in the preview rather than silently dropped.
+// against its existing tracker rows. Records are first grouped by
+// Symbol, then within each Symbol group by Account (Client ID) — a
+// Symbol appearing under more than one Account is a genuine
+// multi-account holding (e.g. the same stock held in two different
+// Zerodha accounts' files) and every account's record is kept, to be
+// folded together later via combineAccountTotals(). A Symbol
+// repeated under the *same* Account (e.g. the same file selected
+// twice, or the same account exported twice) is a true duplicate —
+// the later occurrence wins and it's reported in the preview rather
+// than silently dropped.
 function planZerodhaImport(records, existingArray, matchFn) {
-  const byKey = new Map();
-  const duplicateKeys = new Set();
+  const bySymbol = new Map();
   records.forEach(r => {
     const k = r.symbol.toUpperCase();
-    if (byKey.has(k)) duplicateKeys.add(k);
-    byKey.set(k, r);
+    if (!bySymbol.has(k)) bySymbol.set(k, []);
+    bySymbol.get(k).push(r);
   });
+
+  const duplicateKeys = [];
   const matched = [], added = [];
-  byKey.forEach(r => {
-    const existing = existingArray.find(row => matchFn(row, r));
-    if (existing) matched.push({ existing, imported: r });
-    else added.push(r);
+  bySymbol.forEach(recs => {
+    const byAccount = new Map(); // accountId -> record (last occurrence wins)
+    recs.forEach(r => {
+      const acctKey = r.accountId || "default";
+      if (byAccount.has(acctKey)) duplicateKeys.push(r.symbol);
+      byAccount.set(acctKey, r);
+    });
+    const importedList = [...byAccount.values()];
+    const symbol = importedList[0].symbol;
+    const existing = existingArray.find(row => matchFn(row, importedList[0]));
+    if (existing) matched.push({ existing, symbol, importedList });
+    else added.push({ symbol, importedList });
   });
-  return { matched, added, duplicateKeys: [...duplicateKeys] };
+
+  return { matched, added, duplicateKeys: [...new Set(duplicateKeys)] };
 }
 
 function applyEquityZerodhaPlan(plan) {
   const newInvestments = [];
-  plan.matched.forEach(({ existing, imported }) => {
-    const totals = combineAccountTotals(existing, imported);
-    existing.units = totals.totalQty;
-    existing.invested = totals.totalInvested;
-    if (imported.sector) existing.sector = imported.sector; // don't clobber with blank
+  plan.matched.forEach(({ existing, importedList }) => {
+    importedList.forEach(imported => {
+      const totals = combineAccountTotals(existing, imported);
+      existing.units = totals.totalQty;
+      existing.invested = totals.totalInvested;
+      if (imported.sector) existing.sector = imported.sector; // don't clobber with blank
+    });
   });
-  plan.added.forEach(imported => {
-    const row = { id: uid(), name: imported.symbol, invested: 0, units: 0, ltp: 0, sector: imported.sector || "", livePricePending: true };
-    const totals = combineAccountTotals(row, imported);
-    row.units = totals.totalQty;
-    row.invested = totals.totalInvested;
+  plan.added.forEach(({ symbol, importedList }) => {
+    const row = { id: uid(), name: symbol, invested: 0, units: 0, ltp: 0, sector: "", livePricePending: true };
+    importedList.forEach(imported => {
+      const totals = combineAccountTotals(row, imported);
+      row.units = totals.totalQty;
+      row.invested = totals.totalInvested;
+      if (imported.sector) row.sector = imported.sector;
+    });
     state.equity.push(row);
-    newInvestments.push({ name: imported.symbol, type: "Equity" });
+    newInvestments.push({ name: symbol, type: "Equity" });
   });
   saveState();
   renderEquity();
@@ -2254,20 +2276,24 @@ function applyEquityZerodhaPlan(plan) {
 
 function applyGoldZerodhaPlan(plan) {
   const newInvestments = [];
-  plan.matched.forEach(({ existing, imported }) => {
-    const totals = combineAccountTotals(existing, imported);
-    existing.weight = totals.totalQty;
-    existing.invested = totals.totalInvested;
-    existing.purchaseRate = totals.totalQty > 0 ? totals.totalInvested / totals.totalQty : existing.purchaseRate;
+  plan.matched.forEach(({ existing, importedList }) => {
+    importedList.forEach(imported => {
+      const totals = combineAccountTotals(existing, imported);
+      existing.weight = totals.totalQty;
+      existing.invested = totals.totalInvested;
+      existing.purchaseRate = totals.totalQty > 0 ? totals.totalInvested / totals.totalQty : existing.purchaseRate;
+    });
   });
-  plan.added.forEach(imported => {
-    const row = { id: uid(), name: imported.symbol, form: "ETF", weight: 0, purchaseRate: imported.avgPrice, invested: 0, currentRate: 0, notes: "", livePricePending: true };
-    const totals = combineAccountTotals(row, imported);
-    row.weight = totals.totalQty;
-    row.invested = totals.totalInvested;
-    row.purchaseRate = totals.totalQty > 0 ? totals.totalInvested / totals.totalQty : imported.avgPrice;
+  plan.added.forEach(({ symbol, importedList }) => {
+    const row = { id: uid(), name: symbol, form: "ETF", weight: 0, purchaseRate: importedList[0].avgPrice, invested: 0, currentRate: 0, notes: "", livePricePending: true };
+    importedList.forEach(imported => {
+      const totals = combineAccountTotals(row, imported);
+      row.weight = totals.totalQty;
+      row.invested = totals.totalInvested;
+      row.purchaseRate = totals.totalQty > 0 ? totals.totalInvested / totals.totalQty : imported.avgPrice;
+    });
     state.gold.push(row);
-    newInvestments.push({ name: imported.symbol, type: "Gold" });
+    newInvestments.push({ name: symbol, type: "Gold" });
   });
   saveState();
   renderGold();
@@ -2277,19 +2303,24 @@ function applyGoldZerodhaPlan(plan) {
 
 function applyMFZerodhaPlan(plan) {
   const newInvestments = [];
-  plan.matched.forEach(({ existing, imported }) => {
-    const totals = combineAccountTotals(existing, imported);
-    existing.units = totals.totalQty;
-    existing.invested = totals.totalInvested;
-    if (imported.category) existing.category = imported.category; // don't clobber with blank
+  plan.matched.forEach(({ existing, importedList }) => {
+    importedList.forEach(imported => {
+      const totals = combineAccountTotals(existing, imported);
+      existing.units = totals.totalQty;
+      existing.invested = totals.totalInvested;
+      if (imported.category) existing.category = imported.category; // don't clobber with blank
+    });
   });
-  plan.added.forEach(imported => {
-    const row = { id: uid(), name: imported.symbol, symbol: "", category: imported.category || "", invested: 0, units: 0, unitPrice: 0, remarks: "", livePricePending: true };
-    const totals = combineAccountTotals(row, imported);
-    row.units = totals.totalQty;
-    row.invested = totals.totalInvested;
+  plan.added.forEach(({ symbol, importedList }) => {
+    const row = { id: uid(), name: symbol, symbol: "", category: "", invested: 0, units: 0, unitPrice: 0, remarks: "", livePricePending: true };
+    importedList.forEach(imported => {
+      const totals = combineAccountTotals(row, imported);
+      row.units = totals.totalQty;
+      row.invested = totals.totalInvested;
+      if (imported.category) row.category = imported.category;
+    });
     state.mf.push(row);
-    newInvestments.push({ name: imported.symbol, type: "Mutual Fund" });
+    newInvestments.push({ name: symbol, type: "Mutual Fund" });
   });
   saveState();
   renderMF();
@@ -2324,14 +2355,20 @@ function buildImportGroup(assetKey, records, attention) {
   const plan = planZerodhaImport(records, cfg.getExisting(), cfg.matchFn);
   // "Combined" = this holding's account map will span more than one
   // distinct Client ID once this import is applied — checked without
-  // mutating state, so the preview can run before Confirm.
-  const combinedNames = plan.matched
-    .filter(m => {
-      const existingKeys = new Set(Object.keys(m.existing.zerodhaAccounts || {}));
-      existingKeys.add(m.imported.accountId || "default");
-      return existingKeys.size > 1;
-    })
-    .map(m => m.imported.symbol);
+  // mutating state, so the preview can run before Confirm. Covers both
+  // an existing row gaining another account (matched) and a brand-new
+  // holding that already appears in more than one of the selected
+  // files (added).
+  const combinedNames = [
+    ...plan.matched
+      .filter(m => {
+        const existingKeys = new Set(Object.keys(m.existing.zerodhaAccounts || {}));
+        m.importedList.forEach(imp => existingKeys.add(imp.accountId || "default"));
+        return existingKeys.size > 1;
+      })
+      .map(m => m.symbol),
+    ...plan.added.filter(a => a.importedList.length > 1).map(a => a.symbol)
+  ];
   return { assetKey, cfg, records, plan, attention, combinedNames };
 }
 
@@ -2346,7 +2383,7 @@ function importGroupSummaryHTML(group) {
     <div class="import-stat ${(plan.duplicateKeys.length + attention.length) ? "warn" : ""}"><div class="n">${plan.duplicateKeys.length + attention.length}</div><div class="l">Needs Attention</div></div>
   </div>`;
   html += `<ul>`;
-  if (plan.matched.length) html += `<li>Quantity and Average Price will be updated for: ${plan.matched.slice(0, 8).map(m => escapeAttr(m.imported.symbol)).join(", ")}${plan.matched.length > 8 ? "…" : ""}</li>`;
+  if (plan.matched.length) html += `<li>Quantity and Average Price will be updated for: ${plan.matched.slice(0, 8).map(m => escapeAttr(m.symbol)).join(", ")}${plan.matched.length > 8 ? "…" : ""}</li>`;
   if (plan.added.length) html += `<li>New entries will be added for: ${plan.added.slice(0, 8).map(a => escapeAttr(a.symbol)).join(", ")}${plan.added.length > 8 ? "…" : ""}</li>`;
   if (combinedNames.length) html += `<li>Now combines more than one Zerodha account: ${combinedNames.slice(0, 8).map(escapeAttr).join(", ")}${combinedNames.length > 8 ? "…" : ""}</li>`;
   if (plan.duplicateKeys.length) html += `<li class="warn">Duplicate rows within this file (last occurrence used): ${plan.duplicateKeys.slice(0, 8).map(escapeAttr).join(", ")}</li>`;
@@ -2388,79 +2425,79 @@ function runCombinedImportPreview(groups, extraNoteHTML) {
   );
 }
 
-const IMPORT_TAB_CONFIG = {
-  equity: { fileInputId: "importStockFile", statusElId: "equityFetchStatus" },
-  mf:     { fileInputId: "importMFFile", statusElId: "mfFetchStatus" },
-  gold:   { fileInputId: "importGoldFile", statusElId: "goldFetchStatus" }
-};
-
-// Turns one parsed workbook (however its bytes were obtained — local
-// file input or a Drive Picker download) into the same per-tab preview
-// groups, so every import source shares one preview/apply code path.
-function buildZerodhaImportGroups(assetKey, parsed) {
-  const groups = [];
-  if (assetKey === "equity") {
-    groups.push(buildImportGroup("equity", parsed.equity, parsed.attention.equity));
-    if (parsed.gold.length) groups.push(buildImportGroup("gold", parsed.gold, []));
-  } else if (assetKey === "gold") {
-    groups.push(buildImportGroup("gold", parsed.gold, []));
-  } else if (assetKey === "mf") {
-    groups.push(buildImportGroup("mf", parsed.mf, parsed.attention.mf));
-  }
-  return groups;
+// Combines several parsed workbooks (one per selected file — each
+// file is one Zerodha account's export) into a single record set per
+// asset class, so the same Symbol/fund appearing in more than one
+// file is matched and combined (see planZerodhaImport) instead of
+// being treated as separate imports.
+function mergeZerodhaParsedResults(parsedList) {
+  const equity = [], gold = [], mf = [];
+  const attentionEquity = [], attentionMF = [];
+  const clientIds = [];
+  parsedList.forEach(p => {
+    equity.push(...p.equity);
+    gold.push(...p.gold);
+    mf.push(...p.mf);
+    attentionEquity.push(...p.attention.equity);
+    attentionMF.push(...p.attention.mf);
+    if (p.clientId) clientIds.push(p.clientId);
+  });
+  return { clientIds, equity, gold, mf, attention: { equity: attentionEquity, mf: attentionMF } };
 }
 
-// "Import" button on each tab -> choose Local file or Google Drive.
-function openImportChooser(assetKey) {
-  const label = ZERODHA_TAB_CONFIG[assetKey].label;
+// Turns one merged parse result (from one or more files/accounts,
+// however their bytes were obtained — local file input or a Drive
+// Picker download) into preview groups covering all three asset
+// classes at once, so a single combined Import Investments action
+// always previews/applies Equity, Mutual Funds and Gold together.
+function buildZerodhaImportGroups(parsed) {
+  return [
+    buildImportGroup("equity", parsed.equity, parsed.attention.equity),
+    buildImportGroup("gold", parsed.gold, []),
+    buildImportGroup("mf", parsed.mf, parsed.attention.mf)
+  ];
+}
+
+// "Import Investments" (Settings) -> choose Local files or Google Drive.
+function openImportChooser() {
   openModal(
-    `Import ${label} Holdings`,
-    `<p>Import from your Zerodha Console Holdings Statement (.xlsx). Choose a source:</p>
-     <p class="settings-note">If the file contains Gold ETF holdings (e.g. GOLDBEES), those are automatically routed to the Gold tab regardless of which tab you import from. Importing from Google Drive opens a file picker — you choose the exact file, then it's read and mapped exactly like a local upload.</p>`,
+    "Import Investments",
+    `<p>Import from your Zerodha Console Holdings Statement (.xlsx) — Equity, Mutual Funds and Gold are all picked up from a single file in one step. Choose a source:</p>
+     <p class="settings-note">You can select more than one file at once — one per Zerodha account. If the same stock or fund appears in more than one file, its quantity and invested amount are combined and the average price is recalculated automatically; nothing is duplicated. Gold ETF holdings (e.g. GOLDBEES) are automatically routed to the Gold tab.</p>`,
     [
-      { label: "Import from Local", onClick: () => { closeModal(); document.getElementById(IMPORT_TAB_CONFIG[assetKey].fileInputId).click(); } },
-      { label: "Import from Google Drive", primary: true, onClick: () => { closeModal(); runDriveImportPicker(assetKey); } }
+      { label: "Import from Local Files", onClick: () => { closeModal(); document.getElementById("importInvestmentsFile").click(); } },
+      { label: "Import from Google Drive", primary: true, onClick: () => { closeModal(); runDriveImportPicker(); } }
     ]
   );
 }
 
-document.getElementById("btnImportEquity").addEventListener("click", () => openImportChooser("equity"));
-document.getElementById("btnImportMF").addEventListener("click", () => openImportChooser("mf"));
-document.getElementById("btnImportGold").addEventListener("click", () => openImportChooser("gold"));
-
-// Local file: Equity tab reads Equity+MF-adjacent Equity sheet and
-// shows Equity+Gold together (Gold ETFs live on the Equity sheet);
-// Gold tab reads the same Equity sheet but only keeps Gold-ETF rows;
-// Mutual Funds tab reads the Mutual Funds sheet only.
-async function handleLocalZerodhaFile(assetKey, file) {
-  const statusEl = document.getElementById(IMPORT_TAB_CONFIG[assetKey].statusElId);
-  statusEl.textContent = "Reading file...";
-  let parsed;
+// Local files: reads every selected file (each one a separate Zerodha
+// account's Holdings Statement export), then merges them before
+// building one combined Equity + Mutual Funds + Gold preview.
+async function handleLocalZerodhaFiles(fileList) {
+  const statusEl = document.getElementById("investmentsImportStatus");
+  const files = Array.from(fileList || []);
+  if (files.length === 0) return;
+  if (statusEl) statusEl.textContent = `Reading ${files.length} file${files.length > 1 ? "s" : ""}...`;
+  const parsedList = [];
   try {
-    parsed = await parseLocalZerodhaWorkbook(file);
+    for (const file of files) {
+      parsedList.push(await parseLocalZerodhaWorkbook(file));
+    }
   } catch (err) {
-    statusEl.textContent = "";
-    alert("Could not read that file. Make sure it's the unmodified Zerodha Console Holdings Statement .xlsx export.");
+    if (statusEl) statusEl.textContent = "";
+    alert("Could not read one of the selected files. Make sure each is an unmodified Zerodha Console Holdings Statement .xlsx export.");
     return;
   }
-  statusEl.textContent = "";
-  const noteHTML = `<p class="settings-note">Source: local file${parsed.clientId ? " — Client ID " + escapeAttr(parsed.clientId) : ""}</p>`;
-  runCombinedImportPreview(buildZerodhaImportGroups(assetKey, parsed), noteHTML);
+  if (statusEl) statusEl.textContent = "";
+  const merged = mergeZerodhaParsedResults(parsedList);
+  const sourceLabel = files.map(f => f.name).join(", ");
+  const noteHTML = `<p class="settings-note">Source: ${files.length} local file${files.length > 1 ? "s" : ""} — ${escapeAttr(sourceLabel)}${merged.clientIds.length ? " — Client ID(s): " + escapeAttr(merged.clientIds.join(", ")) : ""}</p>`;
+  runCombinedImportPreview(buildZerodhaImportGroups(merged), noteHTML);
 }
 
-document.getElementById("importStockFile").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  if (file) await handleLocalZerodhaFile("equity", file);
-  e.target.value = "";
-});
-document.getElementById("importMFFile").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  if (file) await handleLocalZerodhaFile("mf", file);
-  e.target.value = "";
-});
-document.getElementById("importGoldFile").addEventListener("change", async (e) => {
-  const file = e.target.files[0];
-  if (file) await handleLocalZerodhaFile("gold", file);
+document.getElementById("importInvestmentsFile").addEventListener("change", async (e) => {
+  await handleLocalZerodhaFiles(e.target.files);
   e.target.value = "";
 });
 
@@ -2536,8 +2573,10 @@ function requestDriveAccessToken() {
   });
 }
 
-// Shows the Drive file picker filtered to Excel files and resolves
-// with the chosen file's { id, name, mimeType }, or null if cancelled.
+// Shows the Drive file picker filtered to Excel files (multi-select
+// enabled, so several account exports can be picked in one go) and
+// resolves with the chosen files as an array of { id, name, mimeType
+// }, or null if cancelled.
 function openDrivePicker(accessToken) {
   return new Promise((resolve) => {
     const view = new google.picker.DocsView()
@@ -2548,9 +2587,10 @@ function openDrivePicker(accessToken) {
       .setOAuthToken(accessToken)
       .setDeveloperKey(state.googleDriveApiKey)
       .addView(view)
+      .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
       .setCallback((data) => {
         if (data.action === google.picker.Action.PICKED) {
-          resolve(data.docs[0]);
+          resolve(data.docs || []);
         } else if (data.action === google.picker.Action.CANCEL) {
           resolve(null);
         }
@@ -2574,46 +2614,44 @@ async function downloadDriveFileAsArrayBuffer(file, accessToken) {
   return res.arrayBuffer();
 }
 
-async function runDriveImportPicker(assetKey) {
-  const statusEl = document.getElementById(IMPORT_TAB_CONFIG[assetKey].statusElId);
+async function runDriveImportPicker() {
+  const statusEl = document.getElementById("investmentsImportStatus");
   if (!state.googleDriveClientId || !state.googleDriveApiKey) {
     alert('Google Drive import needs a one-time setup: add a "Google Drive Client ID" and "Google Drive API Key" in Settings. See the note there for how to create them in Google Cloud Console.');
     return;
   }
-  statusEl.textContent = "Opening Google Drive...";
-  let file, accessToken;
+  if (statusEl) statusEl.textContent = "Opening Google Drive...";
+  let files, accessToken;
   try {
     await ensurePickerLoaded();
     await ensureGisLoaded();
     accessToken = await requestDriveAccessToken();
-    file = await openDrivePicker(accessToken);
+    files = await openDrivePicker(accessToken);
   } catch (err) {
-    statusEl.textContent = "";
+    if (statusEl) statusEl.textContent = "";
     alert("Could not open Google Drive: " + (err && err.message ? err.message : "unknown error"));
     return;
   }
-  if (!file) { statusEl.textContent = ""; return; } // person cancelled the picker
-  statusEl.textContent = `Downloading "${file.name}"...`;
-  let arrayBuffer;
+  if (!files || files.length === 0) { if (statusEl) statusEl.textContent = ""; return; } // person cancelled the picker
+
+  const parsedList = [];
   try {
-    arrayBuffer = await downloadDriveFileAsArrayBuffer(file, accessToken);
+    for (const file of files) {
+      if (statusEl) statusEl.textContent = `Downloading "${file.name}"...`;
+      const arrayBuffer = await downloadDriveFileAsArrayBuffer(file, accessToken);
+      if (statusEl) statusEl.textContent = `Reading "${file.name}"...`;
+      parsedList.push(parseZerodhaWorkbookFromArrayBuffer(arrayBuffer));
+    }
   } catch (err) {
-    statusEl.textContent = "";
-    alert(err && err.message ? err.message : "Could not download the selected file from Drive.");
+    if (statusEl) statusEl.textContent = "";
+    alert(err && err.message ? err.message : "Could not read one of the selected files. Make sure each is an unmodified Zerodha Console Holdings Statement .xlsx export.");
     return;
   }
-  statusEl.textContent = "Reading file...";
-  let parsed;
-  try {
-    parsed = parseZerodhaWorkbookFromArrayBuffer(arrayBuffer);
-  } catch (err) {
-    statusEl.textContent = "";
-    alert("Could not read that file. Make sure it's the unmodified Zerodha Console Holdings Statement .xlsx export.");
-    return;
-  }
-  statusEl.textContent = "";
-  const noteHTML = `<p class="settings-note">Source: Google Drive — ${escapeAttr(file.name)}${parsed.clientId ? " — Client ID " + escapeAttr(parsed.clientId) : ""}</p>`;
-  runCombinedImportPreview(buildZerodhaImportGroups(assetKey, parsed), noteHTML);
+  if (statusEl) statusEl.textContent = "";
+  const merged = mergeZerodhaParsedResults(parsedList);
+  const sourceLabel = files.map(f => f.name).join(", ");
+  const noteHTML = `<p class="settings-note">Source: Google Drive — ${escapeAttr(sourceLabel)}${merged.clientIds.length ? " — Client ID(s): " + escapeAttr(merged.clientIds.join(", ")) : ""}</p>`;
+  runCombinedImportPreview(buildZerodhaImportGroups(merged), noteHTML);
 }
 
 
@@ -3175,6 +3213,13 @@ function openSettingsModal() {
       <input type="text" id="settingsGoogleDriveApiKey" placeholder="AIza..." value="${escapeAttr(state.googleDriveApiKey || "")}">
     </div>
 
+    <h4>Import Investments</h4>
+    <p class="settings-note" style="margin-top:0">Import Zerodha Holdings for Equity, Mutual Funds and Gold together in one step. Pick a source below — local file selection supports choosing several files at once (one per Zerodha account); matching holdings across files are combined automatically and you'll see a full preview before anything is applied.</p>
+    <div class="settings-actions">
+      <button class="btn" id="settingsBtnImportInvestments">Import Investments</button>
+      <span class="status-tag" id="investmentsImportStatus"></span>
+    </div>
+
     <h4>Backup &amp; Restore</h4>
     <div class="settings-actions">
       <button class="btn" id="settingsBtnExportExcel">Export Excel</button>
@@ -3201,6 +3246,10 @@ function openSettingsModal() {
   // wire them fresh each time rather than once at page load.
   document.getElementById("settingsBtnExportExcel").addEventListener("click", runExcelExport);
   document.getElementById("settingsBtnExportJSON").addEventListener("click", runJsonExport);
+  document.getElementById("settingsBtnImportInvestments").addEventListener("click", () => {
+    closeModal();
+    openImportChooser();
+  });
 }
 
 document.getElementById("btnSettings").addEventListener("click", openSettingsModal);

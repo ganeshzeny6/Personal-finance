@@ -552,6 +552,7 @@
     <button class="btn btn-ghost" id="btnExitDemo" style="display:none" title="Exit demo mode and restore your real data">🚪 Exit Demo Data</button>
     <button class="btn btn-ghost" id="btnSettings" title="Settings">⚙️ Settings</button>
     <input type="file" id="importFile" accept="application/json">
+    <input type="file" id="importInvestmentsFile" accept=".xlsx,.xls" multiple>
   </div>
 </div>
 
@@ -640,8 +641,6 @@
 
     <div class="table-toolbar">
       <div class="left-group">
-        <button class="btn btn-primary" id="btnImportEquity">Import Holdings</button>
-        <input type="file" id="importStockFile" accept=".xlsx,.xls" style="display:none">
         <input type="text" class="filter-input" id="equityFilter" placeholder="Filter...">
         <span class="status-tag" id="equityFetchStatus"></span>
       </div>
@@ -817,8 +816,6 @@
 
     <div class="table-toolbar">
       <div class="left-group">
-        <button class="btn btn-primary" id="btnImportMF">Import Holdings</button>
-        <input type="file" id="importMFFile" accept=".xlsx,.xls" style="display:none">
         <input type="text" class="filter-input" id="mfFilter" placeholder="Filter...">
         <span class="status-tag" id="mfFetchStatus"></span>
       </div>
@@ -904,8 +901,6 @@
 
     <div class="table-toolbar">
       <div class="left-group">
-        <button class="btn btn-primary" id="btnImportGold">Import Holdings</button>
-        <input type="file" id="importGoldFile" accept=".xlsx,.xls" style="display:none">
         <input type="text" class="filter-input" id="goldFilter" placeholder="Filter...">
         <span class="status-tag" id="goldFetchStatus"></span>
       </div>
@@ -1038,6 +1033,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-08-25-6"></script>
+<script src="app.js?v=2026-08-27-1"></script>
 </body>
 </html>
