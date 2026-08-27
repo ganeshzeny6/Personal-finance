@@ -101,6 +101,11 @@ function blankState() {
     // stripped) — see parseScreenerNum(). Never edited by hand;
     // wholesale-replaced on each "Import Screener Data".
     screenerData: [],
+    // Stock Analysis tab: keys of columns the person has hidden via
+    // the "Columns" picker (data-col values, e.g. "roe", "pb"). Empty
+    // array means every column is shown. "name" (Stock/Symbol) can
+    // never be hidden since it's the row's sticky identifier.
+    stockAnalysisHiddenCols: [],
     lastSaved: null,
     lastBackup: null,
     // When true, Quantity/Units and Average Price/Invested fields on
@@ -1908,9 +1913,95 @@ function stockAnalysisGetSortValue(d, col) {
   }
 }
 
+// Every toggleable Stock Analysis column, in the same left-to-right
+// order as the table's <thead>/<colgroup>. "name" (Stock/Symbol) is
+// intentionally excluded — it's the sticky row identifier and is
+// always shown.
+const STOCK_ANALYSIS_COLUMNS = [
+  { key: "sector", label: "Sector" },
+  { key: "ltp", label: "LTP" },
+  { key: "low52", label: "52W Low" },
+  { key: "high52", label: "52W High" },
+  { key: "gainFromLow", label: "Gain from Low %" },
+  { key: "dropFromHigh", label: "Drop from High %" },
+  { key: "eps", label: "EPS" },
+  { key: "pe", label: "PE" },
+  { key: "industryPe", label: "Industry PE" },
+  { key: "buyReco", label: "Buy Reco" },
+  { key: "bookValue", label: "Book Value" },
+  { key: "pb", label: "P/B" },
+  { key: "industryPbv", label: "Industry P/B" },
+  { key: "yieldPct", label: "Yield %" },
+  { key: "dividendYield", label: "Div Yield %" },
+  { key: "roe", label: "ROE %" },
+  { key: "roce", label: "ROCE %" },
+  { key: "debtToEquity", label: "Debt/Equity" },
+  { key: "promoterHolding", label: "Promoter Hold %" },
+  { key: "epsGrowth3y", label: "EPS Gr. 3Y %" },
+  { key: "epsGrowth5y", label: "EPS Gr. 5Y %" },
+  { key: "salesGrowth5y", label: "Sales Gr. 5Y %" },
+  { key: "qtrProfitVar", label: "Qtr Profit Var %" },
+  { key: "qtrSalesVar", label: "Qtr Sales Var %" }
+];
+
+// Shows/hides whole columns by toggling `visibility: collapse` on
+// each <col> in the Stock Analysis <colgroup> — this keeps table
+// structure/widths intact for the columns that stay visible, unlike
+// `display:none` on individual cells which would misalign every row.
+function applyStockAnalysisColumnVisibility() {
+  const hidden = new Set(state.stockAnalysisHiddenCols || []);
+  STOCK_ANALYSIS_COLUMNS.forEach(col => {
+    const el = document.getElementById("col-sa-col-" + col.key);
+    if (el) el.style.visibility = hidden.has(col.key) ? "collapse" : "visible";
+  });
+}
+
+function openStockAnalysisColumnsModal() {
+  const hidden = new Set(state.stockAnalysisHiddenCols || []);
+  const checkboxesHTML = STOCK_ANALYSIS_COLUMNS.map(col => `
+    <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;">
+      <input type="checkbox" data-col-key="${col.key}" ${hidden.has(col.key) ? "" : "checked"}>
+      <span>${escapeAttr(col.label)}</span>
+    </label>
+  `).join("");
+  const html = `
+    <p class="settings-note" style="margin-top:0">Choose which columns to show on the Stock Analysis table. "Stock / Symbol" is always shown.</p>
+    <div class="settings-actions" style="margin-bottom:10px;">
+      <button class="btn btn-sm" id="saColsSelectAll">Select all</button>
+      <button class="btn btn-sm" id="saColsSelectNone">Select none</button>
+    </div>
+    <div id="saColsList">${checkboxesHTML}</div>
+  `;
+  openModal("Stock Analysis — Columns", html, [
+    { label: "Cancel", onClick: closeModal },
+    {
+      label: "Apply", primary: true, onClick: () => {
+        const checked = new Set(
+          Array.from(document.querySelectorAll('#saColsList input[type=checkbox]:checked')).map(i => i.dataset.colKey)
+        );
+        state.stockAnalysisHiddenCols = STOCK_ANALYSIS_COLUMNS
+          .map(c => c.key)
+          .filter(k => !checked.has(k));
+        saveState();
+        applyStockAnalysisColumnVisibility();
+        closeModal();
+      }
+    }
+  ]);
+  document.getElementById("saColsSelectAll").addEventListener("click", () => {
+    document.querySelectorAll('#saColsList input[type=checkbox]').forEach(i => i.checked = true);
+  });
+  document.getElementById("saColsSelectNone").addEventListener("click", () => {
+    document.querySelectorAll('#saColsList input[type=checkbox]').forEach(i => i.checked = false);
+  });
+}
+
+document.getElementById("btnStockAnalysisColumns").addEventListener("click", openStockAnalysisColumnsModal);
+
 function renderStockAnalysis() {
   const tbody = document.getElementById("stockAnalysisTableBody");
   if (!tbody) return;
+  applyStockAnalysisColumnVisibility();
   const screenerMap = buildScreenerMap();
 
   let rows = state.equity.map(row => {

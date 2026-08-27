@@ -1044,6 +1044,7 @@
     <div class="table-toolbar">
       <div class="left-group">
         <input type="text" class="filter-input" id="stockAnalysisFilter" placeholder="Filter...">
+        <button class="btn" id="btnStockAnalysisColumns" title="Choose which columns are shown">Columns</button>
         <button class="btn" id="btnImportScreener">Import Screener Data</button>
         <input type="file" id="importScreenerFile" accept=".xlsx,.xls">
         <span class="status-tag" id="screenerImportStatus"></span>
@@ -1068,13 +1069,13 @@
       <table class="data-table">
         <colgroup>
           <col id="col-sa-name" style="width:150px">
-          <col style="width:120px"><col style="width:90px">
-          <col style="width:90px"><col style="width:90px"><col style="width:95px"><col style="width:95px">
-          <col style="width:80px"><col style="width:80px"><col style="width:95px"><col style="width:90px">
-          <col style="width:90px"><col style="width:80px"><col style="width:95px"><col style="width:90px">
-          <col style="width:80px"><col style="width:75px"><col style="width:75px"><col style="width:105px">
-          <col style="width:105px"><col style="width:100px"><col style="width:100px"><col style="width:100px">
-          <col style="width:105px"><col style="width:125px">
+          <col id="col-sa-col-sector" style="width:120px"><col id="col-sa-col-ltp" style="width:90px">
+          <col id="col-sa-col-low52" style="width:90px"><col id="col-sa-col-high52" style="width:90px"><col id="col-sa-col-gainFromLow" style="width:95px"><col id="col-sa-col-dropFromHigh" style="width:95px">
+          <col id="col-sa-col-eps" style="width:80px"><col id="col-sa-col-pe" style="width:80px"><col id="col-sa-col-industryPe" style="width:95px"><col id="col-sa-col-buyReco" style="width:90px">
+          <col id="col-sa-col-bookValue" style="width:90px"><col id="col-sa-col-pb" style="width:80px"><col id="col-sa-col-industryPbv" style="width:95px"><col id="col-sa-col-yieldPct" style="width:90px">
+          <col id="col-sa-col-dividendYield" style="width:80px"><col id="col-sa-col-roe" style="width:75px"><col id="col-sa-col-roce" style="width:75px"><col id="col-sa-col-debtToEquity" style="width:105px">
+          <col id="col-sa-col-promoterHolding" style="width:105px"><col id="col-sa-col-epsGrowth3y" style="width:100px"><col id="col-sa-col-epsGrowth5y" style="width:100px"><col id="col-sa-col-salesGrowth5y" style="width:100px">
+          <col id="col-sa-col-qtrProfitVar" style="width:105px"><col id="col-sa-col-qtrSalesVar" style="width:125px">
         </colgroup>
         <thead>
           <tr>
@@ -1123,6 +1124,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-08-27-2"></script>
+<script src="app.js?v=2026-08-27-3"></script>
 </body>
 </html>
