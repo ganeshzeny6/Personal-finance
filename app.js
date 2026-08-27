@@ -70,10 +70,18 @@ function updateOfflineBanner() {
 
 window.addEventListener("online", () => {
   updateOfflineBanner();
+  // Re-open Firestore's network connection and pull down whatever's
+  // authoritative in the cloud now that we're back online.
+  if (fbDb) fbDb.enableNetwork().catch(() => {});
+  if (cloudUser) resolveCloudSync();
   renderEquity(); renderDebt(); renderMF(); renderGold(); renderDashboard();
 });
 window.addEventListener("offline", () => {
   updateOfflineBanner();
+  // Fully cuts Firestore off at the network level — no writes get
+  // queued locally to replay later; they simply don't happen until
+  // we're back online (see resolveCloudSync()/pushStateToCloud()).
+  if (fbDb) fbDb.disableNetwork().catch(() => {});
   renderEquity(); renderDebt(); renderMF(); renderGold(); renderDashboard();
 });
 
@@ -141,6 +149,12 @@ function loadState() {
   }
 }
 
+// localStorage here is ONLY a read cache so the app still has something
+// to show while offline (see isReadOnly() — offline already makes every
+// editable field read-only, so nothing new gets written locally that
+// still needs pushing up). The actual system of record, once signed in,
+// is the Firestore document written by scheduleCloudPush() below — and
+// that only ever fires while navigator.onLine is true.
 function saveState() {
   state.lastSaved = new Date().toISOString();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -3442,17 +3456,29 @@ function maybeRunWeeklyBackup() {
 
 /* ============================================================
    CLOUD SYNC — Firebase Auth (Google Sign-In) + Firestore
-   localStorage stays the instant local cache (nothing about
-   normal app usage changes when signed out). Firestore doc at
-   portfolios/{uid} mirrors it once signed in. saveState()
-   triggers a debounced (2s) background push. On sign-in,
-   resolveCloudSync() reconciles local vs. cloud using safe rules
-   that never silently discard real data on either side:
-     - empty cloud + real local  -> push local automatically
-     - empty local + real cloud  -> pull cloud automatically
-     - both empty                -> no-op
-     - both non-empty, identical -> no-op (no nagging every load)
-     - both non-empty, different -> ask which one wins
+   Firestore (portfolios/{uid}, one doc holding every tab's data —
+   Equity, Debt, Mutual Funds, Gold, settings, everything in
+   `state`) is the single source of truth once signed in.
+   localStorage is kept ONLY as a read-only cache so the app still
+   has something to display while offline — it is never diffed
+   against Firestore and never treated as a thing that needs
+   "syncing up" later.
+
+   Sync rules, all gated on navigator.onLine:
+     - Sign-in (or coming back online while signed in): fetch the
+       Firestore doc. If it exists, it wins outright — local state
+       is replaced with it, no comparison, no merge prompt. If it
+       doesn't exist yet, whatever's currently loaded is pushed up
+       to create it.
+     - Every edit (saveState -> scheduleCloudPush): pushed straight
+       to Firestore, but ONLY while navigator.onLine is true.
+     - Going offline: Firestore's network connection is explicitly
+       cut (fbDb.disableNetwork()) so nothing gets queued locally to
+       replay later — offline truly means "no cloud writes happen",
+       not "writes happen once we reconnect".
+     - While offline, isReadOnly() already makes every editable
+       field read-only app-wide, so there is nothing to push once
+       back online beyond what's already in Firestore.
    ============================================================ */
 
 const FIREBASE_CONFIG = {
@@ -3469,25 +3495,14 @@ let fbDb = null;
 let cloudUser = null;
 let cloudSyncTimer = null;
 
+// Still useful for the "is there anything worth pushing yet" check
+// when a brand-new sign-in finds no Firestore doc at all.
 function isStateEmpty(s) {
   return !s.cash &&
     (!s.equity || s.equity.length === 0) &&
     (!s.debt || s.debt.length === 0) &&
     (!s.mf || s.mf.length === 0) &&
     (!s.gold || s.gold.length === 0);
-}
-
-// Compares two state objects ignoring lastSaved/lastBackup, which
-// change on every save and would otherwise make "identical" data
-// look different and trigger a needless conflict prompt.
-function stateContentEqual(a, b) {
-  const strip = (s) => {
-    const c = { ...s };
-    delete c.lastSaved;
-    delete c.lastBackup;
-    return JSON.stringify(c);
-  };
-  return strip(a) === strip(b);
 }
 
 function updateCloudSyncUI(statusOverride) {
@@ -3504,8 +3519,11 @@ function updateCloudSyncUI(statusOverride) {
   }
 }
 
+// The one and only place that writes to Firestore. Refuses to run
+// unless the browser is actually online — offline never queues a
+// write for later, it just doesn't happen.
 async function pushStateToCloud() {
-  if (!cloudUser || !fbDb) return;
+  if (!cloudUser || !fbDb || !navigator.onLine) return;
   try {
     await fbDb.collection("portfolios").doc(cloudUser.uid).set(state);
   } catch (e) {
@@ -3516,44 +3534,35 @@ async function pushStateToCloud() {
 
 // Called from saveState() on every local change; debounced so a
 // burst of edits (e.g. typing) doesn't fire a write per keystroke.
+// No-ops entirely while offline (see pushStateToCloud/isReadOnly —
+// editing is already disabled app-wide while offline anyway).
 function scheduleCloudPush() {
-  if (!cloudUser) return;
+  if (!cloudUser || !navigator.onLine) return;
   clearTimeout(cloudSyncTimer);
   cloudSyncTimer = setTimeout(pushStateToCloud, 2000);
 }
 
+// Fetches the Firestore doc and treats it as authoritative — no
+// comparison against local/cached data, no merge prompt. Only runs
+// while online; called on sign-in and again whenever the browser
+// comes back online while already signed in.
 async function resolveCloudSync() {
-  if (!cloudUser || !fbDb) return;
+  if (!cloudUser || !fbDb || !navigator.onLine) return;
   updateCloudSyncUI("Syncing…");
   try {
-    const snap = await fbDb.collection("portfolios").doc(cloudUser.uid).get();
-    const cloud = snap.exists ? snap.data() : null;
-    const localEmpty = isStateEmpty(state);
-    const cloudEmpty = !cloud || isStateEmpty(cloud);
-
-    if (cloudEmpty && !localEmpty) {
-      await pushStateToCloud();
-    } else if (!cloudEmpty && localEmpty) {
+    const snap = await fbDb.collection("portfolios").doc(cloudUser.uid).get({ source: "server" });
+    if (snap.exists) {
+      const cloud = snap.data();
       state = { ...blankState(), ...cloud, ideal: { ...DEFAULT_IDEAL, ...(cloud.ideal || {}) } };
-      saveState();
+      state.lastSaved = new Date().toISOString();
+      // Refresh the offline-viewing cache only — this does NOT
+      // trigger another push back up to Firestore.
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       renderAll();
-    } else if (cloudEmpty && localEmpty) {
-      // nothing on either side yet
-    } else if (stateContentEqual(state, cloud)) {
-      // already in sync, don't nag
-    } else {
-      const useCloud = confirm(
-        "Your local data on this device and your cloud data are different.\n\n" +
-        "Click OK to use the CLOUD version (this device's local data will be overwritten).\n" +
-        "Click Cancel to keep THIS DEVICE's version (the cloud will be overwritten with it)."
-      );
-      if (useCloud) {
-        state = { ...blankState(), ...cloud, ideal: { ...DEFAULT_IDEAL, ...(cloud.ideal || {}) } };
-        saveState();
-        renderAll();
-      } else {
-        await pushStateToCloud();
-      }
+    } else if (!isStateEmpty(state)) {
+      // Nothing in Firestore yet for this account — seed it from
+      // whatever's currently loaded (e.g. the local offline cache).
+      await pushStateToCloud();
     }
     updateCloudSyncUI();
   } catch (e) {
@@ -3597,7 +3606,7 @@ function initCloudSync() {
     fbAuth.onAuthStateChanged(async (user) => {
       cloudUser = user;
       updateCloudSyncUI();
-      if (user) await resolveCloudSync();
+      if (user && navigator.onLine) await resolveCloudSync();
     });
   } catch (e) {
     console.error("Firebase init failed:", e);
