@@ -108,7 +108,13 @@ function blankState() {
     // Editable from Settings so a redeployed Apps Script /exec URL
     // can be updated without touching code.
     priceApiUrl: DEFAULT_PRICE_API_URL,
-    holdingsApiUrl: DEFAULT_HOLDINGS_API_URL
+    holdingsApiUrl: DEFAULT_HOLDINGS_API_URL,
+    // One-time Google Cloud credentials for the "Import from Google
+    // Drive" file picker (see Settings for setup steps). Blank by
+    // default — Drive import shows a setup message until these are
+    // filled in.
+    googleDriveClientId: "",
+    googleDriveApiKey: ""
   };
 }
 
@@ -421,6 +427,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     btn.classList.add("active");
     document.getElementById("panel-" + btn.dataset.tab).classList.add("active");
     if (btn.dataset.tab === "dashboard") renderDashboard();
+    if (btn.dataset.tab === "insights") renderInsights();
   });
 });
 
@@ -1503,6 +1510,10 @@ function renderDashboard() {
   document.getElementById("allocTotalIdealPct").textContent = fmtNum(idealTotal) + "%";
 
   renderPieChart(classes, netWorth);
+  // Keeps Insights live whenever it's the visible tab (e.g. during the
+  // 30-second auto price refresh); renderInsights() itself no-ops if
+  // that tab isn't currently open.
+  renderInsights();
 }
 
 function renderPieChart(classes, netWorth) {
@@ -1549,6 +1560,197 @@ function renderPieChart(classes, netWorth) {
       cutout: "62%"
     }
   });
+}
+
+/* ============================================================
+   INSIGHTS TAB
+   Purely a read-only view built from data that already exists on
+   the Equity/Mutual Funds tabs — every number here comes straight
+   from equityDerived()/mfDerived() and the totals already computed
+   elsewhere, nothing is recalculated with different logic. Only
+   rendered when the tab is actually visible (see the tab-switch
+   handler and the piggyback call at the end of renderDashboard()),
+   since Chart.js can't size a canvas that's inside a display:none
+   panel.
+   ============================================================ */
+
+let sectorAllocChart = null;
+let mfCategoryChart = null;
+
+// Cycled by index rather than pinned per sector/category name — simple,
+// and the palette is large enough that collisions are rare in a
+// personal portfolio's sector/category count.
+const INSIGHTS_PALETTE = [
+  "#c9a44c", "#4bbf9c", "#6f93c9", "#e0667a", "#d9a441",
+  "#8b98b5", "#2ec4b6", "#a78bfa", "#e0b04b", "#5c9ead"
+];
+
+// Top/worst are ranked by absolute P&L (rupees), matching the request
+// literally — P&L% is still shown alongside for context.
+function computeEquityPerformers() {
+  const rows = state.equity.map(row => ({ row, d: equityDerived(row) }));
+  const positives = rows.filter(r => r.d.pl > 0).sort((a, b) => b.d.pl - a.d.pl).slice(0, 5);
+  const negatives = rows.filter(r => r.d.pl < 0).sort((a, b) => a.d.pl - b.d.pl).slice(0, 5);
+  return { positives, negatives };
+}
+
+function renderPerformersList(containerId, items, emptyMessage) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  if (items.length === 0) {
+    el.innerHTML = `<div class="insights-empty">${emptyMessage}</div>`;
+    return;
+  }
+  const maxAbsPL = Math.max(...items.map(it => Math.abs(it.d.pl)));
+  el.innerHTML = items.map(({ row, d }) => {
+    const barPct = maxAbsPL > 0 ? Math.min(100, (Math.abs(d.pl) / maxAbsPL) * 100) : 0;
+    const cls = plClass(d.pl);
+    return `
+      <div class="performer-row">
+        <div class="performer-row-top">
+          <span class="performer-name" title="${escapeAttr(row.name || "(unnamed)")}">${escapeAttr(row.name || "(unnamed)")}</span>
+          <span class="performer-pl ${cls}">${fmtINR(d.pl)} · ${fmtPct(d.plPct)}</span>
+        </div>
+        <div class="performer-bar-track"><div class="performer-bar-fill ${cls === "muted" ? "" : cls}" style="width:${barPct}%"></div></div>
+        <div class="performer-meta">Current Value: ${fmtINR(d.currentValue)}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+// Groups Equity current value by Sector. A blank/missing Sector is
+// grouped under "Uncategorized" rather than dropped, so the total
+// always reconciles with Equity's actual current value.
+function computeSectorAllocation() {
+  const map = new Map();
+  state.equity.forEach(row => {
+    const d = equityDerived(row);
+    const sector = (row.sector || "").trim() || "Uncategorized";
+    map.set(sector, (map.get(sector) || 0) + d.currentValue);
+  });
+  return [...map.entries()]
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value);
+}
+
+// Same idea for Mutual Funds, grouped by Category instead of Sector.
+// "Investment Value" here is current value — the same basis the MF
+// tab's own Alloc % column already uses, so the two stay consistent.
+function computeMFCategoryAllocation() {
+  const map = new Map();
+  state.mf.forEach(row => {
+    const d = mfDerived(row);
+    const category = (row.category || "").trim() || "Uncategorized";
+    map.set(category, (map.get(category) || 0) + d.currentValue);
+  });
+  return [...map.entries()]
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value);
+}
+
+// Shared donut renderer for both Insights charts — mirrors
+// renderPieChart()'s Dashboard styling so Insights doesn't introduce
+// a visually different chart language.
+function renderInsightsDonut(existingChart, canvasId, entries, totalValue) {
+  const ctx = document.getElementById(canvasId);
+  if (!ctx) return existingChart;
+  const labels = entries.map(e => e.label);
+  const data = entries.map(e => totalValue > 0 ? +(e.value / totalValue * 100).toFixed(2) : 0);
+  const colors = entries.map((_, i) => INSIGHTS_PALETTE[i % INSIGHTS_PALETTE.length]);
+
+  if (existingChart) {
+    existingChart.data.labels = labels;
+    existingChart.data.datasets[0].data = data;
+    existingChart.data.datasets[0].backgroundColor = colors;
+    existingChart.update();
+    return existingChart;
+  }
+
+  return new Chart(ctx, {
+    type: "doughnut",
+    data: {
+      labels,
+      datasets: [{ data, backgroundColor: colors, borderColor: "#121b2c", borderWidth: 2 }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: "bottom",
+          labels: { color: "#8b98b5", font: { family: "Inter", size: 11 }, padding: 12, boxWidth: 10 }
+        },
+        tooltip: {
+          callbacks: { label: (ctx) => `${ctx.label}: ${ctx.parsed}%` }
+        },
+        datalabels: {
+          display: (ctx) => ctx.dataset.data[ctx.dataIndex] > 3,
+          color: "#0c1220",
+          backgroundColor: "#ffffffcc",
+          borderRadius: 4,
+          padding: { top: 3, bottom: 3, left: 5, right: 5 },
+          font: { family: "JetBrains Mono", size: 11, weight: "600" },
+          formatter: (value) => value.toFixed(1) + "%"
+        }
+      },
+      cutout: "62%"
+    }
+  });
+}
+
+function renderInsights() {
+  // Chart.js can't size a canvas inside a display:none panel, so skip
+  // all chart work until the Insights tab is actually the active one.
+  // The tab-click handler and renderDashboard()'s piggyback call both
+  // re-invoke this once it's visible, so nothing here goes stale.
+  const panel = document.getElementById("panel-insights");
+  if (!panel || !panel.classList.contains("active")) return;
+
+  const { positives, negatives } = computeEquityPerformers();
+  renderPerformersList("insightsTopPerformers", positives, "No profitable Equity positions yet.");
+  renderPerformersList("insightsWorstPerformers", negatives, "No underperforming Equity positions right now.");
+
+  const sectorData = computeSectorAllocation();
+  const sectorTotal = sectorData.reduce((s, e) => s + e.value, 0);
+  const sectorWrap = document.getElementById("sectorAllocChartWrap");
+  const sectorEmpty = document.getElementById("sectorAllocEmpty");
+  if (sectorData.length === 0 || sectorTotal <= 0) {
+    if (sectorWrap) sectorWrap.style.display = "none";
+    if (sectorEmpty) sectorEmpty.style.display = "block";
+  } else {
+    if (sectorWrap) sectorWrap.style.display = "";
+    if (sectorEmpty) sectorEmpty.style.display = "none";
+    sectorAllocChart = renderInsightsDonut(sectorAllocChart, "sectorAllocPie", sectorData, sectorTotal);
+  }
+
+  const mfCatData = computeMFCategoryAllocation();
+  const mfCatTotal = mfCatData.reduce((s, e) => s + e.value, 0);
+  const mfWrap = document.getElementById("mfCategoryChartWrap");
+  const mfEmpty = document.getElementById("mfCategoryEmpty");
+  if (mfCatData.length === 0 || mfCatTotal <= 0) {
+    if (mfWrap) mfWrap.style.display = "none";
+    if (mfEmpty) mfEmpty.style.display = "block";
+  } else {
+    if (mfWrap) mfWrap.style.display = "";
+    if (mfEmpty) mfEmpty.style.display = "none";
+    mfCategoryChart = renderInsightsDonut(mfCategoryChart, "mfCategoryPie", mfCatData, mfCatTotal);
+  }
+
+  const catTbody = document.getElementById("mfCategoryTableBody");
+  if (catTbody) {
+    if (mfCatData.length === 0) {
+      catTbody.innerHTML = '<tr class="empty-row"><td colspan="3">No mutual funds yet.</td></tr>';
+    } else {
+      catTbody.innerHTML = mfCatData.map(e => {
+        const pct = mfCatTotal > 0 ? (e.value / mfCatTotal) * 100 : 0;
+        return `<tr>
+          <td class="left" data-label="Category">${escapeAttr(e.label)}</td>
+          <td data-label="Investment Value">${fmtINR(e.value)}</td>
+          <td data-label="Investment %">${fmtNum(pct)}%</td>
+        </tr>`;
+      }).join("");
+    }
+  }
 }
 
 // The Cash on hand field displays a formatted currency value
@@ -1907,8 +2109,13 @@ function extractRecordsAndAttention(objects, accountId) {
 // holding records for Equity, Mutual Funds and Gold (Gold-ETF
 // symbols found on the Equity sheet are already split out), plus
 // each sheet's "attention" list and the account's Client ID.
-async function parseLocalZerodhaWorkbook(file) {
-  const wbData = await file.arrayBuffer();
+// Core parser: takes the raw workbook bytes (an ArrayBuffer) and
+// returns Equity/Mutual Fund/Gold holding records exactly like
+// before. Split out from the old parseLocalZerodhaWorkbook() so the
+// same logic can run whether the bytes came from a local <input
+// type=file> or were just downloaded from a Google Drive file the
+// person picked via the Drive Picker — both paths converge here.
+function parseZerodhaWorkbookFromArrayBuffer(wbData) {
   const wb = XLSX.read(wbData, { type: "array", cellDates: true });
   const findSheet = (nameSubstr) => {
     const sn = wb.SheetNames.find(n => n.toLowerCase().includes(nameSubstr));
@@ -1936,12 +2143,21 @@ async function parseLocalZerodhaWorkbook(file) {
   };
 }
 
-// Drive path: reuses the existing Holdings Apps Script contract
+async function parseLocalZerodhaWorkbook(file) {
+  const wbData = await file.arrayBuffer();
+  return parseZerodhaWorkbookFromArrayBuffer(wbData);
+}
+
+// Legacy Drive path: reuses the older Holdings Apps Script contract
 // (data.stocks / data.mf / data.gold), running each row through the
 // same toHoldingRecord() so both old (Qty./Buy avg.) and new
 // (Quantity Available/Average Price) header names work. Gold-ETF
 // symbols found under "stocks" are pulled out and merged with
-// data.gold (if the deployed script still returns one).
+// data.gold (if the deployed script still returns one). Superseded by
+// the Google Drive file picker below (runDriveImportPicker()), which
+// lets the person browse and pick the exact file instead of relying
+// on a folder-scanning script — kept here only in case the Holdings
+// API URL in Settings is still wanted for something else.
 async function fetchDriveZerodhaHoldings() {
   const data = await fetchHoldingsData();
   const accountIdFor = (obj) => {
@@ -2178,16 +2394,32 @@ const IMPORT_TAB_CONFIG = {
   gold:   { fileInputId: "importGoldFile", statusElId: "goldFetchStatus" }
 };
 
+// Turns one parsed workbook (however its bytes were obtained — local
+// file input or a Drive Picker download) into the same per-tab preview
+// groups, so every import source shares one preview/apply code path.
+function buildZerodhaImportGroups(assetKey, parsed) {
+  const groups = [];
+  if (assetKey === "equity") {
+    groups.push(buildImportGroup("equity", parsed.equity, parsed.attention.equity));
+    if (parsed.gold.length) groups.push(buildImportGroup("gold", parsed.gold, []));
+  } else if (assetKey === "gold") {
+    groups.push(buildImportGroup("gold", parsed.gold, []));
+  } else if (assetKey === "mf") {
+    groups.push(buildImportGroup("mf", parsed.mf, parsed.attention.mf));
+  }
+  return groups;
+}
+
 // "Import" button on each tab -> choose Local file or Google Drive.
 function openImportChooser(assetKey) {
   const label = ZERODHA_TAB_CONFIG[assetKey].label;
   openModal(
     `Import ${label} Holdings`,
     `<p>Import from your Zerodha Console Holdings Statement (.xlsx). Choose a source:</p>
-     <p class="settings-note">If the file contains Gold ETF holdings (e.g. GOLDBEES), those are automatically routed to the Gold tab regardless of which tab you import from.</p>`,
+     <p class="settings-note">If the file contains Gold ETF holdings (e.g. GOLDBEES), those are automatically routed to the Gold tab regardless of which tab you import from. Importing from Google Drive opens a file picker — you choose the exact file, then it's read and mapped exactly like a local upload.</p>`,
     [
       { label: "Import from Local", onClick: () => { closeModal(); document.getElementById(IMPORT_TAB_CONFIG[assetKey].fileInputId).click(); } },
-      { label: "Import from Google Drive", primary: true, onClick: () => { closeModal(); runDriveImport(assetKey); } }
+      { label: "Import from Google Drive", primary: true, onClick: () => { closeModal(); runDriveImportPicker(assetKey); } }
     ]
   );
 }
@@ -2213,16 +2445,7 @@ async function handleLocalZerodhaFile(assetKey, file) {
   }
   statusEl.textContent = "";
   const noteHTML = `<p class="settings-note">Source: local file${parsed.clientId ? " — Client ID " + escapeAttr(parsed.clientId) : ""}</p>`;
-  const groups = [];
-  if (assetKey === "equity") {
-    groups.push(buildImportGroup("equity", parsed.equity, parsed.attention.equity));
-    if (parsed.gold.length) groups.push(buildImportGroup("gold", parsed.gold, []));
-  } else if (assetKey === "gold") {
-    groups.push(buildImportGroup("gold", parsed.gold, []));
-  } else if (assetKey === "mf") {
-    groups.push(buildImportGroup("mf", parsed.mf, parsed.attention.mf));
-  }
-  runCombinedImportPreview(groups, noteHTML);
+  runCombinedImportPreview(buildZerodhaImportGroups(assetKey, parsed), noteHTML);
 }
 
 document.getElementById("importStockFile").addEventListener("change", async (e) => {
@@ -2241,31 +2464,158 @@ document.getElementById("importGoldFile").addEventListener("change", async (e) =
   e.target.value = "";
 });
 
-// Google Drive: fetches from state.holdingsApiUrl (unchanged Apps
-// Script contract) and runs the same combined preview/apply flow.
-async function runDriveImport(assetKey) {
+/* ---- Google Drive Picker: browse & pick the exact .xlsx file ----
+   Replaces the old folder-scanning Holdings Apps Script for this
+   button. Flow: lazy-load Google's API/Picker/Identity Services
+   scripts on first use -> get a short-lived OAuth token scoped to
+   just the file the person picks (drive.file, not broad Drive
+   access) -> show the Picker filtered to Excel files -> download the
+   chosen file's bytes from the Drive API -> hand those bytes to the
+   exact same parseZerodhaWorkbookFromArrayBuffer() + preview/apply
+   flow the local file upload uses. Needs a one-time Client ID + API
+   Key from Settings (see the note there for how to create them in
+   Google Cloud Console) — without those there's nothing to open, so
+   this fails fast with a message pointing at Settings instead of a
+   silent/broken picker. */
+
+function loadScriptOnce(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
+    const s = document.createElement("script");
+    s.src = src;
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("Could not load " + src + " (check your internet connection)."));
+    document.head.appendChild(s);
+  });
+}
+
+let gapiLoadPromise = null;
+let gisLoadPromise = null;
+let pickerLoadPromise = null;
+let driveTokenClient = null;
+let driveAccessToken = null;
+
+function ensureGapiLoaded() {
+  if (!gapiLoadPromise) gapiLoadPromise = loadScriptOnce("https://apis.google.com/js/api.js");
+  return gapiLoadPromise;
+}
+function ensureGisLoaded() {
+  if (!gisLoadPromise) gisLoadPromise = loadScriptOnce("https://accounts.google.com/gsi/client");
+  return gisLoadPromise;
+}
+async function ensurePickerLoaded() {
+  await ensureGapiLoaded();
+  if (!pickerLoadPromise) {
+    pickerLoadPromise = new Promise((resolve, reject) => {
+      gapi.load("picker", { callback: resolve, onerror: () => reject(new Error("Could not load the Google Picker library.")) });
+    });
+  }
+  return pickerLoadPromise;
+}
+
+// Requests a Drive access token scoped to just files the person
+// explicitly picks (drive.file) — no standing access to their whole
+// Drive. Re-uses a token client across calls so re-importing later in
+// the same session doesn't always force a fresh consent screen.
+function requestDriveAccessToken() {
+  return new Promise((resolve, reject) => {
+    if (!driveTokenClient) {
+      driveTokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: state.googleDriveClientId,
+        scope: "https://www.googleapis.com/auth/drive.file",
+        callback: () => {} // overridden per-request just below
+      });
+    }
+    driveTokenClient.callback = (resp) => {
+      if (resp.error) { reject(new Error(resp.error)); return; }
+      driveAccessToken = resp.access_token;
+      resolve(driveAccessToken);
+    };
+    driveTokenClient.requestAccessToken({ prompt: driveAccessToken ? "" : "consent" });
+  });
+}
+
+// Shows the Drive file picker filtered to Excel files and resolves
+// with the chosen file's { id, name, mimeType }, or null if cancelled.
+function openDrivePicker(accessToken) {
+  return new Promise((resolve) => {
+    const view = new google.picker.DocsView()
+      .setIncludeFolders(false)
+      .setSelectFolderEnabled(false)
+      .setMimeTypes("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.google-apps.spreadsheet");
+    const picker = new google.picker.PickerBuilder()
+      .setOAuthToken(accessToken)
+      .setDeveloperKey(state.googleDriveApiKey)
+      .addView(view)
+      .setCallback((data) => {
+        if (data.action === google.picker.Action.PICKED) {
+          resolve(data.docs[0]);
+        } else if (data.action === google.picker.Action.CANCEL) {
+          resolve(null);
+        }
+      })
+      .build();
+    picker.setVisible(true);
+  });
+}
+
+// Downloads the chosen file's bytes. A native Google Sheet (rather
+// than an uploaded .xlsx) can't be downloaded via `alt=media`, so
+// that case is exported to .xlsx format instead — either way the
+// result is bytes SheetJS can read.
+async function downloadDriveFileAsArrayBuffer(file, accessToken) {
+  const isGoogleSheet = file.mimeType === "application/vnd.google-apps.spreadsheet";
+  const url = isGoogleSheet
+    ? `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=${encodeURIComponent("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}`
+    : `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`;
+  const res = await fetch(url, { headers: { Authorization: "Bearer " + accessToken } });
+  if (!res.ok) throw new Error(`Could not download "${file.name}" from Drive (HTTP ${res.status}).`);
+  return res.arrayBuffer();
+}
+
+async function runDriveImportPicker(assetKey) {
   const statusEl = document.getElementById(IMPORT_TAB_CONFIG[assetKey].statusElId);
-  statusEl.textContent = "Fetching from Google Drive...";
-  let data;
+  if (!state.googleDriveClientId || !state.googleDriveApiKey) {
+    alert('Google Drive import needs a one-time setup: add a "Google Drive Client ID" and "Google Drive API Key" in Settings. See the note there for how to create them in Google Cloud Console.');
+    return;
+  }
+  statusEl.textContent = "Opening Google Drive...";
+  let file, accessToken;
   try {
-    data = await fetchDriveZerodhaHoldings();
+    await ensurePickerLoaded();
+    await ensureGisLoaded();
+    accessToken = await requestDriveAccessToken();
+    file = await openDrivePicker(accessToken);
   } catch (err) {
-    statusEl.textContent = sheetErrorMessage(err);
+    statusEl.textContent = "";
+    alert("Could not open Google Drive: " + (err && err.message ? err.message : "unknown error"));
+    return;
+  }
+  if (!file) { statusEl.textContent = ""; return; } // person cancelled the picker
+  statusEl.textContent = `Downloading "${file.name}"...`;
+  let arrayBuffer;
+  try {
+    arrayBuffer = await downloadDriveFileAsArrayBuffer(file, accessToken);
+  } catch (err) {
+    statusEl.textContent = "";
+    alert(err && err.message ? err.message : "Could not download the selected file from Drive.");
+    return;
+  }
+  statusEl.textContent = "Reading file...";
+  let parsed;
+  try {
+    parsed = parseZerodhaWorkbookFromArrayBuffer(arrayBuffer);
+  } catch (err) {
+    statusEl.textContent = "";
+    alert("Could not read that file. Make sure it's the unmodified Zerodha Console Holdings Statement .xlsx export.");
     return;
   }
   statusEl.textContent = "";
-  const noteHTML = `<p class="settings-note">Source: ${escapeAttr(data.sourceLabel)}</p>`;
-  const groups = [];
-  if (assetKey === "equity") {
-    groups.push(buildImportGroup("equity", data.equity, data.attention.equity));
-    if (data.gold.length) groups.push(buildImportGroup("gold", data.gold, []));
-  } else if (assetKey === "gold") {
-    groups.push(buildImportGroup("gold", data.gold, []));
-  } else if (assetKey === "mf") {
-    groups.push(buildImportGroup("mf", data.mf, data.attention.mf));
-  }
-  runCombinedImportPreview(groups, noteHTML);
+  const noteHTML = `<p class="settings-note">Source: Google Drive — ${escapeAttr(file.name)}${parsed.clientId ? " — Client ID " + escapeAttr(parsed.clientId) : ""}</p>`;
+  runCombinedImportPreview(buildZerodhaImportGroups(assetKey, parsed), noteHTML);
 }
+
 
 /* ============================================================
    EXPORT / IMPORT (full JSON backup)
@@ -2419,7 +2769,7 @@ function openDemoDataModal() {
           }
           localStorage.setItem(DEMO_ACTIVE_KEY, "1");
           const demo = buildDemoState();
-          const keepSettings = { ownerName: state.ownerName, priceApiUrl: state.priceApiUrl, holdingsApiUrl: state.holdingsApiUrl };
+          const keepSettings = { ownerName: state.ownerName, priceApiUrl: state.priceApiUrl, holdingsApiUrl: state.holdingsApiUrl, googleDriveClientId: state.googleDriveClientId, googleDriveApiKey: state.googleDriveApiKey };
           state = { ...blankState(), ...demo, ...keepSettings, portfolioLocked: false };
           saveState();
           renderAll();
@@ -2803,15 +3153,26 @@ function openSettingsModal() {
       <input type="text" id="settingsOwnerName" value="${escapeAttr(state.ownerName || "Ganesh")}">
     </div>
 
-    <h4>Live Price &amp; Holdings API</h4>
-    <p class="settings-note" style="margin-top:0">Your Google Apps Script Web App URLs. Update them here if you ever redeploy and get a new <code>/exec</code> link — no code changes needed.</p>
+    <h4>Live Price API</h4>
+    <p class="settings-note" style="margin-top:0">Your Google Apps Script Web App URL. Update it here if you ever redeploy and get a new <code>/exec</code> link — no code changes needed.</p>
     <div class="settings-field">
       <label for="settingsPriceApiUrl">Price API URL (Stocks / Mutual Funds / Gold / Debt)</label>
       <input type="text" id="settingsPriceApiUrl" placeholder="https://script.google.com/macros/s/.../exec" value="${escapeAttr(state.priceApiUrl || "")}">
     </div>
     <div class="settings-field">
-      <label for="settingsHoldingsApiUrl">Holdings API URL (Import from Google Drive)</label>
+      <label for="settingsHoldingsApiUrl">Holdings API URL (legacy — superseded by Google Drive import below)</label>
       <input type="text" id="settingsHoldingsApiUrl" placeholder="https://script.google.com/macros/s/.../exec" value="${escapeAttr(state.holdingsApiUrl || "")}">
+    </div>
+
+    <h4>Google Drive Import</h4>
+    <p class="settings-note" style="margin-top:0">"Import from Google Drive" opens a picker so you browse and choose the exact Zerodha Holdings .xlsx file — it never gets standing access to your whole Drive, only the file you pick. One-time setup in <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a>: enable the "Google Picker API" and "Google Drive API", create an OAuth 2.0 Client ID (Web application) with this site's URL under Authorized JavaScript origins, and create an API key (restrict it to the Picker API). Paste both below.</p>
+    <div class="settings-field">
+      <label for="settingsGoogleDriveClientId">Google Drive OAuth Client ID</label>
+      <input type="text" id="settingsGoogleDriveClientId" placeholder="xxxxxxxxxx.apps.googleusercontent.com" value="${escapeAttr(state.googleDriveClientId || "")}">
+    </div>
+    <div class="settings-field">
+      <label for="settingsGoogleDriveApiKey">Google Drive API Key</label>
+      <input type="text" id="settingsGoogleDriveApiKey" placeholder="AIza..." value="${escapeAttr(state.googleDriveApiKey || "")}">
     </div>
 
     <h4>Backup &amp; Restore</h4>
@@ -2828,6 +3189,8 @@ function openSettingsModal() {
         state.ownerName = document.getElementById("settingsOwnerName").value.trim() || "Ganesh";
         state.priceApiUrl = document.getElementById("settingsPriceApiUrl").value.trim() || DEFAULT_PRICE_API_URL;
         state.holdingsApiUrl = document.getElementById("settingsHoldingsApiUrl").value.trim() || DEFAULT_HOLDINGS_API_URL;
+        state.googleDriveClientId = document.getElementById("settingsGoogleDriveClientId").value.trim();
+        state.googleDriveApiKey = document.getElementById("settingsGoogleDriveApiKey").value.trim();
         saveState();
         renderBrand();
         closeModal();

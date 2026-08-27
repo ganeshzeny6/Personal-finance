@@ -175,6 +175,22 @@
   .dash-grid{display:grid;grid-template-columns:1.6fr 1fr;gap:16px;}
   @media (max-width:900px){.dash-grid{grid-template-columns:1fr;}}
 
+  /* Insights tab: Top/Worst Performers lists + Sector/Category donuts */
+  .insights-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  @media (max-width:900px){.insights-grid{grid-template-columns:1fr;}}
+
+  .performer-row{padding:10px 0;border-bottom:1px solid var(--border);}
+  .performer-row:last-child{border-bottom:none;}
+  .performer-row-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:6px;}
+  .performer-name{font-family:var(--font-display);font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .performer-pl{font-family:var(--font-mono);font-size:12px;font-weight:600;white-space:nowrap;flex:0 0 auto;}
+  .performer-bar-track{height:6px;border-radius:4px;background:var(--surface-2);overflow:hidden;}
+  .performer-bar-fill{height:100%;border-radius:4px;}
+  .performer-bar-fill.pos{background:var(--positive);}
+  .performer-bar-fill.neg{background:var(--negative);}
+  .performer-meta{font-family:var(--font-mono);font-size:11px;color:var(--text-faint);margin-top:4px;}
+  .insights-empty{color:var(--text-faint);font-size:12.5px;padding:24px 0;text-align:center;}
+
   .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;}
   .card h3{font-family:var(--font-display);font-size:14px;font-weight:600;margin:0 0 14px;display:flex;align-items:center;justify-content:space-between;}
   .card h3 .hint{font-family:var(--font-body);font-weight:400;font-size:11px;color:var(--text-faint);}
@@ -493,25 +509,27 @@
     .panel.active .fab-add{display:flex;}
   }
 
-  /* Dashboard's allocation table — same card-list treatment, scoped
-     narrowly to this one table so it never touches the fixed-width
-     .data-table layout the four asset-class tabs use. */
+  /* Dashboard's allocation table and Insights' MF Category Breakdown
+     table — same card-list treatment, scoped to these plain tables so
+     it never touches the fixed-width .data-table layout the four
+     asset-class tabs use. */
   @media (max-width:700px){
-    #panel-dashboard .table-scroll table{table-layout:auto;}
-    #panel-dashboard table thead, #panel-dashboard table tfoot{display:none;}
-    #panel-dashboard table tbody{display:block;}
-    #panel-dashboard table tbody tr{
+    #panel-dashboard .table-scroll table, #panel-insights .table-scroll table{table-layout:auto;}
+    #panel-dashboard table thead, #panel-dashboard table tfoot,
+    #panel-insights table thead, #panel-insights table tfoot{display:none;}
+    #panel-dashboard table tbody, #panel-insights table tbody{display:block;}
+    #panel-dashboard table tbody tr, #panel-insights table tbody tr{
       display:block;background:var(--surface);border:1px solid var(--border);
       border-radius:12px;padding:12px 14px;margin-bottom:10px;
     }
-    #panel-dashboard table tbody td{
+    #panel-dashboard table tbody td, #panel-insights table tbody td{
       display:flex;align-items:center;justify-content:space-between;gap:10px;
       border-bottom:none;padding:5px 0;
     }
-    #panel-dashboard table tbody td:first-child{
+    #panel-dashboard table tbody td:first-child, #panel-insights table tbody td:first-child{
       padding:0 0 10px;margin-bottom:8px;border-bottom:1px solid var(--border);
     }
-    #panel-dashboard table tbody td[data-label]::before{
+    #panel-dashboard table tbody td[data-label]::before, #panel-insights table tbody td[data-label]::before{
       content:attr(data-label);color:var(--text-faint);font-size:10.5px;
       text-transform:uppercase;letter-spacing:.04em;
     }
@@ -543,6 +561,7 @@
   <button class="tab-btn" data-tab="debt">Debt</button>
   <button class="tab-btn" data-tab="mf">Mutual Funds</button>
   <button class="tab-btn" data-tab="gold">Gold</button>
+  <button class="tab-btn" data-tab="insights">Insights</button>
 </div>
 
 <main>
@@ -961,6 +980,52 @@
     </div>
   </section>
 
+  <!-- ============ INSIGHTS ============ -->
+  <section class="panel" id="panel-insights">
+    <h2 class="section-title">Insights</h2>
+    <p class="section-sub">A closer look at what's driving your Equity and Mutual Fund allocations — computed from the same figures as their tabs, nothing recalculated differently.</p>
+
+    <div class="insights-grid">
+      <div class="card">
+        <h3>Top Performers <span class="hint">Equity, by P&amp;L</span></h3>
+        <div id="insightsTopPerformers"></div>
+      </div>
+      <div class="card">
+        <h3>Worst Performers <span class="hint">Equity, by P&amp;L</span></h3>
+        <div id="insightsWorstPerformers"></div>
+      </div>
+    </div>
+
+    <div class="insights-grid" style="margin-top:16px;">
+      <div class="card">
+        <h3>Sector Allocation <span class="hint">Equity, current value</span></h3>
+        <div class="chart-wrap" id="sectorAllocChartWrap"><canvas id="sectorAllocPie"></canvas></div>
+        <div class="insights-empty" id="sectorAllocEmpty" style="display:none">No Equity holdings yet — add stocks (with a Sector) to see this breakdown.</div>
+      </div>
+      <div class="card">
+        <h3>Mutual Fund Category Allocation <span class="hint">current value</span></h3>
+        <div class="chart-wrap" id="mfCategoryChartWrap"><canvas id="mfCategoryPie"></canvas></div>
+        <div class="insights-empty" id="mfCategoryEmpty" style="display:none">No Mutual Fund holdings yet — import holdings to see this breakdown.</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <h3>Mutual Fund Category Breakdown</h3>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th class="left">Category</th>
+              <th>Investment Value</th>
+              <th>Investment %</th>
+            </tr>
+          </thead>
+          <tbody id="mfCategoryTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
 </main>
 
 <footer class="app-footer">All data stays in this browser (localStorage) unless you export it or sign in to sync via Google. Nothing is sent to any server except live price lookups and, if signed in, your own Firestore document.</footer>
@@ -973,6 +1038,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-08-25-5"></script>
+<script src="app.js?v=2026-08-25-6"></script>
 </body>
 </html>
