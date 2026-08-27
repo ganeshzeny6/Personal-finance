@@ -147,21 +147,34 @@ function blankState() {
   };
 }
 
+// Single shared merge used everywhere a saved state blob (localStorage,
+// a JSON backup file, a Firestore cloud doc, or a pre-demo snapshot) is
+// turned into a real `state` object. Centralizing this avoids the bug
+// where loadState() had a "backfill blank googleDriveClientId/ApiKey"
+// fix that the JSON-import, cloud-sync, and exit-demo code paths didn't
+// share — each of those rebuilt `state` with its own copy-pasted spread
+// and silently let old saved "" values re-clobber the real defaults.
+// Add any future "treat an old saved blank as unset" backfill here once,
+// not at every call site.
+function mergeIntoState(saved) {
+  saved = saved || {};
+  return {
+    ...blankState(),
+    ...saved,
+    ideal: { ...DEFAULT_IDEAL, ...(saved.ideal || {}) },
+    // Backfill: earlier saves may have an explicit "" here from before
+    // these had real defaults — treat that the same as "never set"
+    // rather than letting a blank string win.
+    googleDriveClientId: saved.googleDriveClientId || DEFAULT_GOOGLE_DRIVE_CLIENT_ID,
+    googleDriveApiKey: saved.googleDriveApiKey || DEFAULT_GOOGLE_DRIVE_API_KEY
+  };
+}
+
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return blankState();
-    const parsed = JSON.parse(raw);
-    return {
-      ...blankState(),
-      ...parsed,
-      ideal: { ...DEFAULT_IDEAL, ...(parsed.ideal || {}) },
-      // Backfill: earlier saves may have an explicit "" here from
-      // before these had real defaults — treat that the same as
-      // "never set" rather than letting a blank string win.
-      googleDriveClientId: parsed.googleDriveClientId || DEFAULT_GOOGLE_DRIVE_CLIENT_ID,
-      googleDriveApiKey: parsed.googleDriveApiKey || DEFAULT_GOOGLE_DRIVE_API_KEY
-    };
+    return mergeIntoState(JSON.parse(raw));
   } catch (e) {
     console.error("Failed to load saved data, starting fresh.", e);
     return blankState();
@@ -3236,7 +3249,7 @@ document.getElementById("importFile").addEventListener("change", (e) => {
   reader.onload = () => {
     try {
       const parsed = JSON.parse(reader.result);
-      state = { ...blankState(), ...parsed, ideal: { ...DEFAULT_IDEAL, ...(parsed.ideal || {}) } };
+      state = mergeIntoState(parsed);
       saveState();
       renderAll();
     } catch (err) {
@@ -3391,7 +3404,7 @@ document.getElementById("btnExitDemo").addEventListener("click", () => {
   if (backupRaw) {
     try {
       const restored = JSON.parse(backupRaw);
-      state = { ...blankState(), ...restored, ideal: { ...DEFAULT_IDEAL, ...(restored.ideal || {}) } };
+      state = mergeIntoState(restored);
     } catch (e) {
       alert("Could not read your saved pre-demo data — it may have been cleared from this browser. Starting from a blank tracker instead.");
       state = blankState();
@@ -3640,7 +3653,7 @@ async function resolveCloudSync() {
     const snap = await fbDb.collection("portfolios").doc(cloudUser.uid).get({ source: "server" });
     if (snap.exists) {
       const cloud = snap.data();
-      state = { ...blankState(), ...cloud, ideal: { ...DEFAULT_IDEAL, ...(cloud.ideal || {}) } };
+      state = mergeIntoState(cloud);
       state.lastSaved = new Date().toISOString();
       // Refresh the offline-viewing cache only — this does NOT
       // trigger another push back up to Firestore.
