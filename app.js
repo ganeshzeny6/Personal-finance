@@ -36,6 +36,15 @@ const DEFAULT_PRICE_API_URL = "https://script.google.com/macros/s/AKfycbxT5Mgu9h
 // ZerodhaHoldingsImport.gs for the script this URL comes from.
 const DEFAULT_HOLDINGS_API_URL = "https://script.google.com/macros/s/AKfycbxVhXBRtZvfmGNjFEaKwOQE54-u-OrC5oGfiFuEjBN7KDJhwW1PE-2OmnzcjXux8MOZ/exec";
 
+// One-time Google Cloud credentials for the "Import from Google Drive"
+// file picker (see Settings for setup steps). These are Ganesh's own
+// values, hardcoded as real defaults so a fresh blankState() actually
+// has them in `state` (and thus persisted to localStorage/Firestore)
+// rather than only appearing as a Settings-modal display fallback that
+// never gets saved unless "Save" is explicitly clicked.
+const DEFAULT_GOOGLE_DRIVE_CLIENT_ID = "638244383857-oe1ea4pb1l64a79d34d7j64uclmpmqv9.apps.googleusercontent.com";
+const DEFAULT_GOOGLE_DRIVE_API_KEY = "AIzaSyB0waRuXkp9Bh1k0CcmSea-BXcM6yY8WQs";
+
 const DEFAULT_IDEAL = { cash: 5, debt: 30, mf: 30, equity: 25, gold: 10 };
 
 const ASSET_COLORS = {
@@ -129,11 +138,12 @@ function blankState() {
     priceApiUrl: DEFAULT_PRICE_API_URL,
     holdingsApiUrl: DEFAULT_HOLDINGS_API_URL,
     // One-time Google Cloud credentials for the "Import from Google
-    // Drive" file picker (see Settings for setup steps). Blank by
-    // default — Drive import shows a setup message until these are
-    // filled in.
-    googleDriveClientId: "",
-    googleDriveApiKey: ""
+    // Drive" file picker (see Settings for setup steps). Defaulted to
+    // Ganesh's own values (see DEFAULT_GOOGLE_DRIVE_CLIENT_ID/API_KEY
+    // above) so Drive import works out of the box; still editable from
+    // Settings if these ever need to change.
+    googleDriveClientId: DEFAULT_GOOGLE_DRIVE_CLIENT_ID,
+    googleDriveApiKey: DEFAULT_GOOGLE_DRIVE_API_KEY
   };
 }
 
@@ -142,7 +152,16 @@ function loadState() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return blankState();
     const parsed = JSON.parse(raw);
-    return { ...blankState(), ...parsed, ideal: { ...DEFAULT_IDEAL, ...(parsed.ideal || {}) } };
+    return {
+      ...blankState(),
+      ...parsed,
+      ideal: { ...DEFAULT_IDEAL, ...(parsed.ideal || {}) },
+      // Backfill: earlier saves may have an explicit "" here from
+      // before these had real defaults — treat that the same as
+      // "never set" rather than letting a blank string win.
+      googleDriveClientId: parsed.googleDriveClientId || DEFAULT_GOOGLE_DRIVE_CLIENT_ID,
+      googleDriveApiKey: parsed.googleDriveApiKey || DEFAULT_GOOGLE_DRIVE_API_KEY
+    };
   } catch (e) {
     console.error("Failed to load saved data, starting fresh.", e);
     return blankState();
@@ -3735,11 +3754,11 @@ function openSettingsModal() {
     <p class="settings-note" style="margin-top:0">"Import from Google Drive" opens a picker so you browse and choose the exact Zerodha Holdings .xlsx file — it never gets standing access to your whole Drive, only the file you pick. One-time setup in <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a>: enable the "Google Picker API" and "Google Drive API", create an OAuth 2.0 Client ID (Web application) with this site's URL under Authorized JavaScript origins, and create an API key (restrict it to the Picker API). Paste both below.</p>
     <div class="settings-field">
       <label for="settingsGoogleDriveClientId">Google Drive OAuth Client ID</label>
-      <input type="text" id="settingsGoogleDriveClientId" placeholder="xxxxxxxxxx.apps.googleusercontent.com" value="${escapeAttr(state.googleDriveClientId || "638244383857-oe1ea4pb1l64a79d34d7j64uclmpmqv9.apps.googleusercontent.com")}">
+      <input type="text" id="settingsGoogleDriveClientId" placeholder="xxxxxxxxxx.apps.googleusercontent.com" value="${escapeAttr(state.googleDriveClientId || DEFAULT_GOOGLE_DRIVE_CLIENT_ID)}">
     </div>
     <div class="settings-field">
       <label for="settingsGoogleDriveApiKey">Google Drive API Key</label>
-      <input type="text" id="settingsGoogleDriveApiKey" placeholder="AIza..." value="${escapeAttr(state.googleDriveApiKey || "AIzaSyB0waRuXkp9Bh1k0CcmSea-BXcM6yY8WQs")}">
+      <input type="text" id="settingsGoogleDriveApiKey" placeholder="AIza..." value="${escapeAttr(state.googleDriveApiKey || DEFAULT_GOOGLE_DRIVE_API_KEY)}">
     </div>
 
     <h4>Import Investments</h4>
@@ -3763,8 +3782,8 @@ function openSettingsModal() {
         state.ownerName = document.getElementById("settingsOwnerName").value.trim() || "Ganesh";
         state.priceApiUrl = document.getElementById("settingsPriceApiUrl").value.trim() || DEFAULT_PRICE_API_URL;
         state.holdingsApiUrl = document.getElementById("settingsHoldingsApiUrl").value.trim() || DEFAULT_HOLDINGS_API_URL;
-        state.googleDriveClientId = document.getElementById("settingsGoogleDriveClientId").value.trim();
-        state.googleDriveApiKey = document.getElementById("settingsGoogleDriveApiKey").value.trim();
+        state.googleDriveClientId = document.getElementById("settingsGoogleDriveClientId").value.trim() || DEFAULT_GOOGLE_DRIVE_CLIENT_ID;
+        state.googleDriveApiKey = document.getElementById("settingsGoogleDriveApiKey").value.trim() || DEFAULT_GOOGLE_DRIVE_API_KEY;
         saveState();
         renderBrand();
         closeModal();
