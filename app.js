@@ -592,12 +592,25 @@ function equityTotals() {
   return { invested, current, pl, plPct };
 }
 
-function equityGetSearchText(row) {
-  const d = equityDerived(row);
-  return [row.name, row.invested, row.units, d.avgPrice, row.ltp, d.currentValue, d.pl, d.plPct, row.sector].join(" ");
+// Equity's Cap (Large/Mid/Small) column reuses the exact same Screener
+// join and marketCapCategory() classifier the Stock Analysis tab uses
+// — matched by Symbol (row.name), via buildScreenerMap()/
+// marketCapCategory() defined near the Stock Analysis code below (both
+// are plain function declarations, so they're available here
+// regardless of file order). Returns null (rendered as a dash) until
+// Screener data has been imported for that symbol.
+function getEquityCapCategory(row, screenerMap) {
+  const screener = screenerMap.get((row.name || "").trim().toUpperCase());
+  return marketCapCategory(screener ? screener.market_cap : null);
 }
 
-function equityGetSortValue(row, col) {
+function equityGetSearchText(row, screenerMap) {
+  const d = equityDerived(row);
+  const cap = getEquityCapCategory(row, screenerMap);
+  return [row.name, row.invested, row.units, d.avgPrice, row.ltp, d.currentValue, d.pl, d.plPct, row.sector, cap].join(" ");
+}
+
+function equityGetSortValue(row, col, screenerMap) {
   const d = equityDerived(row);
   switch (col) {
     case "name": return row.name || "";
@@ -610,6 +623,7 @@ function equityGetSortValue(row, col) {
     case "plPct": return d.plPct;
     case "allocPct": return Number(row.invested) || 0; // alloc% is invested-based, same sort order
     case "sector": return row.sector || "";
+    case "capCategory": return getEquityCapCategory(row, screenerMap) || "";
     default: return 0;
   }
 }
@@ -618,12 +632,20 @@ function renderEquity() {
   const tbody = document.getElementById("equityTableBody");
   tbody.innerHTML = "";
   const totals = equityTotals();
-  const displayRows = applySortFilter("equity", state.equity, equityGetSearchText, equityGetSortValue);
+  // Built once per render and threaded through the search/sort
+  // closures below, rather than rebuilt per row — buildScreenerMap()
+  // is the same lookup Stock Analysis uses.
+  const screenerMap = buildScreenerMap();
+  const displayRows = applySortFilter(
+    "equity", state.equity,
+    (row) => equityGetSearchText(row, screenerMap),
+    (row, col) => equityGetSortValue(row, col, screenerMap)
+  );
 
   if (state.equity.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="11">No stocks yet. Use "Import Holdings" to bring in your Zerodha Console export.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="12">No stocks yet. Use "Import Holdings" to bring in your Zerodha Console export.</td></tr>';
   } else if (displayRows.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="11">No stocks match this filter.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="12">No stocks match this filter.</td></tr>';
   }
 
   // Name, Invested, Units and LTP are only ever meant to change via
@@ -638,11 +660,13 @@ function renderEquity() {
     // not its share of current market value.
     const allocPct = totals.invested > 0 ? (Number(row.invested) / totals.invested) * 100 : 0;
     const pendingBadge = row.livePricePending ? '<span class="pending-badge">Pending</span>' : "";
+    const capCategory = getEquityCapCategory(row, screenerMap);
     const tr = document.createElement("tr");
     tr.dataset.id = row.id;
     tr.innerHTML = `
       <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" placeholder="e.g. TCS.NS" disabled></td>
       <td class="left" data-label="Sector"><input type="text" value="${escapeAttr(row.sector || "")}" data-field="sector" placeholder="e.g. IT" ${notesLocked ? "disabled" : ""}></td>
+      <td class="left" data-label="Cap">${capCategory ? escapeAttr(capCategory) : '<span class="muted">—</span>'}</td>
       <td data-label="Invested Amt"><input type="number" step="any" value="${roundedInputValue(row.invested)}" data-field="invested" disabled></td>
       <td data-label="Units"><input type="number" step="any" value="${roundedInputValue(row.units)}" data-field="units" disabled></td>
       <td class="c-avg" data-label="Avg Price">${fmtNum(d.avgPrice)}</td>
@@ -1898,6 +1922,26 @@ function parseHighLow(v) {
   return { high: parseScreenerNum(parts[0]), low: parseScreenerNum(parts[1]) };
 }
 
+// Large/Mid/Small cap classification, derived purely from the Market
+// Cap figure Screener import brings in (state.screenerData[].market_cap,
+// already cleaned to a plain number in ₹ Crore by parseScreenerNum() —
+// Screener exports market cap in Cr). This app has no per-company rank
+// data (SEBI's own definition is rank-based: 1-100 Large, 101-250 Mid,
+// 251+ Small), so it approximates using the commonly-used absolute
+// thresholds instead: Large >= 20,000 Cr, Mid 5,000-20,000 Cr, Small
+// below that. Returns null (never a guess) when Market Cap isn't known
+// yet — i.e. Screener data hasn't been imported for that symbol —
+// so callers can show a dash instead of a wrong classification.
+const MARKET_CAP_LARGE_THRESHOLD_CR = 20000;
+const MARKET_CAP_MID_THRESHOLD_CR = 5000;
+function marketCapCategory(marketCapCr) {
+  if (marketCapCr === null || marketCapCr === undefined || isNaN(marketCapCr)) return null;
+  const n = Number(marketCapCr);
+  if (n >= MARKET_CAP_LARGE_THRESHOLD_CR) return "Large Cap";
+  if (n >= MARKET_CAP_MID_THRESHOLD_CR) return "Mid Cap";
+  return "Small Cap";
+}
+
 // Builds a Map from Symbol (trimmed, uppercased) to that Screener
 // row's cleaned fields — the single lookup used to join Screener
 // data onto each Equity holding by Symbol.
@@ -1952,10 +1996,14 @@ function stockAnalysisDerived(equityRow, screener) {
   const gainFromLow = (hl.low !== null && hl.low > 0 && ltp > 0) ? ((ltp - hl.low) / hl.low) * 100 : null;
   const dropFromHigh = (hl.high !== null && hl.high > 0 && ltp > 0) ? ((hl.high - ltp) / hl.high) * 100 : null;
 
+  const marketCap = screener ? screener.market_cap : null;
+  const capCategory = marketCapCategory(marketCap);
+
   return {
     ltp, sector, isFinancial,
     low52: hl.low, high52: hl.high, gainFromLow, dropFromHigh,
     eps, pe, industryPe, buyReco,
+    capCategory,
     bookValue, pb, pbClass, industryPbv,
     yieldPct,
     dividendYield: screener ? pctOrNull(screener.dividend_yield) : null,
@@ -1975,7 +2023,7 @@ function stockAnalysisDerived(equityRow, screener) {
     // 5-year-back), interest coverage and free cash flow are all
     // absolute figures, not percentages, so no pctOrNull() conversion.
     faceValue: screener ? screener.face_value : null,
-    marketCap: screener ? screener.market_cap : null,
+    marketCap,
     marketCap5y: screener ? screener.mar_cap_5yrs_back : null,
     intCoverage: screener ? screener.int_coverage : null,
     fcfPrevAnn: screener ? screener.fcf_prev_ann : null,
@@ -2026,7 +2074,7 @@ function stockMonogram(name) {
 
 function stockAnalysisGetSearchText(row, screener, d) {
   return [
-    row.name, row.sector, d.ltp,
+    row.name, row.sector, d.capCategory, d.ltp,
     d.low52, d.high52, d.gainFromLow, d.dropFromHigh,
     d.eps, d.pe, d.industryPe,
     d.buyReco === null ? "" : (d.buyReco ? "Buy" : "Hold"),
@@ -2044,6 +2092,7 @@ function stockAnalysisGetSortValue(d, col) {
   switch (col) {
     case "name": return d._name;
     case "sector": return d.sector || "";
+    case "capCategory": return d.capCategory || "";
     case "ltp": return d.ltp;
     case "range52": return d.high52 ?? -Infinity;
     case "gainFromLow": return d.gainFromLow ?? -Infinity;
@@ -2073,6 +2122,7 @@ function stockAnalysisGetSortValue(d, col) {
 // always shown.
 const STOCK_ANALYSIS_COLUMNS = [
   { key: "sector", label: "Sector" },
+  { key: "capCategory", label: "Market Cap Category" },
   { key: "ltp", label: "LTP" },
   { key: "range52", label: "52W Low / High" },
   { key: "gainFromLow", label: "Gain from Low %" },
@@ -2315,7 +2365,7 @@ function renderStockAnalysisDetailPanel(joinedRows) {
     <div class="sa-detail-head">
       <div>
         <div class="sa-detail-name">${escapeAttr(row.name || "(unnamed)")}</div>
-        <div class="sa-detail-meta">${escapeAttr(d.sector || "Sector not set")} · ${escapeAttr(row.name || "")}</div>
+        <div class="sa-detail-meta">${escapeAttr(d.sector || "Sector not set")} · ${d.capCategory ? escapeAttr(d.capCategory) : '<span class="muted">Cap not set</span>'}</div>
       </div>
       <div style="text-align:right;">
         <div class="sa-detail-price">${fmtNum(d.ltp)}</div>
@@ -2720,13 +2770,13 @@ function renderStockAnalysis() {
 
   tbody.innerHTML = "";
   if (state.equity.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="33">No Equity holdings yet — add stocks on the Equity tab first.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="34">No Equity holdings yet — add stocks on the Equity tab first.</td></tr>';
     document.getElementById("saPagination").innerHTML = "";
     renderStockAnalysisMobileDeck([]);
     return;
   }
   if (rows.length === 0) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="33">${excluded.size > 0 ? 'No holdings match this filter (some may be hidden — see "Hidden" above).' : 'No holdings match this filter.'}</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="34">${excluded.size > 0 ? 'No holdings match this filter (some may be hidden — see "Hidden" above).' : 'No holdings match this filter.'}</td></tr>`;
     document.getElementById("saPagination").innerHTML = "";
     renderStockAnalysisMobileDeck([]);
     return;
@@ -2760,6 +2810,7 @@ function renderStockAnalysis() {
         </div>
       </td>
       <td class="left" data-label="Sector">${escapeAttr(d.sector || "—")}</td>
+      <td class="left" data-label="Market Cap Category">${d.capCategory ? escapeAttr(d.capCategory) : '<span class="muted">—</span>'}</td>
       <td data-label="LTP">${fmtNum(d.ltp)}</td>
       <td class="left" data-label="52W Low / High">${renderRangeBarHTML(d)}</td>
       <td class="${d.gainFromLow > 0 ? 'pos' : ''}" data-label="Gain from Low %">${fmtOrDash(d.gainFromLow, 1, "%")}</td>
@@ -2906,7 +2957,7 @@ function renderStockAnalysisMobileDeck(pageRows, fullFilteredRows) {
         <div class="sa-mobile-card-top">
           <div>
             <div class="sa-mobile-card-name">${escapeAttr(row.name || "")}</div>
-            <div class="sa-mobile-card-sector">${escapeAttr(d.sector || "Sector not set")}</div>
+            <div class="sa-mobile-card-sector">${escapeAttr(d.sector || "Sector not set")}${d.capCategory ? " · " + escapeAttr(d.capCategory) : ""}</div>
           </div>
           <div class="sa-mobile-card-price">${fmtNum(d.ltp)}</div>
         </div>
@@ -3058,6 +3109,7 @@ function showScreenerImportPreview(newRows, statusEl) {
           state.screenerData = newRows;
           saveState();
           renderStockAnalysis();
+          renderEquity();
           closeModal();
           statusEl.textContent = `Imported ${newRows.length} Screener row${newRows.length === 1 ? "" : "s"}.`;
         }

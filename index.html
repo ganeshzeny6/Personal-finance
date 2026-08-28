@@ -272,11 +272,11 @@
   }
   .col-resizer:hover, .col-resizer.resizing{background:var(--gold-soft);}
   table.data-table{table-layout:fixed;width:100%;}
-  #panel-equity table.data-table{min-width:1230px;}
+  #panel-equity table.data-table{min-width:1330px;}
   #panel-debt table.data-table{min-width:1615px;}
   #panel-mf table.data-table{min-width:1400px;}
   #panel-gold table.data-table{min-width:1295px;}
-  #panel-stockanalysis table.data-table{min-width:3140px;}
+  #panel-stockanalysis table.data-table{min-width:3240px;}
 
   /* Stock Analysis: Buy recommendation badge + Financial-sector P/B
      highlight bands (green < 1, yellow < 1.5, orange < 2 — strongest
@@ -803,7 +803,7 @@
   <!-- ============ EQUITY ============ -->
   <section class="panel" id="panel-equity">
     <h2 class="section-title">Equity — Stocks</h2>
-    <p class="section-sub">Track individual stock holdings. Units, Avg Price and LTP are driven by Zerodha Holdings import and an automatic live-price refresh every 30 seconds — only Sector can be edited by hand.</p>
+    <p class="section-sub">Track individual stock holdings. Units, Avg Price and LTP are driven by Zerodha Holdings import and an automatic live-price refresh every 30 seconds — only Sector can be edited by hand. Cap (Large/Mid/Small) is derived from the Market Cap you import via "Import Screener Data" on the Stock Analysis tab, matched by Symbol; it shows a dash until that's imported.</p>
 
     <div class="table-toolbar">
       <div class="left-group">
@@ -847,6 +847,7 @@
         <colgroup>
           <col id="col-eq-name" style="width:200px">
           <col style="width:120px">
+          <col style="width:100px">
           <col style="width:130px"><col style="width:90px"><col style="width:100px">
           <col style="width:110px"><col style="width:140px"><col style="width:120px">
           <col style="width:90px"><col style="width:85px"><col style="width:45px">
@@ -855,6 +856,7 @@
           <tr>
             <th class="left sortable resizable sticky-col" data-col="name">Stock / Symbol<span class="col-resizer"></span></th>
             <th class="left sortable" data-col="sector">Sector</th>
+            <th class="left sortable" data-col="capCategory">Cap</th>
             <th class="sortable" data-col="invested">Invested Amt</th>
             <th class="sortable" data-col="units">Units</th>
             <th class="sortable" data-col="avgPrice">Avg Price</th>
@@ -870,6 +872,7 @@
         <tfoot>
           <tr>
             <td class="left sticky-col">Total</td>
+            <td></td>
             <td></td>
             <td id="eqTotalInvested">₹0</td>
             <td>—</td><td>—</td><td>—</td>
@@ -1190,7 +1193,7 @@
   <!-- ============ STOCK ANALYSIS ============ -->
   <section class="panel" id="panel-stockanalysis">
     <h2 class="section-title">Stock Analysis</h2>
-    <p class="section-sub">Fundamentals for your Equity holdings — Stock/Symbol, Sector and LTP come straight from the Equity tab; everything else is joined in from imported Screener data by Symbol. PE, P/B and Yield are always calculated here, never taken pre-computed from the source file. ROA is shown for Financial-sector stocks only.</p>
+    <p class="section-sub">Fundamentals for your Equity holdings — Stock/Symbol, Sector and LTP come straight from the Equity tab; everything else is joined in from imported Screener data by Symbol. PE, P/B and Yield are always calculated here, never taken pre-computed from the source file. ROA is shown for Financial-sector stocks only. Market Cap Category (Large/Mid/Small) is derived from the imported Market Cap: Large ≥ ₹20,000 Cr, Mid ₹5,000–20,000 Cr, Small &lt; ₹5,000 Cr.</p>
 
     <div class="sa-summary-grid" id="saSummaryGrid"></div>
 
@@ -1212,6 +1215,7 @@
         <option value="">Sort: default</option>
         <option value="name">Name</option>
         <option value="sector">Sector</option>
+        <option value="capCategory">Market Cap Category</option>
         <option value="ltp">LTP</option>
         <option value="pe">PE</option>
         <option value="industryPe">Industry PE</option>
@@ -1226,7 +1230,7 @@
       <table class="data-table">
         <colgroup>
           <col id="col-sa-name" style="width:190px">
-          <col id="col-sa-col-sector" style="width:120px"><col id="col-sa-col-ltp" style="width:90px">
+          <col id="col-sa-col-sector" style="width:120px"><col id="col-sa-col-capCategory" style="width:100px"><col id="col-sa-col-ltp" style="width:90px">
           <col id="col-sa-col-range52" style="width:140px"><col id="col-sa-col-gainFromLow" style="width:95px"><col id="col-sa-col-dropFromHigh" style="width:95px">
           <col id="col-sa-col-eps" style="width:80px"><col id="col-sa-col-pe" style="width:80px"><col id="col-sa-col-industryPe" style="width:95px"><col id="col-sa-col-buyReco" style="width:90px">
           <col id="col-sa-col-bookValue" style="width:90px"><col id="col-sa-col-pb" style="width:80px"><col id="col-sa-col-industryPbv" style="width:95px"><col id="col-sa-col-yieldPct" style="width:90px">
@@ -1242,6 +1246,7 @@
           <tr>
             <th class="left sortable resizable sticky-col" data-col="name">Stock / Symbol<span class="col-resizer"></span></th>
             <th class="left sortable" data-col="sector">Sector</th>
+            <th class="left sortable" data-col="capCategory">Market Cap Category</th>
             <th class="sortable" data-col="ltp">LTP</th>
             <th class="left sortable" data-col="range52">52W Low / High</th>
             <th class="sortable" data-col="gainFromLow">Gain from Low %</th>
