@@ -311,8 +311,15 @@ const tableUI = {
   debt:   { sortCol: "maturityDate", sortDir: 1, filter: "" },
   mf:     { sortCol: "allocPct", sortDir: -1, filter: "" },
   gold:   { sortCol: null, sortDir: 1, filter: "" },
-  stockanalysis: { sortCol: null, sortDir: 1, filter: "" }
+  stockanalysis: { sortCol: null, sortDir: 1, filter: "", page: 1 }
 };
+
+// Desktop Stock Analysis table shows this many holdings per page,
+// with Prev/Next + numbered pagination below the table. The mobile
+// swipe-card deck reuses the exact same page slice (see
+// renderStockAnalysis()) so desktop and mobile always agree on
+// "what page am I on".
+const STOCK_ANALYSIS_PAGE_SIZE = 7;
 
 // Applies filter then sort to `rows`, given per-row lookup
 // functions for search text and sortable values. Returns a new
@@ -1980,6 +1987,32 @@ function fmtOrDash(v, decimals = 2, suffix = "") {
   return (v === null || v === undefined) ? '<span class="muted">—</span>' : fmtNum(v, decimals) + suffix;
 }
 
+// Visual 52-week range bar for the table's merged "52W Low / High"
+// column — built entirely from d.low52/d.high52/d.ltp (already
+// computed by stockAnalysisDerived(), nothing new fetched or stored).
+// Falls back to a plain dash pair when either bound is missing (no
+// Screener data imported yet for that holding).
+function renderRangeBarHTML(d) {
+  if (d.low52 === null || d.high52 === null || d.high52 <= d.low52) {
+    return `<div class="sa-range-cell"><span class="muted">—</span></div>`;
+  }
+  const pct = Math.max(0, Math.min(100, ((d.ltp - d.low52) / (d.high52 - d.low52)) * 100));
+  return `
+    <div class="sa-range-cell">
+      <div class="sa-range-track"><div class="sa-range-dot" style="left:${pct}%"></div></div>
+      <div class="sa-range-labels"><span>${fmtNum(d.low52, 0)}</span><span>${fmtNum(d.high52, 0)}</span></div>
+    </div>
+  `;
+}
+
+// Short monogram for the stock avatar chip — first 1-2 letters of the
+// holding's name/symbol, purely cosmetic (no logo data exists or is
+// fetched anywhere in the app).
+function stockMonogram(name) {
+  const clean = String(name || "").replace(/[^A-Za-z]/g, "");
+  return (clean.slice(0, 2) || "?").toUpperCase();
+}
+
 function stockAnalysisGetSearchText(row, screener, d) {
   return [
     row.name, row.sector, d.ltp,
@@ -2001,8 +2034,7 @@ function stockAnalysisGetSortValue(d, col) {
     case "name": return d._name;
     case "sector": return d.sector || "";
     case "ltp": return d.ltp;
-    case "low52": return d.low52 ?? -Infinity;
-    case "high52": return d.high52 ?? -Infinity;
+    case "range52": return d.high52 ?? -Infinity;
     case "gainFromLow": return d.gainFromLow ?? -Infinity;
     case "dropFromHigh": return d.dropFromHigh ?? -Infinity;
     case "eps": return d.eps ?? -Infinity;
@@ -2031,8 +2063,7 @@ function stockAnalysisGetSortValue(d, col) {
 const STOCK_ANALYSIS_COLUMNS = [
   { key: "sector", label: "Sector" },
   { key: "ltp", label: "LTP" },
-  { key: "low52", label: "52W Low" },
-  { key: "high52", label: "52W High" },
+  { key: "range52", label: "52W Low / High" },
   { key: "gainFromLow", label: "Gain from Low %" },
   { key: "dropFromHigh", label: "Drop from High %" },
   { key: "eps", label: "EPS" },
@@ -2215,23 +2246,23 @@ function renderStockAnalysisSummary(joinedRows) {
   const s = computeStockAnalysisSummary(joinedRows);
   const pct = (n) => s.total > 0 ? fmtNum((n / s.total) * 100, 0) + "%" : "0%";
   el.innerHTML = `
-    <div class="sa-stat-card">
+    <div class="sa-stat-card accent-gold">
       <div class="sa-stat-label">Total Stocks</div>
       <div class="sa-stat-value">${s.total}</div>
     </div>
-    <div class="sa-stat-card">
+    <div class="sa-stat-card accent-pos">
       <div class="sa-stat-label">Buy Recommendations</div>
       <div class="sa-stat-value pos">${s.buyCount}<span class="sa-stat-sub">${pct(s.buyCount)}</span></div>
     </div>
-    <div class="sa-stat-card">
+    <div class="sa-stat-card accent-blue">
       <div class="sa-stat-label">High ROE &gt; 15%</div>
       <div class="sa-stat-value">${s.highRoeCount}<span class="sa-stat-sub">${pct(s.highRoeCount)}</span></div>
     </div>
-    <div class="sa-stat-card">
+    <div class="sa-stat-card accent-pos">
       <div class="sa-stat-label">Low P/B (Financial)</div>
       <div class="sa-stat-value pos">${s.lowPbFinancialCount}<span class="sa-stat-sub">${pct(s.lowPbFinancialCount)}</span></div>
     </div>
-    <div class="sa-stat-card">
+    <div class="sa-stat-card accent-warn">
       <div class="sa-stat-label">Screener Coverage</div>
       <div class="sa-stat-value">${s.screenerMatched}<span class="sa-stat-sub">/ ${s.total}</span></div>
     </div>
@@ -2262,12 +2293,18 @@ function renderStockAnalysisDetailPanel(joinedRows) {
   const roaRow = d.isFinancial
     ? `<div class="sa-detail-row"><span class="k">ROA</span><span class="v">${fmtOrDash(d.roa, 1, "%")}</span></div>`
     : "";
+  // "X vs Industry" is a plain display-time percentage diff between two
+  // values stockAnalysisDerived() already computed (pe/industryPe,
+  // pb/industryPbv) — nothing recalculated differently, just formatted
+  // for this one panel the way the reference screenshot shows it.
+  const peVsIndustryHTML = (d.pe !== null && d.industryPe) ? pctDiffHTML(d.pe, d.industryPe) : '<span class="muted">—</span>';
+  const pbVsIndustryHTML = (d.pb !== null && d.industryPbv) ? pctDiffHTML(d.pb, d.industryPbv) : '<span class="muted">—</span>';
 
   panel.innerHTML = `
     <div class="sa-detail-head">
       <div>
         <div class="sa-detail-name">${escapeAttr(row.name || "(unnamed)")}</div>
-        <div class="sa-detail-meta">${escapeAttr(d.sector || "Sector not set")}</div>
+        <div class="sa-detail-meta">${escapeAttr(d.sector || "Sector not set")} · ${escapeAttr(row.name || "")}</div>
       </div>
       <div style="text-align:right;">
         <div class="sa-detail-price">${fmtNum(d.ltp)}</div>
@@ -2275,36 +2312,54 @@ function renderStockAnalysisDetailPanel(joinedRows) {
       </div>
     </div>
     <div class="sa-detail-sections">
-      <div>
+      <div class="sa-detail-section">
         <div class="sa-detail-section-title">Valuation</div>
         <div class="sa-detail-row"><span class="k">PE / Industry PE</span><span class="v">${fmtOrDash(d.pe)} / ${fmtOrDash(d.industryPe)}</span></div>
+        <div class="sa-detail-row"><span class="k">PE vs Industry</span><span class="v">${peVsIndustryHTML}</span></div>
         <div class="sa-detail-row"><span class="k">P/B / Industry P/B</span><span class="v ${d.pbClass}">${fmtOrDash(d.pb)} / ${fmtOrDash(d.industryPbv)}</span></div>
-        <div class="sa-detail-row"><span class="k">Book Value</span><span class="v">${fmtOrDash(d.bookValue)}</span></div>
-        <div class="sa-detail-row"><span class="k">52W Low / High</span><span class="v">${fmtOrDash(d.low52)} / ${fmtOrDash(d.high52)}</span></div>
+        <div class="sa-detail-row"><span class="k">P/B vs Industry</span><span class="v">${pbVsIndustryHTML}</span></div>
+        <div class="sa-detail-row"><span class="k">Free Cash Flow (Prev FY)</span><span class="v">${fmtOrDash(d.fcfPrevAnn, 0)}</span></div>
+        <div class="sa-detail-row"><span class="k">Market Cap</span><span class="v">${fmtOrDash(d.marketCap, 0)}</span></div>
       </div>
-      <div>
+      <div class="sa-detail-section">
         <div class="sa-detail-section-title">Financial Health</div>
         <div class="sa-detail-row"><span class="k">ROE</span><span class="v">${fmtOrDash(d.roe, 1, "%")}</span></div>
         <div class="sa-detail-row"><span class="k">ROCE</span><span class="v">${fmtOrDash(d.roce, 1, "%")}</span></div>
         ${roaRow}
         <div class="sa-detail-row"><span class="k">Debt to Equity</span><span class="v">${fmtOrDash(d.debtToEquity)}</span></div>
+        <div class="sa-detail-row"><span class="k">Interest Coverage</span><span class="v">${fmtOrDash(d.intCoverage)}</span></div>
         <div class="sa-detail-row"><span class="k">Promoter Holding</span><span class="v">${fmtOrDash(d.promoterHolding, 1, "%")}</span></div>
       </div>
-      <div>
+      <div class="sa-detail-section">
         <div class="sa-detail-section-title">Growth</div>
         <div class="sa-detail-row"><span class="k">EPS Growth (3Y / 5Y)</span><span class="v">${fmtOrDash(d.epsGrowth3y, 1, "%")} / ${fmtOrDash(d.epsGrowth5y, 1, "%")}</span></div>
+        <div class="sa-detail-row"><span class="k">Profit Growth (3Y / 5Y)</span><span class="v">${fmtOrDash(d.profitVar3y, 1, "%")} / ${fmtOrDash(d.profitVar5y, 1, "%")}</span></div>
         <div class="sa-detail-row"><span class="k">Sales Growth (5Y)</span><span class="v">${fmtOrDash(d.salesGrowth5y, 1, "%")}</span></div>
-        <div class="sa-detail-row"><span class="k">Qtr Profit / Sales Growth</span><span class="v">${fmtOrDash(d.qtrProfitVar, 1, "%")} / ${fmtOrDash(d.qtrSalesVar, 1, "%")}</span></div>
+        <div class="sa-detail-row"><span class="k">Quarterly Profit Growth</span><span class="v">${fmtOrDash(d.qtrProfitVar, 1, "%")}</span></div>
+        <div class="sa-detail-row"><span class="k">Quarterly Sales Growth</span><span class="v">${fmtOrDash(d.qtrSalesVar, 1, "%")}</span></div>
       </div>
-      <div>
-        <div class="sa-detail-section-title">Dividend &amp; Key Fundamentals</div>
+      <div class="sa-detail-section">
+        <div class="sa-detail-section-title">Dividend &amp; Recommendation</div>
         <div class="sa-detail-row"><span class="k">Yield % (calculated)</span><span class="v">${fmtOrDash(d.yieldPct, 2, "%")}</span></div>
         <div class="sa-detail-row"><span class="k">Dividend Yield</span><span class="v">${fmtOrDash(d.dividendYield, 2, "%")}</span></div>
-        <div class="sa-detail-row"><span class="k">Face Value</span><span class="v">${fmtOrDash(d.faceValue)}</span></div>
-        <div class="sa-detail-row"><span class="k">Market Cap</span><span class="v">${fmtOrDash(d.marketCap, 0)}</span></div>
+        <div class="sa-detail-row"><span class="k">Book Value / Face Value</span><span class="v">${fmtOrDash(d.bookValue)} / ${fmtOrDash(d.faceValue)}</span></div>
+        <div class="sa-detail-row"><span class="k">52W Low / High</span><span class="v">${fmtOrDash(d.low52)} / ${fmtOrDash(d.high52)}</span></div>
+        <div class="sa-detail-row"><span class="k">Recommendation</span><span class="v">${buyHTML}</span></div>
       </div>
     </div>
   `;
+}
+
+// Formats a "vs industry" percentage difference as colored HTML —
+// positive (above industry average) in red-ish for PE/PB since lower
+// is generally cheaper/better for these two ratios, negative (below
+// industry average) in green. Purely a display helper; the underlying
+// pe/pb/industryPe/industryPbv numbers are untouched.
+function pctDiffHTML(value, industryValue) {
+  const diff = ((value - industryValue) / industryValue) * 100;
+  const cls = diff <= 0 ? "pos" : "neg";
+  const sign = diff >= 0 ? "+" : "";
+  return `<span class="${cls}">${sign}${fmtNum(diff, 1)}%</span>`;
 }
 
 function renderStockAnalysis() {
@@ -2356,17 +2411,32 @@ function renderStockAnalysis() {
 
   tbody.innerHTML = "";
   if (state.equity.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="34">No Equity holdings yet — add stocks on the Equity tab first.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="33">No Equity holdings yet — add stocks on the Equity tab first.</td></tr>';
+    document.getElementById("saPagination").innerHTML = "";
+    renderStockAnalysisMobileDeck([]);
     return;
   }
   if (rows.length === 0) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="34">${excluded.size > 0 ? 'No holdings match this filter (some may be hidden — see "Hidden" above).' : 'No holdings match this filter.'}</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="33">${excluded.size > 0 ? 'No holdings match this filter (some may be hidden — see "Hidden" above).' : 'No holdings match this filter.'}</td></tr>`;
+    document.getElementById("saPagination").innerHTML = "";
+    renderStockAnalysisMobileDeck([]);
     return;
   }
 
-  rows.forEach(({ row, d }) => {
+  // Pagination: 7 holdings per page on the desktop table. Clamp the
+  // stored page against the current filtered/sorted result count so
+  // e.g. narrowing a search doesn't leave the view stuck on a page
+  // number that no longer exists.
+  const totalPages = Math.max(1, Math.ceil(rows.length / STOCK_ANALYSIS_PAGE_SIZE));
+  if (ui.page > totalPages) ui.page = totalPages;
+  if (ui.page < 1) ui.page = 1;
+  const startIdx = (ui.page - 1) * STOCK_ANALYSIS_PAGE_SIZE;
+  const pageRows = rows.slice(startIdx, startIdx + STOCK_ANALYSIS_PAGE_SIZE);
+
+  pageRows.forEach(({ row, d }) => {
     const tr = document.createElement("tr");
     const rowKey = (row.name || "").trim().toUpperCase();
+    tr.dataset.rowKey = rowKey;
     if (rowKey && rowKey === stockAnalysisSelectedKey) tr.classList.add("sa-row-selected");
     const buyHTML = d.buyReco === null
       ? '<span class="muted">—</span>'
@@ -2374,11 +2444,15 @@ function renderStockAnalysis() {
         ? '<span class="buy-badge buy">Buy</span>'
         : '<span class="buy-badge no">Hold</span>';
     tr.innerHTML = `
-      <td class="left sticky-col" data-label="Stock / Symbol">${escapeAttr(row.name || "")}</td>
+      <td class="left sticky-col" data-label="Stock / Symbol">
+        <div class="stock-cell">
+          <span class="stock-avatar">${escapeAttr(stockMonogram(row.name))}</span>
+          <span class="stock-cell-text"><span class="stock-cell-name">${escapeAttr(row.name || "")}</span></span>
+        </div>
+      </td>
       <td class="left" data-label="Sector">${escapeAttr(d.sector || "—")}</td>
       <td data-label="LTP">${fmtNum(d.ltp)}</td>
-      <td data-label="52W Low">${fmtOrDash(d.low52)}</td>
-      <td data-label="52W High">${fmtOrDash(d.high52)}</td>
+      <td class="left" data-label="52W Low / High">${renderRangeBarHTML(d)}</td>
       <td class="${d.gainFromLow > 0 ? 'pos' : ''}" data-label="Gain from Low %">${fmtOrDash(d.gainFromLow, 1, "%")}</td>
       <td class="${d.dropFromHigh > 0 ? 'neg' : ''}" data-label="Drop from High %">${fmtOrDash(d.dropFromHigh, 1, "%")}</td>
       <td data-label="EPS">${fmtOrDash(d.eps)}</td>
@@ -2422,14 +2496,154 @@ function renderStockAnalysis() {
     });
     tr.addEventListener("click", () => {
       if (!rowKey) return;
-      if (stockAnalysisSelectedKey === rowKey) return;
-      stockAnalysisSelectedKey = rowKey;
-      tbody.querySelectorAll("tr.sa-row-selected").forEach(r => r.classList.remove("sa-row-selected"));
-      tr.classList.add("sa-row-selected");
-      renderStockAnalysisDetailPanel(rows);
+      selectStockAnalysisRow(rowKey, rows);
     });
     tbody.appendChild(tr);
   });
+
+  renderStockAnalysisPagination(rows.length, ui.page, totalPages);
+  renderStockAnalysisMobileDeck(pageRows, rows);
+}
+
+// Shared row-selection logic used by both the desktop table's row
+// click and the mobile deck's card tap — keeps the two views'
+// highlighted/selected holding in sync since they render from the
+// same underlying page slice.
+function selectStockAnalysisRow(rowKey, fullFilteredRows) {
+  if (!rowKey || stockAnalysisSelectedKey === rowKey) return;
+  stockAnalysisSelectedKey = rowKey;
+  document.querySelectorAll("#stockAnalysisTableBody tr.sa-row-selected, .sa-mobile-card.sa-row-selected").forEach(el => el.classList.remove("sa-row-selected"));
+  const matchingTr = Array.from(document.querySelectorAll("#stockAnalysisTableBody tr")).find(r => r.dataset.rowKey === rowKey);
+  if (matchingTr) matchingTr.classList.add("sa-row-selected");
+  const matchingCard = Array.from(document.querySelectorAll(".sa-mobile-card")).find(c => c.dataset.rowKey === rowKey);
+  if (matchingCard) matchingCard.classList.add("sa-row-selected");
+  renderStockAnalysisDetailPanel(fullFilteredRows);
+}
+
+// Renders the Prev/Next + numbered pagination bar under the desktop
+// table, along with a "Showing X–Y of N" label. Numbered buttons
+// collapse to first/last + a window around the current page (with
+// ellipses) once there are more than 7 pages, so this stays usable
+// even with a couple hundred holdings.
+function renderStockAnalysisPagination(totalCount, page, totalPages) {
+  const el = document.getElementById("saPagination");
+  if (!el) return;
+  if (totalCount === 0) { el.innerHTML = ""; return; }
+  const startN = (page - 1) * STOCK_ANALYSIS_PAGE_SIZE + 1;
+  const endN = Math.min(totalCount, page * STOCK_ANALYSIS_PAGE_SIZE);
+
+  const pageNumbers = [];
+  if (totalPages <= 7) {
+    for (let i = 1; i <= totalPages; i++) pageNumbers.push(i);
+  } else {
+    pageNumbers.push(1);
+    if (page > 3) pageNumbers.push("…");
+    for (let i = Math.max(2, page - 1); i <= Math.min(totalPages - 1, page + 1); i++) pageNumbers.push(i);
+    if (page < totalPages - 2) pageNumbers.push("…");
+    pageNumbers.push(totalPages);
+  }
+
+  const btnsHTML = pageNumbers.map(n =>
+    n === "…"
+      ? `<span class="sa-page-ellipsis">…</span>`
+      : `<button class="sa-page-btn${n === page ? " active" : ""}" data-page="${n}">${n}</button>`
+  ).join("");
+
+  el.innerHTML = `
+    <div class="sa-pagination-info">Showing ${startN}–${endN} of ${totalCount}</div>
+    <div class="sa-pagination-controls">
+      <button class="sa-page-btn" id="saPagePrev" ${page <= 1 ? "disabled" : ""} title="Previous page">‹</button>
+      ${btnsHTML}
+      <button class="sa-page-btn" id="saPageNext" ${page >= totalPages ? "disabled" : ""} title="Next page">›</button>
+    </div>
+  `;
+  el.querySelectorAll("button[data-page]").forEach(btn => {
+    btn.addEventListener("click", () => { tableUI.stockanalysis.page = Number(btn.dataset.page); renderStockAnalysis(); });
+  });
+  const prevBtn = document.getElementById("saPagePrev");
+  const nextBtn = document.getElementById("saPageNext");
+  if (prevBtn) prevBtn.addEventListener("click", () => { tableUI.stockanalysis.page = Math.max(1, page - 1); renderStockAnalysis(); });
+  if (nextBtn) nextBtn.addEventListener("click", () => { tableUI.stockanalysis.page = Math.min(totalPages, page + 1); renderStockAnalysis(); });
+}
+
+// Mobile/tablet swipe-card deck — one card per holding, same page
+// slice (pageRows) the desktop table just rendered, so both views
+// always show the same 7 holdings and the same pagination position.
+// Uses horizontal scroll-snap rather than a JS carousel library, so
+// it works with native touch swipe with no added dependency.
+function renderStockAnalysisMobileDeck(pageRows, fullFilteredRows) {
+  const scroller = document.getElementById("saMobileScroller");
+  const dotsEl = document.getElementById("saMobileDots");
+  const paginationEl = document.getElementById("saMobilePagination");
+  if (!scroller || !dotsEl || !paginationEl) return;
+
+  if (!pageRows || pageRows.length === 0) {
+    scroller.innerHTML = '<div class="sa-detail-empty" style="min-width:100%">No holdings to show.</div>';
+    dotsEl.innerHTML = "";
+    paginationEl.innerHTML = "";
+    return;
+  }
+
+  scroller.innerHTML = pageRows.map(({ row, d }) => {
+    const rowKey = (row.name || "").trim().toUpperCase();
+    const selected = rowKey === stockAnalysisSelectedKey;
+    const buyHTML = d.buyReco === null
+      ? '<span class="muted">—</span>'
+      : d.buyReco
+        ? '<span class="buy-badge buy">Buy</span>'
+        : '<span class="buy-badge no">Hold</span>';
+    return `
+      <div class="sa-mobile-card${selected ? " sa-row-selected" : ""}" data-row-key="${escapeAttr(rowKey)}">
+        <div class="sa-mobile-card-top">
+          <div>
+            <div class="sa-mobile-card-name">${escapeAttr(row.name || "")}</div>
+            <div class="sa-mobile-card-sector">${escapeAttr(d.sector || "Sector not set")}</div>
+          </div>
+          <div class="sa-mobile-card-price">${fmtNum(d.ltp)}</div>
+        </div>
+        <div class="sa-mobile-card-grid">
+          <div class="sa-mobile-metric"><div class="l">PE</div><div class="v">${fmtOrDash(d.pe)}</div></div>
+          <div class="sa-mobile-metric"><div class="l">P/B</div><div class="v">${fmtOrDash(d.pb)}</div></div>
+          <div class="sa-mobile-metric"><div class="l">ROE</div><div class="v">${fmtOrDash(d.roe, 1, "%")}</div></div>
+        </div>
+        <div class="sa-mobile-card-footer">
+          ${renderRangeBarHTML(d)}
+          ${buyHTML}
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  scroller.querySelectorAll(".sa-mobile-card").forEach(card => {
+    card.addEventListener("click", () => selectStockAnalysisRow(card.dataset.rowKey, fullFilteredRows || pageRows));
+  });
+
+  dotsEl.innerHTML = pageRows.map((_, i) => `<span class="sa-mobile-dot${i === 0 ? " active" : ""}"></span>`).join("");
+  const dots = dotsEl.querySelectorAll(".sa-mobile-dot");
+  let scrollTimer = null;
+  scroller.addEventListener("scroll", () => {
+    clearTimeout(scrollTimer);
+    scrollTimer = setTimeout(() => {
+      const cardWidth = scroller.firstElementChild ? scroller.firstElementChild.getBoundingClientRect().width + 12 : 1;
+      const idx = Math.round(scroller.scrollLeft / cardWidth);
+      dots.forEach((d, i) => d.classList.toggle("active", i === idx));
+    }, 80);
+  });
+
+  // Reuses the exact same Prev/Next page state as the desktop table
+  // (tableUI.stockanalysis.page) so switching between mobile and
+  // desktop widths never disagrees on which page is showing.
+  const ui = tableUI.stockanalysis;
+  const totalPages = Math.max(1, Math.ceil((fullFilteredRows || pageRows).length / STOCK_ANALYSIS_PAGE_SIZE));
+  paginationEl.innerHTML = `
+    <button class="sa-page-btn" id="saMobilePagePrev" ${ui.page <= 1 ? "disabled" : ""}>‹ Prev</button>
+    <span class="sa-pagination-info">Page ${ui.page} of ${totalPages}</span>
+    <button class="sa-page-btn" id="saMobilePageNext" ${ui.page >= totalPages ? "disabled" : ""}>Next ›</button>
+  `;
+  const mPrev = document.getElementById("saMobilePagePrev");
+  const mNext = document.getElementById("saMobilePageNext");
+  if (mPrev) mPrev.addEventListener("click", () => { ui.page = Math.max(1, ui.page - 1); renderStockAnalysis(); });
+  if (mNext) mNext.addEventListener("click", () => { ui.page = Math.min(totalPages, ui.page + 1); renderStockAnalysis(); });
 }
 
 /* ---- Import Screener Data (.xlsx) ----
@@ -4144,7 +4358,7 @@ setupSortAndFilter("equity", "#panel-equity thead", "equityFilter", () => { rend
 setupSortAndFilter("debt", "#panel-debt thead", "debtFilter", () => { renderDebt(); });
 setupSortAndFilter("mf", "#panel-mf thead", "mfFilter", () => { renderMF(); });
 setupSortAndFilter("gold", "#panel-gold thead", "goldFilter", () => { renderGold(); });
-setupSortAndFilter("stockanalysis", "#panel-stockanalysis thead", "stockAnalysisFilter", () => { renderStockAnalysis(); });
+setupSortAndFilter("stockanalysis", "#panel-stockanalysis thead", "stockAnalysisFilter", () => { tableUI.stockanalysis.page = 1; renderStockAnalysis(); });
 
 markInitialSortIndicator("equity", "#panel-equity thead");
 markInitialSortIndicator("debt", "#panel-debt thead");
@@ -4156,7 +4370,7 @@ setupMobileSort("equity", "equityMobileSort", "equityMobileSortDir", "#panel-equ
 setupMobileSort("debt", "debtMobileSort", "debtMobileSortDir", "#panel-debt thead", () => { renderDebt(); });
 setupMobileSort("mf", "mfMobileSort", "mfMobileSortDir", "#panel-mf thead", () => { renderMF(); });
 setupMobileSort("gold", "goldMobileSort", "goldMobileSortDir", "#panel-gold thead", () => { renderGold(); });
-setupMobileSort("stockanalysis", "stockAnalysisMobileSort", "stockAnalysisMobileSortDir", "#panel-stockanalysis thead", () => { renderStockAnalysis(); });
+setupMobileSort("stockanalysis", "stockAnalysisMobileSort", "stockAnalysisMobileSortDir", "#panel-stockanalysis thead", () => { tableUI.stockanalysis.page = 1; renderStockAnalysis(); });
 
 setupOverflowToggle("debtOverflowToggle", "debtToolbarSecondary");
 

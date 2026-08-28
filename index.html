@@ -276,7 +276,7 @@
   #panel-debt table.data-table{min-width:1615px;}
   #panel-mf table.data-table{min-width:1400px;}
   #panel-gold table.data-table{min-width:1295px;}
-  #panel-stockanalysis table.data-table{min-width:3180px;}
+  #panel-stockanalysis table.data-table{min-width:3140px;}
 
   /* Stock Analysis: Buy recommendation badge + Financial-sector P/B
      highlight bands (green < 1, yellow < 1.5, orange < 2 — strongest
@@ -292,43 +292,105 @@
   td.pb-orange{background:#e0893322;color:#e08933;font-weight:600;}
 
   /* ============================================================
-     STOCK ANALYSIS — redesigned summary cards, row selection and
-     detail panel. Scoped entirely to #panel-stockanalysis so no
-     other tab's table/card styling is affected. Reuses existing
+     STOCK ANALYSIS — redesigned summary cards, search/toolbar,
+     52-week range bar, pagination, row selection, detail panel and
+     a mobile swipe-card deck. Scoped entirely to #panel-stockanalysis
+     so no other tab's table/card styling is affected. Reuses existing
      tokens (--surface, --gold, --positive/--negative, font vars)
      and existing classes (.buy-badge, .pb-green/yellow/orange,
      .stat-card pattern) rather than inventing a new visual system.
      ============================================================ */
+
+  /* ---- Search bar ---- */
+  .sa-search-wrap{position:relative;flex:1;min-width:220px;max-width:420px;}
+  .sa-search-wrap::before{
+    content:"";position:absolute;left:12px;top:50%;width:13px;height:13px;
+    transform:translateY(-50%);
+    background:var(--text-faint);
+    -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E") center/contain no-repeat;
+    mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E") center/contain no-repeat;
+    pointer-events:none;
+  }
+  .sa-search-wrap .filter-input{width:100%;padding-left:32px;}
+
+  /* ---- Summary cards ---- */
   .sa-summary-grid{
     display:grid;
-    grid-template-columns:repeat(auto-fit, minmax(150px,1fr));
-    gap:10px;
+    grid-template-columns:repeat(auto-fit, minmax(160px,1fr));
+    gap:12px;
     margin-bottom:18px;
   }
   .sa-stat-card{
-    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-    padding:12px 14px;
+    background:linear-gradient(160deg, var(--surface-2), var(--surface));
+    border:1px solid var(--border);border-radius:var(--radius);
+    padding:14px 16px;position:relative;overflow:hidden;
   }
-  .sa-stat-card .sa-stat-label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);margin-bottom:6px;}
-  .sa-stat-card .sa-stat-value{font-family:var(--font-mono);font-size:19px;font-weight:600;color:var(--text);}
-  .sa-stat-card .sa-stat-sub{font-family:var(--font-mono);font-size:11px;color:var(--text-faint);margin-left:4px;font-weight:500;}
+  .sa-stat-card::before{
+    content:"";position:absolute;top:0;left:0;right:0;height:2px;
+    background:var(--accent, var(--gold-soft));
+  }
+  .sa-stat-card.accent-gold::before{background:var(--gold);}
+  .sa-stat-card.accent-pos::before{background:var(--positive);}
+  .sa-stat-card.accent-blue::before{background:var(--blue);}
+  .sa-stat-card.accent-warn::before{background:var(--warning);}
+  .sa-stat-card .sa-stat-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);margin-bottom:8px;display:flex;align-items:center;gap:5px;}
+  .sa-stat-card .sa-stat-value{font-family:var(--font-mono);font-size:21px;font-weight:600;color:var(--text);}
+  .sa-stat-card .sa-stat-sub{font-family:var(--font-mono);font-size:11px;color:var(--text-faint);margin-left:5px;font-weight:500;}
 
-  #panel-stockanalysis tbody tr{cursor:pointer;}
+  #panel-stockanalysis .table-scroll{border-radius:var(--radius);}
+  #panel-stockanalysis tbody tr{cursor:pointer;transition:background .12s ease;}
   #panel-stockanalysis tbody tr.sa-row-selected{background:var(--gold-soft);}
   #panel-stockanalysis tbody tr.sa-row-selected td.sticky-col{background:var(--gold-soft);}
   #panel-stockanalysis tbody tr.sa-row-selected:hover{background:var(--gold-soft);}
+  #panel-stockanalysis .stock-cell{display:flex;align-items:center;gap:9px;}
+  #panel-stockanalysis .stock-avatar{
+    width:28px;height:28px;border-radius:8px;flex:0 0 auto;
+    background:var(--surface-2);border:1px solid var(--border);
+    display:flex;align-items:center;justify-content:center;
+    font-family:var(--font-display);font-size:11px;font-weight:700;color:var(--gold);
+  }
+  #panel-stockanalysis .stock-cell-text{overflow:hidden;}
+  #panel-stockanalysis .stock-cell-name{font-family:var(--font-display);font-weight:600;font-size:12.6px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  #panel-stockanalysis .stock-cell-sector{font-size:10.5px;color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
+  /* ---- 52-week range bar (built from existing low52/high52/ltp — no new data) ---- */
+  .sa-range-cell{display:flex;flex-direction:column;gap:3px;min-width:110px;}
+  .sa-range-track{position:relative;height:4px;border-radius:3px;background:linear-gradient(90deg, var(--negative), var(--warning), var(--positive));opacity:.55;}
+  .sa-range-dot{position:absolute;top:50%;width:8px;height:8px;border-radius:50%;background:var(--text);border:2px solid var(--bg);transform:translate(-50%,-50%);}
+  .sa-range-labels{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10px;color:var(--text-faint);}
+
+  /* ---- Pagination ---- */
+  .sa-pagination{
+    display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;
+    margin-top:14px;padding:2px 2px;
+  }
+  .sa-pagination-info{font-size:11.5px;color:var(--text-faint);font-family:var(--font-body);}
+  .sa-pagination-controls{display:flex;align-items:center;gap:4px;flex-wrap:wrap;}
+  .sa-page-btn{
+    min-width:30px;height:30px;padding:0 8px;
+    background:var(--surface-2);border:1px solid var(--border);border-radius:7px;
+    color:var(--text-muted);font-family:var(--font-mono);font-size:12px;font-weight:500;
+    cursor:pointer;transition:border-color .15s ease, color .15s ease;
+  }
+  .sa-page-btn:hover:not(:disabled){border-color:var(--gold);color:var(--text);}
+  .sa-page-btn:disabled{opacity:.35;cursor:default;}
+  .sa-page-btn.active{background:var(--gold);border-color:var(--gold);color:#1b1408;font-weight:600;}
+  .sa-page-ellipsis{color:var(--text-faint);padding:0 3px;font-size:12px;}
+
+  /* ---- Detail panel ---- */
   .sa-detail-panel{
-    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-    padding:18px 20px;margin-top:16px;
+    background:linear-gradient(160deg, var(--surface-2), var(--surface));
+    border:1px solid var(--border);border-radius:var(--radius);
+    padding:20px 22px;margin-top:16px;
   }
   .sa-detail-empty{color:var(--text-faint);font-size:12.5px;text-align:center;padding:20px 0;}
-  .sa-detail-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px;flex-wrap:wrap;}
-  .sa-detail-name{font-family:var(--font-display);font-size:16px;font-weight:600;color:var(--text);}
+  .sa-detail-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:18px;flex-wrap:wrap;padding-bottom:16px;border-bottom:1px solid var(--border);}
+  .sa-detail-name{font-family:var(--font-display);font-size:18px;font-weight:600;color:var(--text);}
   .sa-detail-meta{font-size:12px;color:var(--text-faint);margin-top:3px;}
-  .sa-detail-price{font-family:var(--font-mono);font-size:22px;font-weight:600;color:var(--gold);white-space:nowrap;}
-  .sa-detail-sections{display:grid;grid-template-columns:repeat(auto-fit, minmax(220px,1fr));gap:18px;}
-  .sa-detail-section-title{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);margin-bottom:8px;}
+  .sa-detail-price{font-family:var(--font-mono);font-size:24px;font-weight:600;color:var(--gold);white-space:nowrap;}
+  .sa-detail-sections{display:grid;grid-template-columns:repeat(auto-fit, minmax(220px,1fr));gap:20px;}
+  .sa-detail-section{background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:13px 15px;}
+  .sa-detail-section-title{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--gold);margin-bottom:9px;font-weight:600;}
   .sa-detail-row{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;padding:6px 0;border-bottom:1px solid var(--border);}
   .sa-detail-row:last-child{border-bottom:none;}
   .sa-detail-row .k{color:var(--text-muted);}
@@ -336,8 +398,49 @@
 
   @media (max-width:700px){
     .sa-detail-sections{grid-template-columns:1fr;}
-    .sa-detail-panel{padding:14px 16px;}
+    .sa-detail-panel{padding:16px 16px;}
   }
+
+  /* ============================================================
+     Stock Analysis — mobile/tablet swipeable card deck. Hidden on
+     desktop; replaces the generic stacked-card table treatment for
+     THIS tab only (the table itself is hidden below 700px and this
+     deck takes over) so it behaves like a native "swipe between
+     stocks" investment-app view rather than a shrunk table.
+     ============================================================ */
+  .sa-mobile-deck{display:none;}
+  @media (max-width:700px){
+    #panel-stockanalysis .table-scroll{display:none;}
+    #panel-stockanalysis .sa-pagination{display:none;}
+    .sa-mobile-deck{display:block;}
+  }
+  .sa-mobile-scroller{
+    display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;
+    padding:4px 4px 14px;margin:0 -4px;
+    -webkit-overflow-scrolling:touch;
+  }
+  .sa-mobile-scroller::-webkit-scrollbar{height:0;}
+  .sa-mobile-card{
+    flex:0 0 88%;scroll-snap-align:center;
+    background:linear-gradient(160deg, var(--surface-2), var(--surface));
+    border:1px solid var(--border);border-radius:14px;
+    padding:16px 17px;cursor:pointer;
+  }
+  .sa-mobile-card.sa-row-selected{border-color:var(--gold);}
+  .sa-mobile-card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:12px;}
+  .sa-mobile-card-name{font-family:var(--font-display);font-size:15px;font-weight:600;color:var(--text);}
+  .sa-mobile-card-sector{font-size:11px;color:var(--text-faint);margin-top:2px;}
+  .sa-mobile-card-price{font-family:var(--font-mono);font-size:19px;font-weight:600;color:var(--gold);text-align:right;}
+  .sa-mobile-card-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px;}
+  .sa-mobile-metric{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 9px;}
+  .sa-mobile-metric .l{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-faint);margin-bottom:3px;}
+  .sa-mobile-metric .v{font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--text);}
+  .sa-mobile-card-footer{display:flex;justify-content:space-between;align-items:center;}
+  .sa-mobile-dots{display:flex;justify-content:center;gap:6px;margin-top:2px;}
+  .sa-mobile-dot{width:6px;height:6px;border-radius:50%;background:var(--border);transition:background .15s ease, width .15s ease;}
+  .sa-mobile-dot.active{background:var(--gold);width:16px;border-radius:3px;}
+  .sa-mobile-hint{text-align:center;font-size:10.5px;color:var(--text-faint);margin:-6px 0 12px;}
+  .sa-mobile-pagination{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:8px;}
 
   /* Frozen first column (Name/Symbol) — stays put while the rest of a
      wide table scrolls horizontally. It's the leftmost column so its
@@ -1093,8 +1196,10 @@
 
     <div class="table-toolbar">
       <div class="left-group">
-        <input type="text" class="filter-input" id="stockAnalysisFilter" placeholder="Filter (name, sector, buy/hold, any value)...">
-        <button class="btn" id="btnStockAnalysisColumns" title="Choose which columns are shown">Columns</button>
+        <div class="sa-search-wrap">
+          <input type="text" class="filter-input" id="stockAnalysisFilter" placeholder="Search by name, sector, buy/hold...">
+        </div>
+        <button class="btn" id="btnStockAnalysisColumns" title="Choose which columns are shown">☰ Columns</button>
         <button class="btn btn-ghost" id="btnStockAnalysisHidden" title="Show/restore stocks you've removed from this tab" style="display:none">Hidden (0)</button>
         <button class="btn" id="btnImportScreener">Import Screener Data</button>
         <input type="file" id="importScreenerFile" accept=".xlsx,.xls">
@@ -1119,9 +1224,9 @@
     <div class="table-scroll">
       <table class="data-table">
         <colgroup>
-          <col id="col-sa-name" style="width:150px">
+          <col id="col-sa-name" style="width:190px">
           <col id="col-sa-col-sector" style="width:120px"><col id="col-sa-col-ltp" style="width:90px">
-          <col id="col-sa-col-low52" style="width:90px"><col id="col-sa-col-high52" style="width:90px"><col id="col-sa-col-gainFromLow" style="width:95px"><col id="col-sa-col-dropFromHigh" style="width:95px">
+          <col id="col-sa-col-range52" style="width:140px"><col id="col-sa-col-gainFromLow" style="width:95px"><col id="col-sa-col-dropFromHigh" style="width:95px">
           <col id="col-sa-col-eps" style="width:80px"><col id="col-sa-col-pe" style="width:80px"><col id="col-sa-col-industryPe" style="width:95px"><col id="col-sa-col-buyReco" style="width:90px">
           <col id="col-sa-col-bookValue" style="width:90px"><col id="col-sa-col-pb" style="width:80px"><col id="col-sa-col-industryPbv" style="width:95px"><col id="col-sa-col-yieldPct" style="width:90px">
           <col id="col-sa-col-dividendYield" style="width:80px"><col id="col-sa-col-roe" style="width:75px"><col id="col-sa-col-roce" style="width:75px"><col id="col-sa-col-roa" style="width:75px"><col id="col-sa-col-debtToEquity" style="width:110px">
@@ -1137,8 +1242,7 @@
             <th class="left sortable resizable sticky-col" data-col="name">Stock / Symbol<span class="col-resizer"></span></th>
             <th class="left sortable" data-col="sector">Sector</th>
             <th class="sortable" data-col="ltp">LTP</th>
-            <th class="sortable" data-col="low52">52W Low</th>
-            <th class="sortable" data-col="high52">52W High</th>
+            <th class="left sortable" data-col="range52">52W Low / High</th>
             <th class="sortable" data-col="gainFromLow">Gain from Low %</th>
             <th class="sortable" data-col="dropFromHigh">Drop from High %</th>
             <th class="sortable" data-col="eps">EPS</th>
@@ -1172,6 +1276,20 @@
         </thead>
         <tbody id="stockAnalysisTableBody"></tbody>
       </table>
+    </div>
+
+    <div class="sa-pagination" id="saPagination"></div>
+
+    <!-- Mobile/tablet: horizontal swipe-card deck, one stock per card.
+         Same underlying rows/data as the desktop table above — see
+         renderStockAnalysisMobileDeck() in app.js. Desktop table and
+         this deck are mutually exclusive via the max-width:700px CSS
+         rule, never both rendered visibly at once. -->
+    <div class="sa-mobile-deck">
+      <div class="sa-mobile-scroller" id="saMobileScroller"></div>
+      <div class="sa-mobile-dots" id="saMobileDots"></div>
+      <p class="sa-mobile-hint">Swipe to browse holdings</p>
+      <div class="sa-mobile-pagination" id="saMobilePagination"></div>
     </div>
 
     <div class="sa-detail-panel" id="saDetailPanel"></div>
