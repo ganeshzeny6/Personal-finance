@@ -276,7 +276,7 @@
   #panel-debt table.data-table{min-width:1615px;}
   #panel-mf table.data-table{min-width:1400px;}
   #panel-gold table.data-table{min-width:1295px;}
-  #panel-stockanalysis table.data-table{min-width:2350px;}
+  #panel-stockanalysis table.data-table{min-width:2395px;}
 
   /* Stock Analysis: Buy recommendation badge + Financial-sector P/B
      highlight bands (green < 1, yellow < 1.5, orange < 2 — strongest
@@ -1043,8 +1043,9 @@
 
     <div class="table-toolbar">
       <div class="left-group">
-        <input type="text" class="filter-input" id="stockAnalysisFilter" placeholder="Filter...">
+        <input type="text" class="filter-input" id="stockAnalysisFilter" placeholder="Filter (name, sector, buy/hold, any value)...">
         <button class="btn" id="btnStockAnalysisColumns" title="Choose which columns are shown">Columns</button>
+        <button class="btn btn-ghost" id="btnStockAnalysisHidden" title="Show/restore stocks you've removed from this tab" style="display:none">Hidden (0)</button>
         <button class="btn" id="btnImportScreener">Import Screener Data</button>
         <input type="file" id="importScreenerFile" accept=".xlsx,.xls">
         <span class="status-tag" id="screenerImportStatus"></span>
@@ -1076,6 +1077,7 @@
           <col id="col-sa-col-dividendYield" style="width:80px"><col id="col-sa-col-roe" style="width:75px"><col id="col-sa-col-roce" style="width:75px"><col id="col-sa-col-debtToEquity" style="width:105px">
           <col id="col-sa-col-promoterHolding" style="width:105px"><col id="col-sa-col-epsGrowth3y" style="width:100px"><col id="col-sa-col-epsGrowth5y" style="width:100px"><col id="col-sa-col-salesGrowth5y" style="width:100px">
           <col id="col-sa-col-qtrProfitVar" style="width:105px"><col id="col-sa-col-qtrSalesVar" style="width:125px">
+          <col style="width:45px">
         </colgroup>
         <thead>
           <tr>
@@ -1104,6 +1106,7 @@
             <th class="sortable" data-col="salesGrowth5y">Sales Gr. 5Y %</th>
             <th class="sortable" data-col="qtrProfitVar">Qtr Profit Var %</th>
             <th class="sortable" data-col="qtrSalesVar">Qtr Sales Var %</th>
+            <th class="row-actions">—</th>
           </tr>
         </thead>
         <tbody id="stockAnalysisTableBody"></tbody>
@@ -1124,6 +1127,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-08-27-7"></script>
+<script src="app.js?v=2026-08-27-9"></script>
 </body>
 </html>

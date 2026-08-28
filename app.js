@@ -123,6 +123,14 @@ function blankState() {
     // array means every column is shown. "name" (Stock/Symbol) can
     // never be hidden since it's the row's sticky identifier.
     stockAnalysisHiddenCols: [],
+    // Stock Analysis tab: names (uppercased, trimmed — matches the
+    // Equity holding's `name`) of stocks the person has removed from
+    // this tab's view. This only affects Stock Analysis — the actual
+    // Equity holding is untouched and still shows up normally on the
+    // Equity tab, since it's driven by Zerodha import and shouldn't be
+    // deletable from a read-only analysis view. Restorable any time via
+    // the "Hidden (N)" button next to Columns.
+    stockAnalysisExcludedNames: [],
     lastSaved: null,
     lastBackup: null,
     // When true, Quantity/Units and Average Price/Invested fields on
@@ -1936,7 +1944,17 @@ function fmtOrDash(v, decimals = 2, suffix = "") {
 }
 
 function stockAnalysisGetSearchText(row, screener, d) {
-  return [row.name, row.sector, d.eps, d.pe, d.industryPe, d.bookValue, d.pb].join(" ");
+  return [
+    row.name, row.sector, d.ltp,
+    d.low52, d.high52, d.gainFromLow, d.dropFromHigh,
+    d.eps, d.pe, d.industryPe,
+    d.buyReco === null ? "" : (d.buyReco ? "Buy" : "Hold"),
+    d.bookValue, d.pb, d.industryPbv,
+    d.yieldPct, d.dividendYield, d.roe, d.roce,
+    d.debtToEquity, d.promoterHolding,
+    d.epsGrowth3y, d.epsGrowth5y, d.salesGrowth5y,
+    d.qtrProfitVar, d.qtrSalesVar
+  ].join(" ");
 }
 
 function stockAnalysisGetSortValue(d, col) {
@@ -1994,12 +2012,28 @@ const STOCK_ANALYSIS_COLUMNS = [
 // each <col> in the Stock Analysis <colgroup> — this keeps table
 // structure/widths intact for the columns that stay visible, unlike
 // `display:none` on individual cells which would misalign every row.
+// Shows/hides whole columns. Earlier this toggled `visibility: collapse`
+// on each <col>, but that CSS value is unreliably implemented for table
+// columns across browsers (Chrome in particular often fails to actually
+// reclaim the column's width, leaving a blank gap where the "hidden"
+// column used to be) — so instead this injects real `display: none`
+// rules targeting the exact <th data-col="..."> and <td data-label="...">
+// elements for each hidden column, which every browser handles
+// correctly and which also fully reclaims the width even under
+// table-layout:fixed.
+let stockAnalysisColStyleEl = null;
 function applyStockAnalysisColumnVisibility() {
+  if (!stockAnalysisColStyleEl) {
+    stockAnalysisColStyleEl = document.createElement("style");
+    stockAnalysisColStyleEl.id = "stockAnalysisColStyle";
+    document.head.appendChild(stockAnalysisColStyleEl);
+  }
   const hidden = new Set(state.stockAnalysisHiddenCols || []);
-  STOCK_ANALYSIS_COLUMNS.forEach(col => {
-    const el = document.getElementById("col-sa-col-" + col.key);
-    if (el) el.style.visibility = hidden.has(col.key) ? "collapse" : "visible";
-  });
+  const rules = STOCK_ANALYSIS_COLUMNS
+    .filter(col => hidden.has(col.key))
+    .map(col => `#panel-stockanalysis table.data-table th[data-col="${col.key}"], #panel-stockanalysis table.data-table td[data-label="${col.label}"] { display: none !important; }`)
+    .join("\n");
+  stockAnalysisColStyleEl.textContent = rules;
 }
 
 function openStockAnalysisColumnsModal() {
@@ -2044,6 +2078,60 @@ function openStockAnalysisColumnsModal() {
 
 document.getElementById("btnStockAnalysisColumns").addEventListener("click", openStockAnalysisColumnsModal);
 
+// Shows/hides the "Hidden (N)" toolbar button and keeps its count
+// current — called on every renderStockAnalysis() so it can never go
+// stale (e.g. after a restore from the modal below).
+function updateStockAnalysisHiddenButton() {
+  const btn = document.getElementById("btnStockAnalysisHidden");
+  if (!btn) return;
+  const n = (state.stockAnalysisExcludedNames || []).length;
+  btn.style.display = n > 0 ? "" : "none";
+  btn.textContent = `Hidden (${n})`;
+}
+
+// Lets the person restore stocks previously removed from Stock
+// Analysis via the row ✕ button. Mirrors openStockAnalysisColumnsModal()'s
+// checkbox-list pattern; unlike that one, an empty result here just
+// means "nothing hidden" rather than "everything hidden", so there's
+// no separate Select All/None shortcut.
+function openStockAnalysisHiddenModal() {
+  const excludedNames = state.stockAnalysisExcludedNames || [];
+  if (excludedNames.length === 0) return;
+  // Map back to the Equity holding's actual display name (excludedNames
+  // stores the uppercased match key) so the list reads naturally.
+  const nameFor = (key) => {
+    const match = state.equity.find(r => (r.name || "").trim().toUpperCase() === key);
+    return match ? match.name : key;
+  };
+  const checkboxesHTML = excludedNames.map(key => `
+    <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;">
+      <input type="checkbox" data-hidden-key="${escapeAttr(key)}">
+      <span>${escapeAttr(nameFor(key))}</span>
+    </label>
+  `).join("");
+  const html = `
+    <p class="settings-note" style="margin-top:0">These stocks are still on your Equity tab — they're only hidden from Stock Analysis. Check any you'd like to bring back, then click Restore.</p>
+    <div id="saHiddenList">${checkboxesHTML}</div>
+  `;
+  openModal("Stock Analysis — Hidden Stocks", html, [
+    { label: "Close", onClick: closeModal },
+    {
+      label: "Restore Checked", primary: true, onClick: () => {
+        const checked = new Set(
+          Array.from(document.querySelectorAll('#saHiddenList input[type=checkbox]:checked')).map(i => i.dataset.hiddenKey)
+        );
+        if (checked.size === 0) { closeModal(); return; }
+        state.stockAnalysisExcludedNames = excludedNames.filter(k => !checked.has(k));
+        saveState();
+        renderStockAnalysis();
+        closeModal();
+      }
+    }
+  ]);
+}
+
+document.getElementById("btnStockAnalysisHidden").addEventListener("click", openStockAnalysisHiddenModal);
+
 function renderStockAnalysis() {
   const tbody = document.getElementById("stockAnalysisTableBody");
   if (!tbody) return;
@@ -2056,6 +2144,14 @@ function renderStockAnalysis() {
     d._name = row.name || "";
     return { row, screener, d };
   });
+
+  // Rows the person has explicitly removed from this tab (see the
+  // ✕ button below and the "Hidden (N)" restore control) — filtered
+  // out here, after the join/derive step above, so a later restore
+  // doesn't need to recompute anything.
+  const excluded = new Set(state.stockAnalysisExcludedNames || []);
+  rows = rows.filter(({ row }) => !excluded.has((row.name || "").trim().toUpperCase()));
+  updateStockAnalysisHiddenButton();
 
   const ui = tableUI.stockanalysis;
   if (ui.filter) {
@@ -2077,11 +2173,11 @@ function renderStockAnalysis() {
 
   tbody.innerHTML = "";
   if (state.equity.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="25">No Equity holdings yet — add stocks on the Equity tab first.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="26">No Equity holdings yet — add stocks on the Equity tab first.</td></tr>';
     return;
   }
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="25">No holdings match this filter.</td></tr>';
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="26">${excluded.size > 0 ? 'No holdings match this filter (some may be hidden — see "Hidden" above).' : 'No holdings match this filter.'}</td></tr>`;
     return;
   }
 
@@ -2118,7 +2214,18 @@ function renderStockAnalysis() {
       <td data-label="Sales Gr. 5Y %">${fmtOrDash(d.salesGrowth5y, 1, "%")}</td>
       <td data-label="Qtr Profit Var %">${fmtOrDash(d.qtrProfitVar, 1, "%")}</td>
       <td data-label="Qtr Sales Var %">${fmtOrDash(d.qtrSalesVar, 1, "%")}</td>
+      <td class="row-actions"><button class="icon-btn" title="Remove from Stock Analysis (keeps the Equity holding)">✕</button></td>
     `;
+    tr.querySelector(".icon-btn").addEventListener("click", () => {
+      const key = (row.name || "").trim().toUpperCase();
+      if (!key) return;
+      if (!state.stockAnalysisExcludedNames) state.stockAnalysisExcludedNames = [];
+      if (!state.stockAnalysisExcludedNames.includes(key)) {
+        state.stockAnalysisExcludedNames.push(key);
+        saveState();
+        renderStockAnalysis();
+      }
+    });
     tbody.appendChild(tr);
   });
 }
