@@ -291,6 +291,54 @@
   td.pb-yellow{background:var(--warning-soft);color:var(--warning);font-weight:600;}
   td.pb-orange{background:#e0893322;color:#e08933;font-weight:600;}
 
+  /* ============================================================
+     STOCK ANALYSIS — redesigned summary cards, row selection and
+     detail panel. Scoped entirely to #panel-stockanalysis so no
+     other tab's table/card styling is affected. Reuses existing
+     tokens (--surface, --gold, --positive/--negative, font vars)
+     and existing classes (.buy-badge, .pb-green/yellow/orange,
+     .stat-card pattern) rather than inventing a new visual system.
+     ============================================================ */
+  .sa-summary-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(150px,1fr));
+    gap:10px;
+    margin-bottom:18px;
+  }
+  .sa-stat-card{
+    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+    padding:12px 14px;
+  }
+  .sa-stat-card .sa-stat-label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);margin-bottom:6px;}
+  .sa-stat-card .sa-stat-value{font-family:var(--font-mono);font-size:19px;font-weight:600;color:var(--text);}
+  .sa-stat-card .sa-stat-sub{font-family:var(--font-mono);font-size:11px;color:var(--text-faint);margin-left:4px;font-weight:500;}
+
+  #panel-stockanalysis tbody tr{cursor:pointer;}
+  #panel-stockanalysis tbody tr.sa-row-selected{background:var(--gold-soft);}
+  #panel-stockanalysis tbody tr.sa-row-selected td.sticky-col{background:var(--gold-soft);}
+  #panel-stockanalysis tbody tr.sa-row-selected:hover{background:var(--gold-soft);}
+
+  .sa-detail-panel{
+    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+    padding:18px 20px;margin-top:16px;
+  }
+  .sa-detail-empty{color:var(--text-faint);font-size:12.5px;text-align:center;padding:20px 0;}
+  .sa-detail-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px;flex-wrap:wrap;}
+  .sa-detail-name{font-family:var(--font-display);font-size:16px;font-weight:600;color:var(--text);}
+  .sa-detail-meta{font-size:12px;color:var(--text-faint);margin-top:3px;}
+  .sa-detail-price{font-family:var(--font-mono);font-size:22px;font-weight:600;color:var(--gold);white-space:nowrap;}
+  .sa-detail-sections{display:grid;grid-template-columns:repeat(auto-fit, minmax(220px,1fr));gap:18px;}
+  .sa-detail-section-title{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);margin-bottom:8px;}
+  .sa-detail-row{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;padding:6px 0;border-bottom:1px solid var(--border);}
+  .sa-detail-row:last-child{border-bottom:none;}
+  .sa-detail-row .k{color:var(--text-muted);}
+  .sa-detail-row .v{font-family:var(--font-mono);color:var(--text);font-weight:500;}
+
+  @media (max-width:700px){
+    .sa-detail-sections{grid-template-columns:1fr;}
+    .sa-detail-panel{padding:14px 16px;}
+  }
+
   /* Frozen first column (Name/Symbol) — stays put while the rest of a
      wide table scrolls horizontally. It's the leftmost column so its
      sticky offset is always 0, no matter how it's resized. */
@@ -1039,7 +1087,9 @@
   <!-- ============ STOCK ANALYSIS ============ -->
   <section class="panel" id="panel-stockanalysis">
     <h2 class="section-title">Stock Analysis</h2>
-    <p class="section-sub">Fundamentals for your Equity holdings — Stock/Symbol, Sector and LTP come straight from the Equity tab; everything else is joined in from imported Screener data by Symbol. PE, P/B and Yield are always calculated here, never taken pre-computed from the source file.</p>
+    <p class="section-sub">Fundamentals for your Equity holdings — Stock/Symbol, Sector and LTP come straight from the Equity tab; everything else is joined in from imported Screener data by Symbol. PE, P/B and Yield are always calculated here, never taken pre-computed from the source file. ROA is shown for Financial-sector stocks only.</p>
+
+    <div class="sa-summary-grid" id="saSummaryGrid"></div>
 
     <div class="table-toolbar">
       <div class="left-group">
@@ -1123,7 +1173,10 @@
         <tbody id="stockAnalysisTableBody"></tbody>
       </table>
     </div>
-    <p class="settings-note">"Import Screener Data" reads an .xlsx with a header row (symbol, book_value, eps, industry_pe, roe, roce, etc. — same column names your Screener export uses) and matches each row to an Equity holding by Symbol. Re-importing replaces the whole Screener dataset.</p>
+
+    <div class="sa-detail-panel" id="saDetailPanel"></div>
+
+    <p class="settings-note">"Import Screener Data" reads an .xlsx with a header row (symbol, book_value, eps, industry_pe, roe, roce, etc. — same column names your Screener export uses) and matches each row to an Equity holding by Symbol. Re-importing replaces the whole Screener dataset. Click any row in the table above to see its full breakdown here.</p>
   </section>
 
 </main>
@@ -1138,6 +1191,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-08-28-2"></script>
+<script src="app.js?v=2026-08-28-3"></script>
 </body>
 </html>

@@ -47,6 +47,23 @@ const DEFAULT_GOOGLE_DRIVE_API_KEY = "AIzaSyB0waRuXkp9Bh1k0CcmSea-BXcM6yY8WQs";
 
 const DEFAULT_IDEAL = { cash: 5, debt: 30, mf: 30, equity: 25, gold: 10 };
 
+// Stock Analysis: columns hidden by default on a brand-new install, so
+// the table opens compact/scannable instead of showing all 32 fields
+// at once. Only ever applied via blankState() below — an existing
+// saved stockAnalysisHiddenCols (even an empty array from before this
+// change) always wins, so this never resets anyone's own Columns
+// picker choices. Everything not listed here (Sector, LTP, 52W Low/
+// High, PE, Industry PE, Buy Reco, P/B, ROE, ROCE, Dividend Yield,
+// ROA) stays visible by default; ROA itself is always joined/derived
+// but only ever displayed for Financial-sector rows (see
+// renderStockAnalysis()) — everyone else shows a dash there.
+const STOCK_ANALYSIS_DEFAULT_HIDDEN_COLS = [
+  "gainFromLow", "dropFromHigh", "eps", "bookValue", "industryPbv", "yieldPct",
+  "debtToEquity", "promoterHolding", "epsGrowth3y", "epsGrowth5y", "salesGrowth5y",
+  "qtrProfitVar", "qtrSalesVar", "faceValue", "marketCap", "marketCap5y",
+  "intCoverage", "fcfPrevAnn", "profitVar3y", "profitVar5y"
+];
+
 const ASSET_COLORS = {
   cash:   "#6f93c9",
   debt:   "#4bbf9c",
@@ -122,7 +139,7 @@ function blankState() {
     // the "Columns" picker (data-col values, e.g. "roe", "pb"). Empty
     // array means every column is shown. "name" (Stock/Symbol) can
     // never be hidden since it's the row's sticky identifier.
-    stockAnalysisHiddenCols: [],
+    stockAnalysisHiddenCols: [...STOCK_ANALYSIS_DEFAULT_HIDDEN_COLS],
     // Stock Analysis tab: names (uppercased, trimmed — matches the
     // Equity holding's `name`) of stocks the person has removed from
     // this tab's view. This only affects Stock Analysis — the actual
@@ -1897,11 +1914,18 @@ function stockAnalysisDerived(equityRow, screener) {
 
   const buyReco = (pe !== null && industryPe !== null) ? (pe < industryPe) : null;
 
+  // Shared "is this a Financial-sector holding" check — drives both
+  // the existing P/B highlight bands below and the ROA column, which
+  // is only ever shown for Financial-sector rows (ROA is far more
+  // meaningful for banks/NBFCs than for most other sectors, so it's
+  // suppressed elsewhere rather than showing a number without context).
+  const isFinancial = /financ/i.test(sector);
+
   // Financial-sector P/B highlight: strongest applicable band wins
   // (checked from tightest threshold outward), and only applies when
   // the holding's own Sector (from the Equity tab) looks Financial.
   let pbClass = "";
-  if (pb !== null && /financ/i.test(sector)) {
+  if (pb !== null && isFinancial) {
     if (pb < 1) pbClass = "pb-green";
     else if (pb < 1.5) pbClass = "pb-yellow";
     else if (pb < 2) pbClass = "pb-orange";
@@ -1911,7 +1935,7 @@ function stockAnalysisDerived(equityRow, screener) {
   const dropFromHigh = (hl.high !== null && hl.high > 0 && ltp > 0) ? ((hl.high - ltp) / hl.high) * 100 : null;
 
   return {
-    ltp, sector,
+    ltp, sector, isFinancial,
     low52: hl.low, high52: hl.high, gainFromLow, dropFromHigh,
     eps, pe, industryPe, buyReco,
     bookValue, pb, pbClass, industryPbv,
@@ -2163,6 +2187,126 @@ function openStockAnalysisHiddenModal() {
 
 document.getElementById("btnStockAnalysisHidden").addEventListener("click", openStockAnalysisHiddenModal);
 
+// Which row's detail panel is currently expanded below the table.
+// Keyed the same way row matching already works elsewhere (trimmed,
+// uppercased name) — deliberately NOT persisted to state, since it's
+// pure UI/view state, not portfolio data.
+let stockAnalysisSelectedKey = null;
+
+// Aggregate stats shown in the summary cards above the table. Computed
+// over every currently-visible (non-excluded) Equity holding — i.e.
+// unaffected by the search box, so the cards always describe the
+// whole tracked set, not just what's currently filtered into view.
+function computeStockAnalysisSummary(joinedRows) {
+  const total = joinedRows.length;
+  let buyCount = 0, highRoeCount = 0, lowPbFinancialCount = 0, screenerMatched = 0;
+  joinedRows.forEach(({ screener, d }) => {
+    if (screener) screenerMatched++;
+    if (d.buyReco === true) buyCount++;
+    if (d.roe !== null && d.roe > 15) highRoeCount++;
+    if (d.isFinancial && d.pb !== null && d.pb < 1) lowPbFinancialCount++;
+  });
+  return { total, buyCount, highRoeCount, lowPbFinancialCount, screenerMatched };
+}
+
+function renderStockAnalysisSummary(joinedRows) {
+  const el = document.getElementById("saSummaryGrid");
+  if (!el) return;
+  const s = computeStockAnalysisSummary(joinedRows);
+  const pct = (n) => s.total > 0 ? fmtNum((n / s.total) * 100, 0) + "%" : "0%";
+  el.innerHTML = `
+    <div class="sa-stat-card">
+      <div class="sa-stat-label">Total Stocks</div>
+      <div class="sa-stat-value">${s.total}</div>
+    </div>
+    <div class="sa-stat-card">
+      <div class="sa-stat-label">Buy Recommendations</div>
+      <div class="sa-stat-value pos">${s.buyCount}<span class="sa-stat-sub">${pct(s.buyCount)}</span></div>
+    </div>
+    <div class="sa-stat-card">
+      <div class="sa-stat-label">High ROE &gt; 15%</div>
+      <div class="sa-stat-value">${s.highRoeCount}<span class="sa-stat-sub">${pct(s.highRoeCount)}</span></div>
+    </div>
+    <div class="sa-stat-card">
+      <div class="sa-stat-label">Low P/B (Financial)</div>
+      <div class="sa-stat-value pos">${s.lowPbFinancialCount}<span class="sa-stat-sub">${pct(s.lowPbFinancialCount)}</span></div>
+    </div>
+    <div class="sa-stat-card">
+      <div class="sa-stat-label">Screener Coverage</div>
+      <div class="sa-stat-value">${s.screenerMatched}<span class="sa-stat-sub">/ ${s.total}</span></div>
+    </div>
+  `;
+}
+
+// Renders the expandable detail panel for whichever row is currently
+// selected (stockAnalysisSelectedKey), defaulting to the first visible
+// row so the panel is never blank when holdings exist. Every figure
+// here is read straight from the same `d` (stockAnalysisDerived()
+// output) the table row already used — nothing recalculated
+// differently, per the "no duplicate calculations" requirement.
+function renderStockAnalysisDetailPanel(joinedRows) {
+  const panel = document.getElementById("saDetailPanel");
+  if (!panel) return;
+  if (joinedRows.length === 0) {
+    panel.innerHTML = '<div class="sa-detail-empty">No Equity holdings to show — add stocks on the Equity tab, then import Screener Data for fundamentals.</div>';
+    return;
+  }
+  let entry = joinedRows.find(({ row }) => (row.name || "").trim().toUpperCase() === stockAnalysisSelectedKey);
+  if (!entry) entry = joinedRows[0];
+  stockAnalysisSelectedKey = (entry.row.name || "").trim().toUpperCase();
+
+  const { row, d } = entry;
+  const buyHTML = d.buyReco === null
+    ? '<span class="muted">—</span>'
+    : d.buyReco ? '<span class="buy-badge buy">Buy</span>' : '<span class="buy-badge no">Hold</span>';
+  const roaRow = d.isFinancial
+    ? `<div class="sa-detail-row"><span class="k">ROA</span><span class="v">${fmtOrDash(d.roa, 1, "%")}</span></div>`
+    : "";
+
+  panel.innerHTML = `
+    <div class="sa-detail-head">
+      <div>
+        <div class="sa-detail-name">${escapeAttr(row.name || "(unnamed)")}</div>
+        <div class="sa-detail-meta">${escapeAttr(d.sector || "Sector not set")}</div>
+      </div>
+      <div style="text-align:right;">
+        <div class="sa-detail-price">${fmtNum(d.ltp)}</div>
+        <div class="sa-detail-meta">${buyHTML}</div>
+      </div>
+    </div>
+    <div class="sa-detail-sections">
+      <div>
+        <div class="sa-detail-section-title">Valuation</div>
+        <div class="sa-detail-row"><span class="k">PE / Industry PE</span><span class="v">${fmtOrDash(d.pe)} / ${fmtOrDash(d.industryPe)}</span></div>
+        <div class="sa-detail-row"><span class="k">P/B / Industry P/B</span><span class="v ${d.pbClass}">${fmtOrDash(d.pb)} / ${fmtOrDash(d.industryPbv)}</span></div>
+        <div class="sa-detail-row"><span class="k">Book Value</span><span class="v">${fmtOrDash(d.bookValue)}</span></div>
+        <div class="sa-detail-row"><span class="k">52W Low / High</span><span class="v">${fmtOrDash(d.low52)} / ${fmtOrDash(d.high52)}</span></div>
+      </div>
+      <div>
+        <div class="sa-detail-section-title">Financial Health</div>
+        <div class="sa-detail-row"><span class="k">ROE</span><span class="v">${fmtOrDash(d.roe, 1, "%")}</span></div>
+        <div class="sa-detail-row"><span class="k">ROCE</span><span class="v">${fmtOrDash(d.roce, 1, "%")}</span></div>
+        ${roaRow}
+        <div class="sa-detail-row"><span class="k">Debt to Equity</span><span class="v">${fmtOrDash(d.debtToEquity)}</span></div>
+        <div class="sa-detail-row"><span class="k">Promoter Holding</span><span class="v">${fmtOrDash(d.promoterHolding, 1, "%")}</span></div>
+      </div>
+      <div>
+        <div class="sa-detail-section-title">Growth</div>
+        <div class="sa-detail-row"><span class="k">EPS Growth (3Y / 5Y)</span><span class="v">${fmtOrDash(d.epsGrowth3y, 1, "%")} / ${fmtOrDash(d.epsGrowth5y, 1, "%")}</span></div>
+        <div class="sa-detail-row"><span class="k">Sales Growth (5Y)</span><span class="v">${fmtOrDash(d.salesGrowth5y, 1, "%")}</span></div>
+        <div class="sa-detail-row"><span class="k">Qtr Profit / Sales Growth</span><span class="v">${fmtOrDash(d.qtrProfitVar, 1, "%")} / ${fmtOrDash(d.qtrSalesVar, 1, "%")}</span></div>
+      </div>
+      <div>
+        <div class="sa-detail-section-title">Dividend &amp; Key Fundamentals</div>
+        <div class="sa-detail-row"><span class="k">Yield % (calculated)</span><span class="v">${fmtOrDash(d.yieldPct, 2, "%")}</span></div>
+        <div class="sa-detail-row"><span class="k">Dividend Yield</span><span class="v">${fmtOrDash(d.dividendYield, 2, "%")}</span></div>
+        <div class="sa-detail-row"><span class="k">Face Value</span><span class="v">${fmtOrDash(d.faceValue)}</span></div>
+        <div class="sa-detail-row"><span class="k">Market Cap</span><span class="v">${fmtOrDash(d.marketCap, 0)}</span></div>
+      </div>
+    </div>
+  `;
+}
+
 function renderStockAnalysis() {
   const tbody = document.getElementById("stockAnalysisTableBody");
   if (!tbody) return;
@@ -2183,6 +2327,14 @@ function renderStockAnalysis() {
   const excluded = new Set(state.stockAnalysisExcludedNames || []);
   rows = rows.filter(({ row }) => !excluded.has((row.name || "").trim().toUpperCase()));
   updateStockAnalysisHiddenButton();
+
+  // Summary cards and the detail panel always describe this full
+  // (excluded-stocks-removed, but NOT search-filtered) set — so
+  // typing in the filter box narrows the table without the cards
+  // above it jumping around, and the detail panel can keep showing
+  // whatever's selected even if a search term would hide its row.
+  renderStockAnalysisSummary(rows);
+  renderStockAnalysisDetailPanel(rows);
 
   const ui = tableUI.stockanalysis;
   if (ui.filter) {
@@ -2214,6 +2366,8 @@ function renderStockAnalysis() {
 
   rows.forEach(({ row, d }) => {
     const tr = document.createElement("tr");
+    const rowKey = (row.name || "").trim().toUpperCase();
+    if (rowKey && rowKey === stockAnalysisSelectedKey) tr.classList.add("sa-row-selected");
     const buyHTML = d.buyReco === null
       ? '<span class="muted">—</span>'
       : d.buyReco
@@ -2238,7 +2392,7 @@ function renderStockAnalysis() {
       <td data-label="Dividend Yield">${fmtOrDash(d.dividendYield, 2, "%")}</td>
       <td data-label="ROE">${fmtOrDash(d.roe, 1, "%")}</td>
       <td data-label="ROCE">${fmtOrDash(d.roce, 1, "%")}</td>
-      <td data-label="ROA">${fmtOrDash(d.roa, 1, "%")}</td>
+      <td data-label="ROA">${d.isFinancial ? fmtOrDash(d.roa, 1, "%") : '<span class="muted">—</span>'}</td>
       <td data-label="Debt to Equity">${fmtOrDash(d.debtToEquity)}</td>
       <td data-label="Promoter Holding">${fmtOrDash(d.promoterHolding, 1, "%")}</td>
       <td data-label="EPS Growth (3Y)">${fmtOrDash(d.epsGrowth3y, 1, "%")}</td>
@@ -2255,7 +2409,8 @@ function renderStockAnalysis() {
       <td data-label="Profit Growth (5Y)">${fmtOrDash(d.profitVar5y, 1, "%")}</td>
       <td class="row-actions"><button class="icon-btn" title="Remove from Stock Analysis (keeps the Equity holding)">✕</button></td>
     `;
-    tr.querySelector(".icon-btn").addEventListener("click", () => {
+    tr.querySelector(".icon-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
       const key = (row.name || "").trim().toUpperCase();
       if (!key) return;
       if (!state.stockAnalysisExcludedNames) state.stockAnalysisExcludedNames = [];
@@ -2264,6 +2419,14 @@ function renderStockAnalysis() {
         saveState();
         renderStockAnalysis();
       }
+    });
+    tr.addEventListener("click", () => {
+      if (!rowKey) return;
+      if (stockAnalysisSelectedKey === rowKey) return;
+      stockAnalysisSelectedKey = rowKey;
+      tbody.querySelectorAll("tr.sa-row-selected").forEach(r => r.classList.remove("sa-row-selected"));
+      tr.classList.add("sa-row-selected");
+      renderStockAnalysisDetailPanel(rows);
     });
     tbody.appendChild(tr);
   });
