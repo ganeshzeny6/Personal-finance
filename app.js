@@ -148,6 +148,17 @@ function blankState() {
     // deletable from a read-only analysis view. Restorable any time via
     // the "Hidden (N)" button next to Columns.
     stockAnalysisExcludedNames: [],
+    // Banking Metrics (manual, free-tier workflow): quarterly CRAR/NIM/
+    // GNPA/NNPA/Cost-to-Income/CASA for Financial-sector holdings.
+    // Keyed by uppercased Stock/Symbol -> { history: [ {quarterLabel,
+    // quarterKey, reportingDate, metrics, savedAt}, ... ] }, newest
+    // quarter first. Nothing here is fetched automatically — every
+    // record is a JSON reply the person researched themselves (in
+    // their own claude.ai chat) and pasted back in via the Banking
+    // Metrics modal; see openBankingMetricsModal() below. Saved the
+    // same way as everything else in `state` (saveState() ->
+    // localStorage / Firestore), no separate API or billing involved.
+    bankingMetrics: {},
     lastSaved: null,
     lastBackup: null,
     // When true, Quantity/Units and Average Price/Invested fields on
@@ -2346,6 +2357,7 @@ function renderStockAnalysisDetailPanel(joinedRows) {
         <div class="sa-detail-row"><span class="k">52W Low / High</span><span class="v">${fmtOrDash(d.low52)} / ${fmtOrDash(d.high52)}</span></div>
         <div class="sa-detail-row"><span class="k">Recommendation</span><span class="v">${buyHTML}</span></div>
       </div>
+      ${renderBankingMetricsSectionHTML(row, d)}
     </div>
   `;
 }
@@ -2360,6 +2372,303 @@ function pctDiffHTML(value, industryValue) {
   const cls = diff <= 0 ? "pos" : "neg";
   const sign = diff >= 0 ? "+" : "";
   return `<span class="${cls}">${sign}${fmtNum(diff, 1)}%</span>`;
+}
+
+/* ============================================================
+   BANKING METRICS (manual, free-tier workflow)
+   No API key, no Cloud Function, no billing — this generates a
+   research prompt for the person to paste into their own claude.ai
+   chat (free or subscription, whichever they already have), and
+   saves whatever JSON reply they paste back in, after validating
+   its shape. Storage rides the same state/saveState() mechanism as
+   everything else in the app (localStorage, and Firestore if signed
+   in) — no separate backend.
+   ============================================================ */
+
+const BANKING_METRICS_FIELDS = [
+  { key: "crar", label: "CRAR / Capital Adequacy" },
+  { key: "nim", label: "NIM" },
+  { key: "gnpa", label: "Gross NPA" },
+  { key: "nnpa", label: "Net NPA" },
+  { key: "costToIncome", label: "Cost to Income" },
+  { key: "casa", label: "CASA Ratio" }
+];
+
+// Same "is this a Financial-sector holding" test stockAnalysisDerived()
+// already uses for ROA/P-B highlighting — kept as one shared function
+// so the two can never quietly drift apart.
+function getFinancialSectorStocks() {
+  return state.equity.filter(row => /financ/i.test(row.sector || ""));
+}
+
+// The exact text the person copies into their own Claude chat. Asks
+// for strict JSON so it can be pasted straight back in and parsed —
+// the person never has to reformat anything by hand.
+function buildBankingMetricsPrompt(stock) {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  return `Research the MOST RECENT reported quarterly results for the Indian bank/financial company below and extract exactly six metrics.
+
+Company: ${stock.name}
+Today's date: ${todayStr}
+
+Metrics to find (different banks report these under different names — normalize to the fields below):
+1. crar — Capital Adequacy Ratio / CRAR / CAR (%)
+2. nim — Net Interest Margin / NIM (%)
+3. gnpa — Gross NPA / GNPA (%)
+4. nnpa — Net NPA / NNPA (%)
+5. costToIncome — Cost to Income Ratio (%)
+6. casa — CASA Ratio (%)
+
+Rules:
+- Use the LATEST quarter for which results have actually been reported. Do not guess or project a future quarter.
+- Prefer sources in this order: (1) the official quarterly results press release, (2) the official investor presentation, (3) the official company website or a regulatory (BSE/NSE/RBI) filing, (4) other reputable financial sources (e.g. Moneycontrol, Screener) only if none of the above are available.
+- Cross-check figures against more than one source where you reasonably can.
+- For EACH metric, cite the source you actually used: its name, its URL, and the exact reporting period as stated by that source.
+- Do NOT estimate, infer, or guess a value. If a metric cannot be reliably found for the latest reported quarter, set "value" to null and give a short "reason".
+- Respond with ONLY valid JSON — no other text, no markdown code fences — matching exactly this shape:
+
+{
+  "quarterLabel": "Q1 FY27",
+  "quarterKey": "FY2027-Q1",
+  "reportingDate": "YYYY-MM-DD",
+  "metrics": {
+    "crar": { "value": number_or_null, "unit": "%", "source": "string", "sourceUrl": "string", "reportedPeriod": "string", "confidence": "high|medium|low", "reason": "string, only if value is null" },
+    "nim": { "same shape as above": true },
+    "gnpa": { "same shape as above": true },
+    "nnpa": { "same shape as above": true },
+    "costToIncome": { "same shape as above": true },
+    "casa": { "same shape as above": true }
+  }
+}
+
+quarterKey format: "FY<year>-Q<1-4>" using Indian FY (Apr-Mar) — e.g. Jul-Sep 2026 is "FY2027-Q2".`;
+}
+
+// Modern Clipboard API with a legacy textarea+execCommand fallback,
+// so "Copy" still works on an older/locked-down browser.
+async function copyTextToClipboard(text) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (e) { /* fall through to legacy method */ }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Pulls the JSON object out of whatever the person pasted, tolerant
+// of a stray ```json fence or a little surrounding text (Claude's
+// chat reply sometimes wraps JSON in a code block even when asked
+// not to).
+function parseClaudeBankingJSON(raw) {
+  let cleaned = String(raw || "").trim()
+    .replace(/^```json/i, "").replace(/^```/, "").replace(/```$/, "").trim();
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+  if (firstBrace === -1 || lastBrace === -1) {
+    throw new Error("That doesn't look like JSON — make sure you pasted Claude's full reply, including the { } braces.");
+  }
+  cleaned = cleaned.slice(firstBrace, lastBrace + 1);
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {
+    throw new Error("Could not parse that as JSON: " + e.message);
+  }
+}
+
+// Deterministic sanity checks on top of whatever Claude said — this
+// app never trusts a pasted reply purely on its own say-so. Rejects
+// a malformed quarter key, a missing/invalid reporting date, a
+// future-dated reply (a common hallucination shape), or a metrics
+// object missing one of the six required fields.
+function validateBankingMetricsResult(parsed) {
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("Empty or invalid response.");
+  }
+  if (!/^FY\d{4}-Q[1-4]$/.test(parsed.quarterKey || "")) {
+    throw new Error(`Unexpected quarter format: "${parsed.quarterKey}". Expected something like "FY2027-Q1".`);
+  }
+  if (!parsed.quarterLabel) {
+    throw new Error("Missing quarterLabel.");
+  }
+  if (!parsed.reportingDate || isNaN(Date.parse(parsed.reportingDate))) {
+    throw new Error(`Unexpected reportingDate: "${parsed.reportingDate}".`);
+  }
+  if (new Date(parsed.reportingDate) > new Date()) {
+    throw new Error("Reporting date is in the future — this looks wrong, not saved.");
+  }
+  if (!parsed.metrics || typeof parsed.metrics !== "object") {
+    throw new Error('Missing "metrics" object.');
+  }
+  BANKING_METRICS_FIELDS.forEach(f => {
+    if (!(f.key in parsed.metrics)) throw new Error(`Missing metric field: "${f.key}".`);
+  });
+}
+
+function countBankingMetricsFound(metrics) {
+  const found = BANKING_METRICS_FIELDS.filter(f => {
+    const m = metrics[f.key];
+    return m && m.value !== null && m.value !== undefined;
+  }).length;
+  return `${found}/${BANKING_METRICS_FIELDS.length}`;
+}
+
+// Saves one validated quarter's record for a stock — replaces that
+// exact quarter if it's already there (e.g. re-pasting a corrected
+// answer), otherwise adds it, and keeps history sorted newest-first
+// so getLatestBankingMetrics() is a simple [0].
+function saveBankingMetricsForStock(symbolKey, parsed) {
+  if (!state.bankingMetrics) state.bankingMetrics = {};
+  if (!state.bankingMetrics[symbolKey]) state.bankingMetrics[symbolKey] = { history: [] };
+  const history = state.bankingMetrics[symbolKey].history;
+  const record = {
+    quarterLabel: parsed.quarterLabel,
+    quarterKey: parsed.quarterKey,
+    reportingDate: parsed.reportingDate,
+    metrics: parsed.metrics,
+    savedAt: new Date().toISOString()
+  };
+  const idx = history.findIndex(h => h.quarterKey === parsed.quarterKey);
+  if (idx >= 0) history[idx] = record; else history.push(record);
+  history.sort((a, b) => (a.quarterKey < b.quarterKey ? 1 : -1));
+  saveState();
+  renderStockAnalysis();
+}
+
+function getLatestBankingMetrics(symbolKey) {
+  const entry = state.bankingMetrics && state.bankingMetrics[symbolKey];
+  if (!entry || !entry.history || entry.history.length === 0) return null;
+  return entry.history[0];
+}
+
+// Builds one financial stock's block inside the modal: a "Copy
+// Research Prompt" button, a textarea to paste Claude's reply into,
+// and a "Save" button that validates + stores it. Every block is
+// independent, so the person can copy one stock's prompt, go answer
+// it, come back and save it, then move to the next — no need to do
+// all of them in one sitting.
+function bankingMetricsModalBlockHTML(row) {
+  const symbolKey = (row.name || "").trim().toUpperCase();
+  const latest = getLatestBankingMetrics(symbolKey);
+  const latestNote = latest
+    ? `Latest saved: ${escapeAttr(latest.quarterLabel)} (${countBankingMetricsFound(latest.metrics)} metrics)`
+    : "No data saved yet.";
+  return `
+    <div class="settings-field" style="border:1px solid var(--border);border-radius:10px;padding:12px 14px;">
+      <label style="margin-bottom:2px;">${escapeAttr(row.name)}</label>
+      <div class="settings-note" style="margin:0 0 8px;">${latestNote}</div>
+      <div class="settings-actions">
+        <button class="btn btn-sm" data-copy-symbol="${escapeAttr(symbolKey)}">📋 Copy Research Prompt</button>
+        <span class="status-tag" data-copy-status="${escapeAttr(symbolKey)}"></span>
+      </div>
+      <textarea data-paste-symbol="${escapeAttr(symbolKey)}" rows="3" placeholder="Paste Claude's JSON reply here..."
+        style="width:100%;margin-top:8px;font-family:var(--font-mono);font-size:11.5px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px;resize:vertical;"></textarea>
+      <div class="settings-actions" style="margin-top:6px;">
+        <button class="btn btn-sm btn-primary" data-save-symbol="${escapeAttr(symbolKey)}">Save</button>
+        <span class="status-tag" data-save-status="${escapeAttr(symbolKey)}"></span>
+      </div>
+    </div>
+  `;
+}
+
+function openBankingMetricsModal() {
+  const stocks = getFinancialSectorStocks();
+  if (stocks.length === 0) {
+    alert('No Financial-sector stocks found — set Sector to something containing "Financial" on the Equity tab first.');
+    return;
+  }
+  const html = `
+    <p class="settings-note" style="margin-top:0">For each stock: click "Copy Research Prompt", paste it into your own Claude chat (claude.ai — free or subscription, whatever you already use), copy Claude's reply, paste it into the box below, then Save. Nothing here calls a paid API or needs sign-in.</p>
+    ${stocks.map(bankingMetricsModalBlockHTML).join("")}
+  `;
+  openModal("Banking Metrics — Research &amp; Save", html, [
+    { label: "Done", primary: true, onClick: closeModal }
+  ]);
+
+  document.querySelectorAll("[data-copy-symbol]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const symbolKey = btn.dataset.copySymbol;
+      const stock = stocks.find(r => (r.name || "").trim().toUpperCase() === symbolKey);
+      const statusEl = document.querySelector(`[data-copy-status="${CSS.escape(symbolKey)}"]`);
+      const ok = await copyTextToClipboard(buildBankingMetricsPrompt(stock));
+      if (statusEl) statusEl.textContent = ok ? "Copied!" : "Could not copy — select the text yourself.";
+    });
+  });
+
+  document.querySelectorAll("[data-save-symbol]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const symbolKey = btn.dataset.saveSymbol;
+      const textarea = document.querySelector(`[data-paste-symbol="${CSS.escape(symbolKey)}"]`);
+      const statusEl = document.querySelector(`[data-save-status="${CSS.escape(symbolKey)}"]`);
+      try {
+        const parsed = parseClaudeBankingJSON(textarea.value);
+        validateBankingMetricsResult(parsed);
+        saveBankingMetricsForStock(symbolKey, parsed);
+        if (statusEl) { statusEl.textContent = `Saved — ${countBankingMetricsFound(parsed.metrics)} metrics found.`; statusEl.style.color = "var(--positive)"; }
+        textarea.value = "";
+      } catch (e) {
+        if (statusEl) { statusEl.textContent = e.message; statusEl.style.color = "var(--negative)"; }
+      }
+    });
+  });
+}
+
+document.getElementById("btnBankingMetrics").addEventListener("click", openBankingMetricsModal);
+
+// Renders the "Banking Metrics" section of the Stock Analysis detail
+// panel — only for Financial-sector holdings, and only once
+// something has actually been saved for that stock. Every figure
+// here is read straight from state.bankingMetrics; nothing is
+// recalculated.
+function renderBankingMetricsSectionHTML(row, d) {
+  if (!d.isFinancial) return "";
+  const key = (row.name || "").trim().toUpperCase();
+  const latest = getLatestBankingMetrics(key);
+  if (!latest) {
+    return `
+      <div class="sa-detail-section" style="grid-column:1/-1;">
+        <div class="sa-detail-section-title">Banking Metrics</div>
+        <div class="sa-detail-row"><span class="k">Status</span><span class="v muted">Not researched yet — use "🏦 Banking Metrics" above.</span></div>
+      </div>
+    `;
+  }
+  const metrics = latest.metrics || {};
+  const rowsHTML = BANKING_METRICS_FIELDS.map(f => {
+    const m = metrics[f.key];
+    if (!m || m.value === null || m.value === undefined) {
+      const reason = m && m.reason ? escapeAttr(m.reason) : "Not found from a reliable source";
+      return `<div class="sa-detail-row"><span class="k">${escapeAttr(f.label)}</span><span class="v muted" title="${reason}">— (${reason})</span></div>`;
+    }
+    const conf = m.confidence ? ` <span class="muted" style="font-size:10.5px;">(${escapeAttr(m.confidence)} confidence)</span>` : "";
+    return `<div class="sa-detail-row"><span class="k">${escapeAttr(f.label)}</span><span class="v">${fmtNum(m.value, 2)}${escapeAttr(m.unit || "%")}${conf}</span></div>`;
+  }).join("");
+  const seenUrls = new Set();
+  const sourceLinks = BANKING_METRICS_FIELDS
+    .map(f => metrics[f.key])
+    .filter(m => m && m.sourceUrl && !seenUrls.has(m.sourceUrl) && seenUrls.add(m.sourceUrl))
+    .map(m => `<a href="${escapeAttr(m.sourceUrl)}" target="_blank" rel="noopener">${escapeAttr(m.source || m.sourceUrl)}</a>`)
+    .join(", ");
+  return `
+    <div class="sa-detail-section" style="grid-column:1/-1;">
+      <div class="sa-detail-section-title">Banking Metrics — ${escapeAttr(latest.quarterLabel || "Latest Quarter")}</div>
+      ${rowsHTML}
+      <div class="sa-detail-row"><span class="k">Reporting Date</span><span class="v">${escapeAttr(latest.reportingDate || "—")}</span></div>
+      ${sourceLinks ? `<div class="sa-detail-row"><span class="k">Sources</span><span class="v" style="font-family:var(--font-body);font-weight:400;">${sourceLinks}</span></div>` : ""}
+    </div>
+  `;
 }
 
 function renderStockAnalysis() {
