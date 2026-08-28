@@ -1919,6 +1919,7 @@ function stockAnalysisDerived(equityRow, screener) {
     dividendYield: screener ? pctOrNull(screener.dividend_yield) : null,
     roe: screener ? pctOrNull(screener.roe) : null,
     roce: screener ? pctOrNull(screener.roce) : null,
+    roa: screener ? pctOrNull(screener.return_on_assets) : null,
     debtToEquity: screener ? screener.debt_to_equity : null,
     promoterHolding: screener ? pctOrNull(screener.promoter_holding) : null,
     epsGrowth3y: screener ? pctOrNull(screener.eps_growth_3years) : null,
@@ -1962,7 +1963,7 @@ function stockAnalysisGetSearchText(row, screener, d) {
     d.eps, d.pe, d.industryPe,
     d.buyReco === null ? "" : (d.buyReco ? "Buy" : "Hold"),
     d.bookValue, d.pb, d.industryPbv,
-    d.yieldPct, d.dividendYield, d.roe, d.roce,
+    d.yieldPct, d.dividendYield, d.roe, d.roce, d.roa,
     d.debtToEquity, d.promoterHolding,
     d.epsGrowth3y, d.epsGrowth5y, d.salesGrowth5y,
     d.qtrProfitVar, d.qtrSalesVar,
@@ -1987,6 +1988,7 @@ function stockAnalysisGetSortValue(d, col) {
     case "pb": return d.pb ?? -Infinity;
     case "roe": return d.roe ?? -Infinity;
     case "roce": return d.roce ?? -Infinity;
+    case "roa": return d.roa ?? -Infinity;
     case "faceValue": return d.faceValue ?? -Infinity;
     case "marketCap": return d.marketCap ?? -Infinity;
     case "marketCap5y": return d.marketCap5y ?? -Infinity;
@@ -2017,23 +2019,24 @@ const STOCK_ANALYSIS_COLUMNS = [
   { key: "pb", label: "P/B" },
   { key: "industryPbv", label: "Industry P/B" },
   { key: "yieldPct", label: "Yield %" },
-  { key: "dividendYield", label: "Div Yield %" },
-  { key: "roe", label: "ROE %" },
-  { key: "roce", label: "ROCE %" },
-  { key: "debtToEquity", label: "Debt/Equity" },
-  { key: "promoterHolding", label: "Promoter Hold %" },
-  { key: "epsGrowth3y", label: "EPS Gr. 3Y %" },
-  { key: "epsGrowth5y", label: "EPS Gr. 5Y %" },
-  { key: "salesGrowth5y", label: "Sales Gr. 5Y %" },
-  { key: "qtrProfitVar", label: "Qtr Profit Var %" },
-  { key: "qtrSalesVar", label: "Qtr Sales Var %" },
+  { key: "dividendYield", label: "Dividend Yield" },
+  { key: "roe", label: "ROE" },
+  { key: "roce", label: "ROCE" },
+  { key: "roa", label: "ROA" },
+  { key: "debtToEquity", label: "Debt to Equity" },
+  { key: "promoterHolding", label: "Promoter Holding" },
+  { key: "epsGrowth3y", label: "EPS Growth (3Y)" },
+  { key: "epsGrowth5y", label: "EPS Growth (5Y)" },
+  { key: "salesGrowth5y", label: "Sales Growth (5Y)" },
+  { key: "qtrProfitVar", label: "Quarterly Profit Growth" },
+  { key: "qtrSalesVar", label: "Quarterly Sales Growth" },
   { key: "faceValue", label: "Face Value" },
   { key: "marketCap", label: "Market Cap" },
   { key: "marketCap5y", label: "Market Cap (5Y Ago)" },
   { key: "intCoverage", label: "Interest Coverage" },
-  { key: "fcfPrevAnn", label: "Free Cash Flow (Prev FY)" },
-  { key: "profitVar3y", label: "Profit Gr. 3Y %" },
-  { key: "profitVar5y", label: "Profit Gr. 5Y %" }
+  { key: "fcfPrevAnn", label: "Free Cash Flow (Previous FY)" },
+  { key: "profitVar3y", label: "Profit Growth (3Y)" },
+  { key: "profitVar5y", label: "Profit Growth (5Y)" }
 ];
 
 // Shows/hides whole columns by toggling `visibility: collapse` on
@@ -2201,11 +2204,11 @@ function renderStockAnalysis() {
 
   tbody.innerHTML = "";
   if (state.equity.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="33">No Equity holdings yet — add stocks on the Equity tab first.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="34">No Equity holdings yet — add stocks on the Equity tab first.</td></tr>';
     return;
   }
   if (rows.length === 0) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="33">${excluded.size > 0 ? 'No holdings match this filter (some may be hidden — see "Hidden" above).' : 'No holdings match this filter.'}</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="34">${excluded.size > 0 ? 'No holdings match this filter (some may be hidden — see "Hidden" above).' : 'No holdings match this filter.'}</td></tr>`;
     return;
   }
 
@@ -2232,23 +2235,24 @@ function renderStockAnalysis() {
       <td class="${d.pbClass}" data-label="P/B">${fmtOrDash(d.pb)}</td>
       <td data-label="Industry P/B">${fmtOrDash(d.industryPbv)}</td>
       <td data-label="Yield %">${fmtOrDash(d.yieldPct, 2, "%")}</td>
-      <td data-label="Div Yield %">${fmtOrDash(d.dividendYield, 2, "%")}</td>
-      <td data-label="ROE %">${fmtOrDash(d.roe, 1, "%")}</td>
-      <td data-label="ROCE %">${fmtOrDash(d.roce, 1, "%")}</td>
-      <td data-label="Debt/Equity">${fmtOrDash(d.debtToEquity)}</td>
-      <td data-label="Promoter Hold %">${fmtOrDash(d.promoterHolding, 1, "%")}</td>
-      <td data-label="EPS Gr. 3Y %">${fmtOrDash(d.epsGrowth3y, 1, "%")}</td>
-      <td data-label="EPS Gr. 5Y %">${fmtOrDash(d.epsGrowth5y, 1, "%")}</td>
-      <td data-label="Sales Gr. 5Y %">${fmtOrDash(d.salesGrowth5y, 1, "%")}</td>
-      <td data-label="Qtr Profit Var %">${fmtOrDash(d.qtrProfitVar, 1, "%")}</td>
-      <td data-label="Qtr Sales Var %">${fmtOrDash(d.qtrSalesVar, 1, "%")}</td>
+      <td data-label="Dividend Yield">${fmtOrDash(d.dividendYield, 2, "%")}</td>
+      <td data-label="ROE">${fmtOrDash(d.roe, 1, "%")}</td>
+      <td data-label="ROCE">${fmtOrDash(d.roce, 1, "%")}</td>
+      <td data-label="ROA">${fmtOrDash(d.roa, 1, "%")}</td>
+      <td data-label="Debt to Equity">${fmtOrDash(d.debtToEquity)}</td>
+      <td data-label="Promoter Holding">${fmtOrDash(d.promoterHolding, 1, "%")}</td>
+      <td data-label="EPS Growth (3Y)">${fmtOrDash(d.epsGrowth3y, 1, "%")}</td>
+      <td data-label="EPS Growth (5Y)">${fmtOrDash(d.epsGrowth5y, 1, "%")}</td>
+      <td data-label="Sales Growth (5Y)">${fmtOrDash(d.salesGrowth5y, 1, "%")}</td>
+      <td data-label="Quarterly Profit Growth">${fmtOrDash(d.qtrProfitVar, 1, "%")}</td>
+      <td data-label="Quarterly Sales Growth">${fmtOrDash(d.qtrSalesVar, 1, "%")}</td>
       <td data-label="Face Value">${fmtOrDash(d.faceValue)}</td>
       <td data-label="Market Cap">${fmtOrDash(d.marketCap, 0)}</td>
       <td data-label="Market Cap (5Y Ago)">${fmtOrDash(d.marketCap5y, 0)}</td>
       <td data-label="Interest Coverage">${fmtOrDash(d.intCoverage)}</td>
-      <td data-label="Free Cash Flow (Prev FY)">${fmtOrDash(d.fcfPrevAnn, 0)}</td>
-      <td data-label="Profit Gr. 3Y %">${fmtOrDash(d.profitVar3y, 1, "%")}</td>
-      <td data-label="Profit Gr. 5Y %">${fmtOrDash(d.profitVar5y, 1, "%")}</td>
+      <td data-label="Free Cash Flow (Previous FY)">${fmtOrDash(d.fcfPrevAnn, 0)}</td>
+      <td data-label="Profit Growth (3Y)">${fmtOrDash(d.profitVar3y, 1, "%")}</td>
+      <td data-label="Profit Growth (5Y)">${fmtOrDash(d.profitVar5y, 1, "%")}</td>
       <td class="row-actions"><button class="icon-btn" title="Remove from Stock Analysis (keeps the Equity holding)">✕</button></td>
     `;
     tr.querySelector(".icon-btn").addEventListener("click", () => {

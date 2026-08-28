@@ -276,7 +276,7 @@
   #panel-debt table.data-table{min-width:1615px;}
   #panel-mf table.data-table{min-width:1400px;}
   #panel-gold table.data-table{min-width:1295px;}
-  #panel-stockanalysis table.data-table{min-width:3105px;}
+  #panel-stockanalysis table.data-table{min-width:3180px;}
 
   /* Stock Analysis: Buy recommendation badge + Financial-sector P/B
      highlight bands (green < 1, yellow < 1.5, orange < 2 — strongest
@@ -1074,7 +1074,7 @@
           <col id="col-sa-col-low52" style="width:90px"><col id="col-sa-col-high52" style="width:90px"><col id="col-sa-col-gainFromLow" style="width:95px"><col id="col-sa-col-dropFromHigh" style="width:95px">
           <col id="col-sa-col-eps" style="width:80px"><col id="col-sa-col-pe" style="width:80px"><col id="col-sa-col-industryPe" style="width:95px"><col id="col-sa-col-buyReco" style="width:90px">
           <col id="col-sa-col-bookValue" style="width:90px"><col id="col-sa-col-pb" style="width:80px"><col id="col-sa-col-industryPbv" style="width:95px"><col id="col-sa-col-yieldPct" style="width:90px">
-          <col id="col-sa-col-dividendYield" style="width:80px"><col id="col-sa-col-roe" style="width:75px"><col id="col-sa-col-roce" style="width:75px"><col id="col-sa-col-debtToEquity" style="width:105px">
+          <col id="col-sa-col-dividendYield" style="width:80px"><col id="col-sa-col-roe" style="width:75px"><col id="col-sa-col-roce" style="width:75px"><col id="col-sa-col-roa" style="width:75px"><col id="col-sa-col-debtToEquity" style="width:110px">
           <col id="col-sa-col-promoterHolding" style="width:105px"><col id="col-sa-col-epsGrowth3y" style="width:100px"><col id="col-sa-col-epsGrowth5y" style="width:100px"><col id="col-sa-col-salesGrowth5y" style="width:100px">
           <col id="col-sa-col-qtrProfitVar" style="width:105px"><col id="col-sa-col-qtrSalesVar" style="width:125px">
           <col id="col-sa-col-faceValue" style="width:90px"><col id="col-sa-col-marketCap" style="width:110px"><col id="col-sa-col-marketCap5y" style="width:120px">
@@ -1099,23 +1099,24 @@
             <th class="sortable" data-col="pb">P/B</th>
             <th class="sortable" data-col="industryPbv">Industry P/B</th>
             <th class="sortable" data-col="yieldPct">Yield %</th>
-            <th class="sortable" data-col="dividendYield">Div Yield %</th>
-            <th class="sortable" data-col="roe">ROE %</th>
-            <th class="sortable" data-col="roce">ROCE %</th>
-            <th class="sortable" data-col="debtToEquity">Debt/Equity</th>
-            <th class="sortable" data-col="promoterHolding">Promoter Hold %</th>
-            <th class="sortable" data-col="epsGrowth3y">EPS Gr. 3Y %</th>
-            <th class="sortable" data-col="epsGrowth5y">EPS Gr. 5Y %</th>
-            <th class="sortable" data-col="salesGrowth5y">Sales Gr. 5Y %</th>
-            <th class="sortable" data-col="qtrProfitVar">Qtr Profit Var %</th>
-            <th class="sortable" data-col="qtrSalesVar">Qtr Sales Var %</th>
+            <th class="sortable" data-col="dividendYield">Dividend Yield</th>
+            <th class="sortable" data-col="roe">ROE</th>
+            <th class="sortable" data-col="roce">ROCE</th>
+            <th class="sortable" data-col="roa">ROA</th>
+            <th class="sortable" data-col="debtToEquity">Debt to Equity</th>
+            <th class="sortable" data-col="promoterHolding">Promoter Holding</th>
+            <th class="sortable" data-col="epsGrowth3y">EPS Growth (3Y)</th>
+            <th class="sortable" data-col="epsGrowth5y">EPS Growth (5Y)</th>
+            <th class="sortable" data-col="salesGrowth5y">Sales Growth (5Y)</th>
+            <th class="sortable" data-col="qtrProfitVar">Quarterly Profit Growth</th>
+            <th class="sortable" data-col="qtrSalesVar">Quarterly Sales Growth</th>
             <th class="sortable" data-col="faceValue">Face Value</th>
             <th class="sortable" data-col="marketCap">Market Cap</th>
             <th class="sortable" data-col="marketCap5y">Market Cap (5Y Ago)</th>
             <th class="sortable" data-col="intCoverage">Interest Coverage</th>
-            <th class="sortable" data-col="fcfPrevAnn">Free Cash Flow (Prev FY)</th>
-            <th class="sortable" data-col="profitVar3y">Profit Gr. 3Y %</th>
-            <th class="sortable" data-col="profitVar5y">Profit Gr. 5Y %</th>
+            <th class="sortable" data-col="fcfPrevAnn">Free Cash Flow (Previous FY)</th>
+            <th class="sortable" data-col="profitVar3y">Profit Growth (3Y)</th>
+            <th class="sortable" data-col="profitVar5y">Profit Growth (5Y)</th>
             <th class="row-actions">—</th>
           </tr>
         </thead>
@@ -1137,6 +1138,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-08-28-1"></script>
+<script src="app.js?v=2026-08-28-2"></script>
 </body>
 </html>
