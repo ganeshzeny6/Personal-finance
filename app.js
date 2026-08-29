@@ -2026,6 +2026,12 @@ function computeStockInsight(row, screenerMap) {
   const health = fundamentalHealthVerdict(d, bankingLatest);
   const growth = fundamentalGrowthVerdict(d);
   const knownCount = [valuation, health, growth].filter(v => v !== "unknown").length;
+  // The existing sector-aware Fundamental View (Strong/Good/Neutral/Weak) —
+  // the same SECTOR_PROFILES-driven logic already used on the Stock
+  // Analysis tab. Computed once here so Intelligent Insights' Score and
+  // Key Metrics reuse it directly instead of inventing a second,
+  // sector-blind scoring system.
+  const fv = computeFundamentalView(row, screener, d);
 
   const factorsText = describeInsightFactors(d);
   const allocText = allocMax !== null
@@ -2036,7 +2042,7 @@ function computeStockInsight(row, screenerMap) {
     return {
       row, category: "Insufficient Data", categoryClass: "insuff", allocPct, allocMax, allocStatus,
       reason: `Insufficient Data — ${!screener ? "no Screener fundamentals imported for this stock yet" : "not enough fundamental fields available to form a view"}. ${allocText}.`,
-      d, screener, valuation, health, growth, bankingLatest, allocText, capCategory
+      d, screener, valuation, health, growth, bankingLatest, allocText, capCategory, fv
     };
   }
 
@@ -2086,7 +2092,7 @@ function computeStockInsight(row, screenerMap) {
     }
   }
 
-  return { row, category, categoryClass, allocPct, allocMax, allocStatus, reason, d, screener, valuation, health, growth, bankingLatest, allocText, capCategory };
+  return { row, category, categoryClass, allocPct, allocMax, allocStatus, reason, d, screener, valuation, health, growth, bankingLatest, allocText, capCategory, fv };
 }
 
 const INSIGHT_CATEGORY_ORDER = [
@@ -2109,64 +2115,75 @@ const ii2State = {
 
 const II2_PILLS = ["All", "Consider Adding", "Hold", "Watch", "Reduce / Sell"];
 
-// Converts the three qualitative verdicts (valuation/health/growth) into a
-// single 0-100 score + label — a display convenience only. It re-uses the
-// exact verdicts computeStockInsight() already derived for the actual
-// recommendation; it does not introduce a second, independent scoring model.
+// Converts the EXISTING sector-aware Fundamental View (computeFundamentalView
+// — the same SECTOR_PROFILES-driven Strong/Good/Neutral/Weak logic already
+// used on the Stock Analysis tab) into a display score/label for the
+// circular indicator. Deliberately does NOT introduce a second, sector-
+// blind scoring model — the label IS the existing view, just given a
+// representative number so the ring has something to fill.
 function computeInsightScore(ins) {
-  const map = { attractive: 1, strong: 1, neutral: 0, unattractive: -1, weak: -1, unknown: null };
-  const vals = [map[ins.valuation], map[ins.health], map[ins.growth]].filter(v => v !== null && v !== undefined);
-  if (vals.length === 0) return { score: null, scoreLabel: "N/A" };
-  const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
-  const score = Math.round(((avg + 1) / 2) * 100);
-  let scoreLabel;
-  if (score >= 70) scoreLabel = "Strong";
-  else if (score >= 55) scoreLabel = "Good";
-  else if (score >= 35) scoreLabel = "Moderate";
-  else scoreLabel = "Weak";
-  return { score, scoreLabel };
+  const view = ins.fv ? ins.fv.view : "Insufficient Data";
+  const SCORE_BY_VIEW = { Strong: 85, Good: 65, Neutral: 50, Weak: 25 };
+  const LABEL_BY_VIEW = { Strong: "Strong", Good: "Good", Neutral: "Moderate", Weak: "Weak" };
+  if (!(view in SCORE_BY_VIEW)) return { score: null, scoreLabel: "N/A" };
+  return { score: SCORE_BY_VIEW[view], scoreLabel: LABEL_BY_VIEW[view] };
 }
 
-function ii2ScoreColor(score) {
-  if (score === null || score === undefined) return "var(--text-faint)";
-  if (score >= 70) return "var(--positive)";
-  if (score >= 55) return "var(--gold)";
-  if (score >= 35) return "var(--warning)";
-  return "var(--negative)";
-}
-
-// Picks 4-5 sector-appropriate metrics to show per stock, per spec section 8 —
-// Financials lean on P/B, ROE, ROA and (when researched) NIM/GNPA; every
-// other sector leans on PE, ROE, EPS Growth and Debt-to-Equity. Every value
-// here is read straight from `d`/bankingLatest (stockAnalysisDerived() /
-// getLatestBankingMetrics() output) — nothing recalculated.
-function computeInsightMetrics(ins) {
-  const d = ins.d;
-  const metrics = [];
-  const pushVs = (label, value, decimals, suffix, industry, lowerIsBetter) => {
-    if (value === null || value === undefined) return;
-    let cmp = "";
-    if (industry !== null && industry !== undefined && industry > 0) {
-      const better = lowerIsBetter ? value < industry : value > industry;
-      cmp = `<span class="${better ? "pos" : "neg"}">${better ? "↓" : "↑"} vs ${fmtNum(industry, decimals)}</span>`;
-    }
-    metrics.push({ label, value: fmtNum(value, decimals) + suffix, cmp });
-  };
-  if (d.isFinancial) {
-    pushVs("P/B", d.pb, 2, "", d.industryPbv, true);
-    pushVs("ROE", d.roe, 1, "%", null);
-    pushVs("ROA", d.roa, 2, "%", null);
-    const bm = ins.bankingLatest && ins.bankingLatest.metrics;
-    if (bm && bm.nim && bm.nim.value !== null && bm.nim.value !== undefined) metrics.push({ label: "NIM", value: fmtNum(bm.nim.value, 1) + "%", cmp: "" });
-    if (bm && bm.gnpa && bm.gnpa.value !== null && bm.gnpa.value !== undefined) metrics.push({ label: "GNPA", value: fmtNum(bm.gnpa.value, 2) + "%", cmp: "" });
-  } else {
-    pushVs("PE", d.pe, 1, "", d.industryPe, true);
-    if (d.roe !== null) metrics.push({ label: "ROE", value: fmtNum(d.roe, 1) + "%", cmp: "" });
-    else if (d.roce !== null) metrics.push({ label: "ROCE", value: fmtNum(d.roce, 1) + "%", cmp: "" });
-    if (d.epsGrowth3y !== null) metrics.push({ label: "EPS Growth 3Y", value: fmtNum(d.epsGrowth3y, 1) + "%", cmp: "" });
-    if (d.debtToEquity !== null) metrics.push({ label: "D/E", value: fmtNum(d.debtToEquity, 2), cmp: "" });
+function ii2ScoreColor(scoreLabel) {
+  switch (scoreLabel) {
+    case "Strong": return "var(--positive)";
+    case "Good": return "var(--gold)";
+    case "Moderate": return "var(--text-muted)";
+    case "Weak": return "var(--negative)";
+    default: return "var(--text-faint)";
   }
-  return metrics.slice(0, 5);
+}
+
+// One "value vs industry" metric cell, or null if the underlying figure
+// isn't available — read straight from `d`/bankingLatest, never recalculated.
+function ii2VsHTML(value, industry, decimals, lowerIsBetter) {
+  if (industry === null || industry === undefined || industry <= 0) return "";
+  const better = lowerIsBetter ? value < industry : value > industry;
+  return `<span class="${better ? "pos" : "neg"}">${better ? "↓" : "↑"} vs ${fmtNum(industry, decimals)}</span>`;
+}
+
+function ii2MetricByKey(ins, key) {
+  const d = ins.d;
+  switch (key) {
+    case "pb": return (d.pb !== null) ? { label: "P/B", value: fmtNum(d.pb, 2), cmp: ii2VsHTML(d.pb, d.industryPbv, 2, true) } : null;
+    case "pe": return (d.pe !== null && d.pe > 0) ? { label: "PE", value: fmtNum(d.pe, 1), cmp: ii2VsHTML(d.pe, d.industryPe, 1, true) } : null;
+    case "roe": return (d.roe !== null) ? { label: "ROE", value: fmtNum(d.roe, 1) + "%", cmp: "" } : null;
+    case "roce": return (d.roce !== null) ? { label: "ROCE", value: fmtNum(d.roce, 1) + "%", cmp: "" } : null;
+    case "roa": return (d.roa !== null) ? { label: "ROA", value: fmtNum(d.roa, 2) + "%", cmp: "" } : null;
+    case "nim": { const bm = ins.bankingLatest && ins.bankingLatest.metrics; return (bm && bm.nim && bm.nim.value !== null && bm.nim.value !== undefined) ? { label: "NIM", value: fmtNum(bm.nim.value, 1) + "%", cmp: "" } : null; }
+    case "gnpa": { const bm = ins.bankingLatest && ins.bankingLatest.metrics; return (bm && bm.gnpa && bm.gnpa.value !== null && bm.gnpa.value !== undefined) ? { label: "GNPA", value: fmtNum(bm.gnpa.value, 2) + "%", cmp: "" } : null; }
+    case "epsGrowth3y": return (d.epsGrowth3y !== null) ? { label: "EPS Growth 3Y", value: fmtNum(d.epsGrowth3y, 1) + "%", cmp: "" } : null;
+    case "salesGrowth5y": return (d.salesGrowth5y !== null) ? { label: "Sales Growth 5Y", value: fmtNum(d.salesGrowth5y, 1) + "%", cmp: "" } : null;
+    case "debtToEquity": return (d.debtToEquity !== null) ? { label: "D/E", value: fmtNum(d.debtToEquity, 2), cmp: "" } : null;
+    case "intCoverage": return (d.intCoverage !== null) ? { label: "Interest Coverage", value: fmtNum(d.intCoverage, 1) + "x", cmp: "" } : null;
+    default: return null;
+  }
+}
+
+// Which metrics matter differs by sector, per the SAME sector grouping
+// computeFundamentalView() already uses (classifySectorGroup()) — not a
+// new taxonomy, and not the same 4 metrics for every sector.
+const II2_SECTOR_METRIC_KEYS = {
+  financial: ["pb", "roe", "roa", "nim", "gnpa"],
+  it: ["pe", "roe", "epsGrowth3y", "debtToEquity"],
+  pharma: ["pe", "roce", "epsGrowth3y", "debtToEquity"],
+  auto: ["pe", "roce", "salesGrowth5y", "debtToEquity"],
+  energy: ["pe", "roce", "debtToEquity", "intCoverage"],
+  fmcg: ["pe", "roe", "epsGrowth3y", "debtToEquity"],
+  realestate: ["pe", "roce", "debtToEquity", "intCoverage"],
+  industrial: ["pe", "roce", "epsGrowth3y", "debtToEquity"],
+  other: ["pe", "roe", "epsGrowth3y", "debtToEquity"]
+};
+
+function computeInsightMetrics(ins) {
+  const group = classifySectorGroup(ins.d.sector);
+  const keys = II2_SECTOR_METRIC_KEYS[group] || II2_SECTOR_METRIC_KEYS.other;
+  return keys.map(k => ii2MetricByKey(ins, k)).filter(Boolean).slice(0, 5);
 }
 
 // Short blurb shown directly under the recommendation badge — one line,
@@ -2300,7 +2317,7 @@ function renderII2StockRow(ins) {
     ? metrics.map(m => `<div class="ii2-metric"><div class="l">${escapeAttr(m.label)}</div><div class="v">${m.value}</div><div class="c">${m.cmp}</div></div>`).join("")
     : `<div class="muted">No fundamentals imported yet</div>`;
   const score = ins.score;
-  const scoreColor = ii2ScoreColor(score);
+  const scoreColor = ii2ScoreColor(ins.scoreLabel);
   const scoreRingBg = score === null
     ? "var(--border)"
     : `conic-gradient(${scoreColor} ${score * 3.6}deg, var(--border) 0)`;
@@ -2336,12 +2353,12 @@ function renderII2StockRow(ins) {
       </div>
       ${isOpen ? `<div class="ii2-why-body">
         <div><strong>Allocation:</strong> ${escapeAttr(ins.allocText)}</div>
-        <div style="margin-top:6px;">
-          <span class="tag">Valuation: ${escapeAttr(ins.valuation)}</span>
-          <span class="tag">Financial Health: ${escapeAttr(ins.health)}</span>
-          <span class="tag">Growth: ${escapeAttr(ins.growth)}</span>
+        <div style="margin-top:6px;"><strong>Recommendation:</strong> ${escapeAttr(ins.reason)}</div>
+        <div style="margin-top:8px;display:flex;align-items:center;gap:8px;">
+          <strong>Fundamental View${ins.fv.sectorLabel ? " — " + escapeAttr(ins.fv.sectorLabel) : ""}:</strong>
+          <span class="fv-badge fv-${ins.fv.cls}">${escapeAttr(ins.fv.view)}</span>
         </div>
-        <div style="margin-top:8px;">${escapeAttr(ins.reason)}</div>
+        <div style="margin-top:4px;">${escapeAttr(ins.fv.reason || "")}</div>
       </div>` : ""}
     </div>
   `;
