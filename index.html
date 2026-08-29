@@ -622,6 +622,25 @@
   .filter-input::placeholder{color:var(--text-faint);}
   .filter-input:focus{border-color:var(--gold);outline:none;}
 
+  /* Reusable "clear filter" (x) button — sits on any filter/search box
+     wrapped in .filter-clear-wrap (plain toolbar filters) or the
+     existing .sa-search-wrap (Stock Analysis's search box, which
+     already has a left-side icon). Hidden until that box has text,
+     wired generically by setupFilterClearButtons() in app.js so it
+     works the same way — clear + re-trigger the existing filter — on
+     every tab without touching each tab's own filter logic. */
+  .filter-clear-wrap{position:relative;display:inline-flex;}
+  .filter-clear-wrap .filter-input, .sa-search-wrap .filter-input{padding-right:26px;}
+  .filter-clear-btn{
+    display:none;position:absolute;right:5px;top:50%;transform:translateY(-50%);
+    width:18px;height:18px;padding:0;border:none;border-radius:50%;
+    background:var(--surface);color:var(--text-faint);
+    font-size:11px;line-height:1;cursor:pointer;align-items:center;justify-content:center;
+  }
+  .filter-clear-btn:hover{background:var(--border);color:var(--text);}
+  .filter-clear-wrap.has-value .filter-clear-btn,
+  .sa-search-wrap.has-value .filter-clear-btn{display:flex;}
+
   .ideal-input{
     width:56px;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;
     color:var(--text);font-family:var(--font-mono);font-size:12px;padding:4px 6px;text-align:right;
@@ -943,7 +962,10 @@
 
     <div class="table-toolbar">
       <div class="left-group">
-        <input type="text" class="filter-input" id="equityFilter" placeholder="Filter...">
+        <div class="filter-clear-wrap">
+          <input type="text" class="filter-input" id="equityFilter" placeholder="Filter...">
+          <button type="button" class="filter-clear-btn" data-clear-target="equityFilter" title="Clear filter" aria-label="Clear filter">✕</button>
+        </div>
         <span class="status-tag" id="equityFetchStatus"></span>
       </div>
     </div>
@@ -1037,7 +1059,10 @@
           <button class="btn btn-ghost" id="btnImportDebtSheet" title="Overwrites all existing Debt entries with the Debt tab of your Google Sheet">Import from Google Sheet</button>
         </div>
         <button class="btn toolbar-overflow-toggle" id="debtOverflowToggle" title="More actions">⋯</button>
-        <input type="text" class="filter-input" id="debtFilter" placeholder="Filter...">
+        <div class="filter-clear-wrap">
+          <input type="text" class="filter-input" id="debtFilter" placeholder="Filter...">
+          <button type="button" class="filter-clear-btn" data-clear-target="debtFilter" title="Clear filter" aria-label="Clear filter">✕</button>
+        </div>
         <span class="status-tag" id="debtImportStatus"></span>
       </div>
     </div>
@@ -1121,7 +1146,10 @@
 
     <div class="table-toolbar">
       <div class="left-group">
-        <input type="text" class="filter-input" id="mfFilter" placeholder="Filter...">
+        <div class="filter-clear-wrap">
+          <input type="text" class="filter-input" id="mfFilter" placeholder="Filter...">
+          <button type="button" class="filter-clear-btn" data-clear-target="mfFilter" title="Clear filter" aria-label="Clear filter">✕</button>
+        </div>
         <span class="status-tag" id="mfFetchStatus"></span>
       </div>
     </div>
@@ -1206,7 +1234,10 @@
 
     <div class="table-toolbar">
       <div class="left-group">
-        <input type="text" class="filter-input" id="goldFilter" placeholder="Filter...">
+        <div class="filter-clear-wrap">
+          <input type="text" class="filter-input" id="goldFilter" placeholder="Filter...">
+          <button type="button" class="filter-clear-btn" data-clear-target="goldFilter" title="Clear filter" aria-label="Clear filter">✕</button>
+        </div>
         <span class="status-tag" id="goldFetchStatus"></span>
       </div>
     </div>
@@ -1337,6 +1368,7 @@
       <div class="left-group">
         <div class="sa-search-wrap">
           <input type="text" class="filter-input" id="stockAnalysisFilter" placeholder="Search by name, sector, buy/hold...">
+          <button type="button" class="filter-clear-btn" data-clear-target="stockAnalysisFilter" title="Clear search" aria-label="Clear search">✕</button>
         </div>
         <button class="btn" id="btnStockAnalysisColumns" title="Choose which columns are shown">☰ Columns</button>
         <button class="btn btn-ghost" id="btnStockAnalysisHidden" title="Show/restore stocks you've removed from this tab" style="display:none">Hidden (0)</button>
