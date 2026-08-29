@@ -2377,7 +2377,10 @@ function computeFundamentalView(row, screener, d) {
   }
   const group = classifySectorGroup(d.sector);
   const profile = { ...SECTOR_PROFILES.other, ...SECTOR_PROFILES[group] };
-  const notes = [];
+  const noteItems = []; // { text, signal: -1|0|1 } — collected so the
+  // reason text can prioritize showing concerning (negative-signal)
+  // factors instead of just the first few pushed.
+  const notes = { push: (text, signal = 0) => noteItems.push({ text, signal }) };
   const signals = [];
 
   // Valuation — PE vs Industry PE is the default lens; Financials (and
@@ -2387,13 +2390,13 @@ function computeFundamentalView(row, screener, d) {
   if (d.pe !== null && d.pe > 0 && d.industryPe !== null && d.industryPe > 0) {
     const r = d.pe / d.industryPe;
     valSignal = r <= 0.9 ? 1 : r >= 1.15 ? -1 : 0;
-    notes.push(`PE ${fmtNum(d.pe, 1)} vs Industry ${fmtNum(d.industryPe, 1)}`);
+    notes.push(`PE ${fmtNum(d.pe, 1)} vs Industry ${fmtNum(d.industryPe, 1)}`, valSignal);
   }
   if (d.pb !== null && d.industryPbv && (profile.pbWeight || valSignal === null)) {
     const rb = d.pb / d.industryPbv;
     const pbSignal = rb <= 0.9 ? 1 : rb >= 1.3 ? -1 : 0;
     valSignal = valSignal === null ? pbSignal : (valSignal + pbSignal) / 2;
-    notes.push(`P/B ${fmtNum(d.pb, 2)} vs Industry ${fmtNum(d.industryPbv, 2)}${d.pe === null ? " (PE not meaningful)" : ""}`);
+    notes.push(`P/B ${fmtNum(d.pb, 2)} vs Industry ${fmtNum(d.industryPbv, 2)}${d.pe === null ? " (PE not meaningful)" : ""}`, pbSignal);
   }
   if (valSignal !== null) signals.push(valSignal);
 
@@ -2404,24 +2407,37 @@ function computeFundamentalView(row, screener, d) {
   if (profile.useROA) {
     if (d.roa !== null) {
       profSignal = d.roa >= profile.roaGood ? 1 : d.roa <= profile.roaWeak ? -1 : 0;
-      notes.push(`ROA ${fmtNum(d.roa, 2)}%`);
+      notes.push(`ROA ${fmtNum(d.roa, 2)}%`, profSignal);
     }
   } else {
     const parts = [];
-    if (d.roe !== null) { parts.push(d.roe >= profile.roeGood ? 1 : d.roe <= profile.roeWeak ? -1 : 0); notes.push(`ROE ${fmtNum(d.roe, 1)}%`); }
-    if (d.roce !== null) { parts.push(d.roce >= profile.roceGood ? 1 : d.roce <= profile.roceWeak ? -1 : 0); notes.push(`ROCE ${fmtNum(d.roce, 1)}%`); }
+    if (d.roe !== null) { const s = d.roe >= profile.roeGood ? 1 : d.roe <= profile.roeWeak ? -1 : 0; parts.push(s); notes.push(`ROE ${fmtNum(d.roe, 1)}%`, s); }
+    if (d.roce !== null) { const s = d.roce >= profile.roceGood ? 1 : d.roce <= profile.roceWeak ? -1 : 0; parts.push(s); notes.push(`ROCE ${fmtNum(d.roce, 1)}%`, s); }
     if (parts.length) profSignal = parts.reduce((a, b) => a + b, 0) / parts.length;
   }
   if (profSignal !== null) signals.push(profSignal);
 
-  // Growth — EPS/Profit/Sales, same thresholds across sectors since
-  // "growing vs shrinking" is a fair comparison regardless of
-  // industry; what differs is which figure is available.
+  // Growth — EVERY available growth figure (EPS 3Y/5Y, Profit 3Y/5Y,
+  // Sales 5Y, and the latest Quarterly Profit/Sales growth) is weighed
+  // together, not just whichever looks best. A strong 3Y number can
+  // ride on an old low base and mask a recent slowdown or outright
+  // decline that only shows up in the 5Y or quarterly figures — so all
+  // of them count, and any negative one is called out by name below
+  // rather than getting averaged away silently.
   const growthParts = [];
-  if (d.epsGrowth3y !== null) { growthParts.push(d.epsGrowth3y >= 10 ? 1 : d.epsGrowth3y < 0 ? -1 : 0); notes.push(`EPS Growth 3Y ${fmtNum(d.epsGrowth3y, 1)}%`); }
-  if (d.profitVar3y !== null) { growthParts.push(d.profitVar3y >= 10 ? 1 : d.profitVar3y < 0 ? -1 : 0); notes.push(`Profit Growth 3Y ${fmtNum(d.profitVar3y, 1)}%`); }
-  if (d.salesGrowth5y !== null) growthParts.push(d.salesGrowth5y >= 8 ? 1 : d.salesGrowth5y < 0 ? -1 : 0);
-  if (d.qtrProfitVar !== null) growthParts.push(d.qtrProfitVar >= 8 ? 1 : d.qtrProfitVar < 0 ? -1 : 0);
+  const pushGrowth = (label, value, goodAt) => {
+    if (value === null) return;
+    const s = value >= goodAt ? 1 : value < 0 ? -1 : 0;
+    growthParts.push(s);
+    notes.push(`${label} ${fmtNum(value, 1)}%`, s);
+  };
+  pushGrowth("EPS Growth 3Y", d.epsGrowth3y, 10);
+  pushGrowth("EPS Growth 5Y", d.epsGrowth5y, 10);
+  pushGrowth("Profit Growth 3Y", d.profitVar3y, 10);
+  pushGrowth("Profit Growth 5Y", d.profitVar5y, 10);
+  pushGrowth("Sales Growth 5Y", d.salesGrowth5y, 8);
+  pushGrowth("Quarterly Profit Growth", d.qtrProfitVar, 8);
+  pushGrowth("Quarterly Sales Growth", d.qtrSalesVar, 8);
   if (growthParts.length) signals.push(growthParts.reduce((a, b) => a + b, 0) / growthParts.length);
 
   // Financial Health — Debt-to-Equity + Interest Coverage + Free Cash
@@ -2433,13 +2449,13 @@ function computeFundamentalView(row, screener, d) {
     const bm = getLatestBankingMetrics((row.name || "").trim().toUpperCase());
     if (bm && bm.metrics) {
       const m = bm.metrics;
-      if (m.gnpa && m.gnpa.value !== null && m.gnpa.value !== undefined) { healthParts.push(m.gnpa.value <= 2 ? 1 : m.gnpa.value <= 4 ? 0 : -1); notes.push(`GNPA ${fmtNum(m.gnpa.value, 2)}%`); }
-      if (m.crar && m.crar.value !== null && m.crar.value !== undefined) { healthParts.push(m.crar.value >= 14 ? 1 : m.crar.value >= 11 ? 0 : -1); notes.push(`CRAR ${fmtNum(m.crar.value, 2)}%`); }
+      if (m.gnpa && m.gnpa.value !== null && m.gnpa.value !== undefined) { const s = m.gnpa.value <= 2 ? 1 : m.gnpa.value <= 4 ? 0 : -1; healthParts.push(s); notes.push(`GNPA ${fmtNum(m.gnpa.value, 2)}%`, s); }
+      if (m.crar && m.crar.value !== null && m.crar.value !== undefined) { const s = m.crar.value >= 14 ? 1 : m.crar.value >= 11 ? 0 : -1; healthParts.push(s); notes.push(`CRAR ${fmtNum(m.crar.value, 2)}%`, s); }
       if (m.nim && m.nim.value !== null && m.nim.value !== undefined) healthParts.push(m.nim.value >= 3 ? 1 : m.nim.value >= 2 ? 0 : -1);
     }
   } else {
-    if (d.debtToEquity !== null) { healthParts.push(d.debtToEquity <= profile.deGood ? 1 : d.debtToEquity >= profile.deWeak ? -1 : 0); notes.push(`D/E ${fmtNum(d.debtToEquity, 2)}`); }
-    if (profile.icRelevant !== false && d.intCoverage !== null) { healthParts.push(d.intCoverage >= (profile.icGood || 5) ? 1 : d.intCoverage <= (profile.icWeak || 2) ? -1 : 0); notes.push(`Interest Coverage ${fmtNum(d.intCoverage, 1)}x`); }
+    if (d.debtToEquity !== null) { const s = d.debtToEquity <= profile.deGood ? 1 : d.debtToEquity >= profile.deWeak ? -1 : 0; healthParts.push(s); notes.push(`D/E ${fmtNum(d.debtToEquity, 2)}`, s); }
+    if (profile.icRelevant !== false && d.intCoverage !== null) { const s = d.intCoverage >= (profile.icGood || 5) ? 1 : d.intCoverage <= (profile.icWeak || 2) ? -1 : 0; healthParts.push(s); notes.push(`Interest Coverage ${fmtNum(d.intCoverage, 1)}x`, s); }
     if (d.fcfPrevAnn !== null) healthParts.push(d.fcfPrevAnn > 0 ? 1 : -1);
   }
   if (healthParts.length) signals.push(healthParts.reduce((a, b) => a + b, 0) / healthParts.length);
@@ -2455,7 +2471,11 @@ function computeFundamentalView(row, screener, d) {
   else if (overall > -0.25) { view = "Neutral"; cls = "neutral"; summary = "Fundamentals are broadly stable, without a strong case either way."; }
   else { view = "Weak"; cls = "weak"; summary = "Profitability, growth or valuation look weak relative to peers in this sector."; }
 
-  return { view, cls, sectorGroup: group, sectorLabel: profile.label, reason: `${summary}${notes.length ? " (" + notes.slice(0, 4).join(", ") + ")" : ""}` };
+  // Reason text prioritizes negative-signal factors first (so a
+  // declining metric is never pushed out by the slice cap below), then
+  // neutral, then positive, capped at 5 factors shown.
+  const orderedNotes = [...noteItems].sort((a, b) => a.signal - b.signal).slice(0, 5).map(n => n.text);
+  return { view, cls, sectorGroup: group, sectorLabel: profile.label, reason: `${summary}${orderedNotes.length ? " (" + orderedNotes.join(", ") + ")" : ""}` };
 }
 
 // Renders a derived numeric field as fixed-decimal text, or an
