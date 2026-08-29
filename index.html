@@ -191,76 +191,123 @@
   .performer-meta{font-family:var(--font-mono);font-size:11px;color:var(--text-faint);margin-top:4px;}
   .insights-empty{color:var(--text-faint);font-size:12.5px;padding:24px 0;text-align:center;}
 
-  /* Intelligent Insights — reuses .card/.performer-row visual language;
-     one <details> block per recommendation category so 50+ stocks stay
-     scannable instead of one long list. */
-  .ii-details{border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px;overflow:hidden;}
-  .ii-details:last-child{margin-bottom:0;}
-  .ii-summary{cursor:pointer;list-style:none;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface-2);font-family:var(--font-display);font-size:13px;font-weight:600;}
-  .ii-summary::-webkit-details-marker{display:none;}
-  .ii-summary::after{content:"▸";color:var(--text-faint);font-size:11px;transition:transform .15s ease;}
-  .ii-details[open] .ii-summary::after{transform:rotate(90deg);}
-  .ii-summary .count{font-family:var(--font-mono);font-weight:500;color:var(--text-faint);font-size:11.5px;}
-  .ii-body{padding:4px 16px 6px;}
-  .ii-row{padding:10px 0;border-bottom:1px solid var(--border);}
-  .ii-row:last-child{border-bottom:none;}
-  .ii-row-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:4px;flex-wrap:wrap;}
-  .ii-row-name{font-family:var(--font-display);font-size:13px;font-weight:600;color:var(--text);}
-  .ii-row-alloc{font-family:var(--font-mono);font-size:11px;color:var(--text-faint);white-space:nowrap;}
-  .ii-row-reason{font-size:12px;color:var(--text-muted);line-height:1.5;}
-  .ii-cat-badge{display:inline-block;font-family:var(--font-body);font-size:10px;font-weight:600;padding:2px 8px;border-radius:5px;letter-spacing:.02em;white-space:nowrap;}
+  /* ============================================================
+     INTELLIGENT INSIGHTS — redesign (UI only; see app.js — every
+     number rendered here still comes from computeStockInsight() /
+     stockAnalysisDerived() / the fundamental-verdict functions,
+     nothing recalculated differently for this view).
+     ============================================================ */
+  .ii-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:2px;}
+  .ii-card-title{font-family:var(--font-display);font-size:16px;font-weight:600;display:flex;align-items:center;gap:8px;}
+  .ii-card-title .spark{color:var(--gold);}
+  .ii-card-badge{font-size:10.5px;color:var(--text-faint);background:var(--surface-2);border:1px solid var(--border);border-radius:20px;padding:5px 11px;white-space:nowrap;}
+
+  .ii-alloc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:14px 0 16px;}
+  .ii-alloc-card{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:15px 17px;}
+  .ii-alloc-top{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
+  .ii-alloc-icon{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:15px;flex:0 0 auto;}
+  .ii-alloc-icon.large{background:#4bbf9c22;color:var(--positive);}
+  .ii-alloc-icon.mid{background:#d9a44122;color:var(--warning);}
+  .ii-alloc-icon.small{background:#6f93c922;color:var(--blue);}
+  .ii-alloc-icon.unclassified{background:#a78bfa22;color:#a78bfa;}
+  .ii-alloc-label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);margin-bottom:3px;}
+  .ii-alloc-value{font-family:var(--font-mono);font-size:20px;font-weight:600;color:var(--text);line-height:1.1;}
+  .ii-alloc-sub{font-size:10.5px;color:var(--text-faint);margin-top:1px;}
+  .ii-alloc-bar-track{height:6px;border-radius:4px;background:var(--bg);overflow:hidden;margin:10px 0 7px;}
+  .ii-alloc-bar-fill{height:100%;border-radius:4px;}
+  .ii-alloc-status{font-size:11.5px;font-weight:600;}
+  .ii-alloc-status.over{color:var(--negative);}
+  .ii-alloc-status.within{color:var(--positive);}
+  .ii-alloc-status.none{color:var(--text-faint);font-weight:500;}
+
+  .ii-portfolio-summary{display:flex;flex-wrap:wrap;gap:20px;row-gap:12px;align-items:center;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:13px 18px;margin-bottom:16px;}
+  .ii-portfolio-summary .ii-ps-label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);flex:0 0 auto;}
+  .ii-ps-item{display:flex;align-items:center;gap:8px;}
+  .ii-ps-icon{width:24px;height:24px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:11px;flex:0 0 auto;}
+  .ii-ps-icon.add{background:var(--positive-soft);color:var(--positive);}
+  .ii-ps-icon.hold{background:#6f93c922;color:var(--blue);}
+  .ii-ps-icon.watch{background:var(--warning-soft);color:var(--warning);}
+  .ii-ps-icon.reduce{background:var(--negative-soft);color:var(--negative);}
+  .ii-ps-icon.none, .ii-ps-icon.insufficient{background:var(--surface);color:var(--text-faint);}
+  .ii-ps-n{font-family:var(--font-mono);font-weight:600;font-size:13.5px;color:var(--text);}
+  .ii-ps-l{font-size:11px;color:var(--text-muted);}
+
+  .ii-filters-row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;}
+  .ii-filter-tabs{display:flex;gap:6px;flex-wrap:wrap;}
+  .ii-filter-tab{font-family:var(--font-body);font-size:11.5px;font-weight:600;padding:6px 12px;border-radius:20px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;white-space:nowrap;transition:border-color .15s ease;}
+  .ii-filter-tab:hover{border-color:var(--gold);color:var(--text);}
+  .ii-filter-tab.active{background:var(--gold);color:#1b1408;border-color:var(--gold);}
+  .ii-filter-controls{display:flex;gap:8px;flex-wrap:wrap;}
+  .ii-filter-controls select{min-width:140px;}
+
+  .ii-section{border:1px solid var(--border);border-radius:12px;margin-bottom:9px;background:var(--surface-2);overflow:hidden;}
+  .ii-section:last-child{margin-bottom:0;}
+  .ii-section-header{cursor:pointer;padding:13px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px;user-select:none;}
+  .ii-section-header:hover{background:var(--surface);}
+  .ii-section-left{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .ii-section-count{font-family:var(--font-mono);font-size:12px;color:var(--text-faint);}
+  .ii-section-chevron{color:var(--text-faint);font-size:11px;transition:transform .2s ease;flex:0 0 auto;}
+  .ii-section.open .ii-section-chevron{transform:rotate(180deg);}
+  .ii-section-body{display:none;border-top:1px solid var(--border);}
+  .ii-section.open .ii-section-body{display:block;animation:fade .2s ease;}
+
+  .ii-stock-table-head{display:grid;grid-template-columns:1.7fr 1.5fr 1fr 1.9fr 2.3fr 0.85fr;gap:14px;padding:9px 16px;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);border-bottom:1px solid var(--border);}
+  .ii-stock-row{display:grid;grid-template-columns:1.7fr 1.5fr 1fr 1.9fr 2.3fr 0.85fr;gap:14px;padding:14px 16px;border-bottom:1px solid var(--border);align-items:start;}
+  .ii-stock-row:last-child{border-bottom:none;}
+  .ii-mobile-label{display:none;font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);margin:10px 0 4px;}
+
+  .ii-stock-name-cell{display:flex;gap:10px;align-items:flex-start;}
+  .ii-stock-avatar{width:32px;height:32px;border-radius:9px;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--gold);flex:0 0 auto;}
+  .ii-stock-name{font-family:var(--font-display);font-weight:600;font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .ii-stock-sector{font-size:11px;color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+  .ii-alloc-cell .pct{font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--text);}
+  .ii-alloc-cell .room{font-size:10.5px;margin-top:2px;}
+  .ii-alloc-cell .room.pos{color:var(--positive);}
+  .ii-alloc-cell .room.neg{color:var(--negative);}
+  .ii-mini-bar-track{height:5px;border-radius:3px;background:var(--bg);margin-top:6px;overflow:hidden;}
+  .ii-mini-bar-fill{height:100%;border-radius:3px;}
+
+  .ii-cap-cell .cap-label{font-size:12.5px;color:var(--text);font-weight:500;}
+  .ii-cap-cell .cap-value{font-family:var(--font-mono);font-size:10.5px;color:var(--text-faint);margin-top:2px;}
+
+  .ii-insight-reason{font-size:11.5px;color:var(--text-muted);line-height:1.5;margin-top:4px;}
+  .ii-why-toggle{margin-top:6px;font-size:11px;font-weight:600;color:var(--gold);cursor:pointer;user-select:none;display:inline-flex;align-items:center;gap:3px;}
+  .ii-why-toggle .chev{font-size:9px;transition:transform .15s ease;}
+  .ii-insight-cell.why-open .ii-why-toggle .chev{transform:rotate(180deg);}
+  .ii-why-full{display:none;font-size:11.5px;color:var(--text-muted);line-height:1.55;margin-top:6px;padding-top:6px;border-top:1px solid var(--border);}
+  .ii-insight-cell.why-open .ii-why-full{display:block;}
+
+  .ii-metrics-cell{display:grid;grid-template-columns:repeat(auto-fit,minmax(68px,1fr));gap:7px;}
+  .ii-metric-chip{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:6px 8px;}
+  .ii-metric-chip .l{font-size:9px;text-transform:uppercase;letter-spacing:.03em;color:var(--text-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .ii-metric-chip .v{font-family:var(--font-mono);font-size:12.5px;font-weight:600;color:var(--text);margin-top:2px;}
+  .ii-metric-chip .c{font-size:9.5px;margin-top:1px;}
+  .ii-metric-chip .c.pos{color:var(--positive);}
+  .ii-metric-chip .c.neg{color:var(--negative);}
+  .ii-metric-chip .c.muted{color:var(--text-faint);}
+
+  .ii-score-cell{display:flex;flex-direction:column;align-items:center;gap:3px;}
+  .ii-score-ring{--pct:0;--ring-color:var(--text-faint);width:50px;height:50px;border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative;background:conic-gradient(var(--ring-color) calc(var(--pct)*1%), var(--border) 0);}
+  .ii-score-ring::before{content:"";position:absolute;inset:4px;border-radius:50%;background:var(--surface-2);}
+  .ii-score-ring span{position:relative;z-index:1;font-family:var(--font-mono);font-weight:700;font-size:14px;color:var(--text);}
+  .ii-score-label{font-size:9.5px;color:var(--text-faint);text-align:center;}
+
+  .ii-cat-badge{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-body);font-size:10.5px;font-weight:600;padding:4px 10px;border-radius:20px;letter-spacing:.01em;white-space:nowrap;}
   .ii-cat-add{background:var(--positive-soft);color:var(--positive);}
-  .ii-cat-hold{background:var(--surface-2);color:var(--text-muted);}
+  .ii-cat-hold{background:#6f93c922;color:var(--blue);}
   .ii-cat-watch{background:var(--warning-soft);color:var(--warning);}
   .ii-cat-reduce{background:var(--negative-soft);color:var(--negative);}
-  .ii-cat-none{background:var(--surface-2);color:var(--text-faint);}
-
-  /* ============================================================
-     INTELLIGENT INSIGHTS — UI-ONLY REDESIGN
-     Everything here is presentation: cards/progress bars/collapsible
-     groups around data computeStockInsight()/renderCapAllocationBreakdown()
-     already produce. No calculation logic lives in this stylesheet.
-     ============================================================ */
-  .iis-section-label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);margin:18px 0 8px;font-weight:600;}
-  .card.iis-card > .iis-section-label:first-of-type{margin-top:4px;}
-
-  .iis-alloc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;}
-  .iis-alloc-card{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;}
-  .iis-alloc-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;}
-  .iis-alloc-name{font-family:var(--font-display);font-size:12.5px;font-weight:600;color:var(--text);}
-  .iis-alloc-pct{font-family:var(--font-mono);font-size:15px;font-weight:600;color:var(--text);}
-  .iis-progress-track{height:6px;border-radius:4px;background:var(--surface);overflow:hidden;margin-bottom:6px;}
-  .iis-progress-fill{height:100%;border-radius:4px;background:var(--positive);transition:width .2s ease;}
-  .iis-progress-fill.approaching{background:var(--warning);}
-  .iis-progress-fill.above{background:var(--negative);}
-  .iis-alloc-status{font-size:10.5px;color:var(--text-faint);}
-  .iis-alloc-status.above{color:var(--negative);}
-  .iis-alloc-status.approaching{color:var(--warning);}
-
-  .iis-summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:4px;}
-  .iis-summary-card{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px;}
-  .iis-summary-card .n{font-family:var(--font-mono);font-size:20px;font-weight:600;color:var(--text);}
-  .iis-summary-card .l{font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.04em;}
-  .iis-summary-icon{font-size:19px;opacity:.8;}
-
-  .iis-groups{margin-top:6px;}
-  .ii-summary:hover{background:var(--surface);}
-
-  .iis-row-grid{display:grid;grid-template-columns:1.6fr 1.3fr .9fr 1.2fr 1.8fr 1fr;gap:14px;align-items:center;}
-  .iis-stock-name{font-family:var(--font-display);font-size:13px;font-weight:600;color:var(--text);}
-  .iis-stock-sector{font-size:10.5px;color:var(--text-faint);margin-top:2px;}
-  .iis-metrics-cell{font-size:11px;color:var(--text-muted);line-height:1.5;}
-  .iis-score-cell{text-align:right;}
-  .iis-why-toggle{background:none;border:none;color:var(--gold);font-family:var(--font-body);font-size:11px;cursor:pointer;padding:0;margin-top:8px;text-align:left;}
-  .iis-why-body{display:none;font-size:11.5px;color:var(--text-muted);line-height:1.55;margin-top:6px;padding-top:8px;border-top:1px dashed var(--border);}
-  .iis-why-body.open{display:block;animation:fade .15s ease;}
+  .ii-cat-none, .ii-cat-insufficient{background:var(--surface);color:var(--text-faint);}
 
   @media (max-width:900px){
-    .iis-row-grid{grid-template-columns:1fr;gap:7px;}
-    .iis-row-grid > div{display:flex;justify-content:space-between;align-items:center;gap:10px;}
-    .iis-row-grid > div::before{content:attr(data-label);color:var(--text-faint);font-size:10px;text-transform:uppercase;letter-spacing:.04em;flex:0 0 auto;}
-    .iis-alloc-cell{align-items:flex-start !important;}
-    .iis-alloc-cell > div{width:100%;}
+    .ii-stock-table-head{display:none;}
+    .ii-stock-row{grid-template-columns:1fr;gap:0;}
+    .ii-mobile-label{display:block;}
+    .ii-stock-row > div:first-child .ii-mobile-label{display:none;}
+    .ii-score-cell{flex-direction:row;justify-content:flex-start;gap:10px;}
+    .ii-filters-row{flex-direction:column;align-items:stretch;}
+    .ii-filter-controls select{flex:1;min-width:0;}
   }
 
   .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;}
@@ -1390,15 +1437,35 @@
 
     <div class="sa-detail-panel" id="saDetailPanel"></div>
 
-    <div class="card iis-card" style="margin-top:16px;">
-      <h3>Intelligent Insights <span class="hint">Equity — allocation + fundamentals, decision-support only</span></h3>
-      <p class="section-sub" style="margin:-4px 0 14px;">Combines each stock's current allocation (vs. your configured limit under Settings → Equity Allocation Limits) with the fundamentals above. Low allocation alone is never treated as a Buy signal, and high allocation alone is never treated as a Sell signal — see the reasoning shown per stock.</p>
-      <div class="iis-section-label">Allocation Summary</div>
-      <div id="capAllocationBreakdown" class="iis-alloc-grid"></div>
-      <div class="iis-section-label">Portfolio Summary</div>
-      <div id="portfolioSummaryGrid" class="iis-summary-grid"></div>
-      <div class="iis-section-label">Recommendations <span style="text-transform:none;letter-spacing:0;color:var(--text-faint);font-weight:400;">— click a category to expand</span></div>
-      <div id="intelligentInsightsBody" class="iis-groups"></div>
+    <div class="card" style="margin-top:16px;" id="intelligentInsightsCard">
+      <div class="ii-card-head">
+        <div class="ii-card-title"><span class="spark">✦</span> Intelligent Insights</div>
+        <div class="ii-card-badge">Equity = allocation + fundamentals</div>
+      </div>
+      <p class="section-sub" style="margin:6px 0 2px;">Combines each stock's current allocation (vs. your configured limit under Settings → Equity Allocation Limits) with the fundamentals above. Low allocation alone is never treated as a Buy signal, and high allocation alone is never treated as a Sell signal — click "Why?" on any stock for the full reasoning.</p>
+
+      <div id="iiAllocGrid" class="ii-alloc-grid"></div>
+      <div id="iiPortfolioSummary" class="ii-portfolio-summary"></div>
+
+      <div class="ii-filters-row">
+        <div id="iiFilterTabs" class="ii-filter-tabs"></div>
+        <div class="ii-filter-controls">
+          <select id="iiMarketCapFilter" class="filter-input">
+            <option value="">All Market Caps</option>
+            <option value="Large Cap">Large Cap</option>
+            <option value="Mid Cap">Mid Cap</option>
+            <option value="Small Cap">Small Cap</option>
+            <option value="Unclassified">Unclassified</option>
+          </select>
+          <select id="iiSortBy" class="filter-input">
+            <option value="score">Sort by: Score</option>
+            <option value="alloc">Sort by: Allocation vs Limit</option>
+            <option value="name">Sort by: Name</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="intelligentInsightsBody"></div>
     </div>
 
     <p class="settings-note">"Import Screener Data" reads an .xlsx with a header row (symbol, book_value, eps, industry_pe, roe, roce, etc. — same column names your Screener export uses) and matches each row to an Equity holding by Symbol. Re-importing replaces the whole Screener dataset. Click any row in the table above to see its full breakdown here.</p>
@@ -1416,6 +1483,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-08-29-3"></script>
+<script src="app.js?v=2026-08-29-2"></script>
 </body>
 </html>
