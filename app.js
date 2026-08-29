@@ -1935,10 +1935,12 @@ function fundamentalValuationVerdict(d) {
 function fundamentalHealthVerdict(d, bankingLatest) {
   const signals = [];
   if (d.isFinancial) {
-    // ROA (not ROE/ROCE), and Debt-to-Equity/Interest Coverage are
-    // skipped entirely — leverage is structural for a lender/insurer,
-    // not a red flag the way it would be for a manufacturer.
+    // ROA + ROE (ROCE and Debt-to-Equity/Interest Coverage are still
+    // skipped — leverage is structural for a lender/insurer, not a red
+    // flag the way it would be for a manufacturer — but weak ROE/ROA
+    // profitability itself is a genuine health concern for a bank).
     if (d.roa !== null) signals.push(d.roa >= 1 ? 1 : d.roa >= 0.5 ? 0 : -1);
+    if (d.roe !== null) signals.push(d.roe >= 15 ? 1 : d.roe <= 8 ? -1 : 0);
     const isLender = /bank|nbfc/i.test(d.sector || "");
     if (isLender && bankingLatest && bankingLatest.metrics) {
       const m = bankingLatest.metrics;
@@ -2044,7 +2046,15 @@ function computeStockInsight(row, screenerMap) {
 
   let category, categoryClass, reason;
 
-  if (negatives >= 3) {
+  if (d.isFinancial && health === "weak") {
+    // Weak profitability (ROA/ROE) for a lender/insurer is a
+    // structural concern that fast growth or a fair valuation doesn't
+    // offset — growth funded by weak unit economics is a warning
+    // sign, not a mitigant — so this overrides valuation/growth and
+    // allocation status entirely.
+    category = "Reduce / Sell"; categoryClass = "reduce";
+    reason = `Financial-sector holding with weak profitability (${factorsText}) — ROE/ROA are too low for a lender/insurer, which overrides otherwise reasonable growth or valuation. Consider reducing regardless of current allocation.`;
+  } else if (negatives >= 3) {
     // Valuation, health AND growth all negative — a genuine Sell-level
     // read that overrides a low allocation; don't add regardless of
     // how little is currently held.
@@ -2076,6 +2086,9 @@ function computeStockInsight(row, screenerMap) {
     if (positives >= 2 && negatives === 0) {
       category = "Consider Adding"; categoryClass = "add";
       reason = `${allocText}. Fundamental analysis is positive (${factorsText}) and valuation looks reasonable — may be worth considering for additional allocation.`;
+    } else if (positives >= 2 && negatives === 1) {
+      category = "Watch"; categoryClass = "watch";
+      reason = `${allocText}. Fundamentals are mostly positive (${factorsText}), but one factor is a concern — worth watching before adding further rather than a clear add.`;
     } else if (negatives >= 1) {
       category = "No Action"; categoryClass = "none";
       reason = `${allocText}, but fundamentals/valuation do not support increasing the position (${factorsText}). No additional investment is suggested.`;
@@ -2136,12 +2149,21 @@ function renderIntelligentInsights() {
   const el = document.getElementById("intelligentInsightsBody");
   if (!el) return;
   renderCapAllocationBreakdown();
-  if (state.equity.length === 0) {
-    el.innerHTML = '<div class="insights-empty">No Equity holdings yet — add stocks and import Screener Data to see Intelligent Insights.</div>';
+  // ETFs are excluded here (see isETFEquity()) — they have no
+  // company-level fundamentals to assess, so they'd otherwise sit
+  // permanently in "No Action — Insufficient Data" for no useful
+  // reason. Still fully shown on the Equity tab and counted in the
+  // Cap Allocation Breakdown above; only skipped from this
+  // fundamentals-driven list.
+  const eligible = state.equity.filter(row => !isETFEquity(row));
+  if (eligible.length === 0) {
+    el.innerHTML = state.equity.length === 0
+      ? '<div class="insights-empty">No Equity holdings yet — add stocks and import Screener Data to see Intelligent Insights.</div>'
+      : '<div class="insights-empty">No non-ETF Equity holdings to assess — Intelligent Insights needs company-level fundamentals, which ETFs don\'t have.</div>';
     return;
   }
   const screenerMap = buildScreenerMap();
-  const insights = state.equity.map(row => computeStockInsight(row, screenerMap));
+  const insights = eligible.map(row => computeStockInsight(row, screenerMap));
 
   const grouped = {};
   INSIGHT_CATEGORY_ORDER.forEach(c => { grouped[c.key] = []; });
@@ -4031,6 +4053,20 @@ function parseIndianNumber(v) {
 // Gold ETF ticker that doesn't contain "GOLD", add it here.
 function isGoldSymbol(symbol) {
   return /GOLD/i.test(String(symbol || ""));
+}
+
+// Equity holdings that are themselves ETFs (index/sector ETFs like
+// NIFTYBEES, BANKBEES, JUNIORBEES, or anything with "ETF" in the
+// name) have no company-level fundamentals — no PE, EPS, ROE, growth
+// rates, etc. apply to a basket of stocks — so Intelligent Insights
+// skips them entirely rather than showing a perpetual "No Action —
+// Insufficient Data" for something that will never get a Screener
+// match. Gold ETFs never reach this check in the first place
+// (isGoldSymbol() above already routes them to the Gold tab at
+// import time); this catches other index/sector ETFs that stay on
+// the Equity tab.
+function isETFEquity(row) {
+  return /\bETF\b|BEES/i.test(String(row.name || ""));
 }
 
 // Finds the "Client ID" label anywhere in a sheet's raw rows
