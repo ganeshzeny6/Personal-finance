@@ -54,6 +54,15 @@ const DEFAULT_IDEAL = { cash: 5, debt: 30, mf: 30, equity: 25, gold: 10 };
 // via getEquityAllocLimit() below.
 const DEFAULT_EQUITY_ALLOC_LIMITS = { large: 15, mid: 8, small: 5 };
 
+// Equity tab: overall target % of the WHOLE equity portfolio per
+// market-cap category (e.g. Large Cap should make up ~70% of total
+// equity invested). Distinct from DEFAULT_EQUITY_ALLOC_LIMITS above,
+// which caps a single stock's share of the portfolio — this instead
+// caps a whole category's share of the portfolio. Read via
+// getEquityCapAllocTarget() below, editable under Settings -> Equity
+// Allocation Targets (Overall Portfolio, by Market Cap).
+const DEFAULT_EQUITY_CAP_ALLOC_TARGETS = { large: 70, mid: 20, small: 10 };
+
 // Stock Analysis: columns hidden by default on a brand-new install, so
 // the table opens compact/scannable instead of showing all 32 fields
 // at once. Only ever applied via blankState() below — an existing
@@ -135,6 +144,9 @@ function blankState() {
     // Equity tab: max allocation % per market-cap category — see
     // DEFAULT_EQUITY_ALLOC_LIMITS above and getEquityAllocLimit() below.
     equityAllocLimits: { ...DEFAULT_EQUITY_ALLOC_LIMITS },
+    // Overall Large/Mid/Small target split for the whole Equity
+    // portfolio — see DEFAULT_EQUITY_CAP_ALLOC_TARGETS above.
+    equityCapAllocTargets: { ...DEFAULT_EQUITY_CAP_ALLOC_TARGETS },
     equity: [],
     debt: [],
     mf: [],
@@ -209,6 +221,7 @@ function mergeIntoState(saved) {
     ...saved,
     ideal: { ...DEFAULT_IDEAL, ...(saved.ideal || {}) },
     equityAllocLimits: { ...DEFAULT_EQUITY_ALLOC_LIMITS, ...(saved.equityAllocLimits || {}) },
+    equityCapAllocTargets: { ...DEFAULT_EQUITY_CAP_ALLOC_TARGETS, ...(saved.equityCapAllocTargets || {}) },
     // Backfill: earlier saves may have an explicit "" here from before
     // these had real defaults — treat that the same as "never set"
     // rather than letting a blank string win.
@@ -625,6 +638,19 @@ function getEquityAllocLimit(capCategory) {
   if (capCategory === "Large Cap") return Number(limits.large) || 0;
   if (capCategory === "Mid Cap") return Number(limits.mid) || 0;
   if (capCategory === "Small Cap") return Number(limits.small) || 0;
+  return null;
+}
+
+// Overall target % for a WHOLE market-cap category's share of the
+// total Equity portfolio (e.g. Large Cap ~70%) — distinct from
+// getEquityAllocLimit() above, which caps a single stock's share.
+// Falls back to DEFAULT_EQUITY_CAP_ALLOC_TARGETS. Returns null when
+// the cap category itself isn't known.
+function getEquityCapAllocTarget(capCategory) {
+  const targets = state.equityCapAllocTargets || DEFAULT_EQUITY_CAP_ALLOC_TARGETS;
+  if (capCategory === "Large Cap") return Number(targets.large) || 0;
+  if (capCategory === "Mid Cap") return Number(targets.mid) || 0;
+  if (capCategory === "Small Cap") return Number(targets.small) || 0;
   return null;
 }
 
@@ -2203,10 +2229,16 @@ function computeCapAllocationSummary() {
     buckets[cap] = (buckets[cap] || 0) + (Number(row.invested) || 0);
   });
   const pct = (v) => totalInvested > 0 ? (v / totalInvested) * 100 : 0;
+  // These cards describe each category's share of the WHOLE Equity
+  // portfolio, so they compare against the overall category target
+  // (getEquityCapAllocTarget(), e.g. Large Cap ~70%) — NOT the
+  // per-stock limit (getEquityAllocLimit(), e.g. 15% per Large Cap
+  // stock), which is a different number used elsewhere (Equity tab's
+  // Alloc % column, Intelligent Insights' per-stock rows).
   return [
-    { key: "large", label: "Large Cap", icon: "▮▮▮", cls: "large", pct: pct(buckets["Large Cap"]), max: getEquityAllocLimit("Large Cap") },
-    { key: "mid", label: "Mid Cap", icon: "▮▮", cls: "mid", pct: pct(buckets["Mid Cap"]), max: getEquityAllocLimit("Mid Cap") },
-    { key: "small", label: "Small Cap", icon: "▮", cls: "small", pct: pct(buckets["Small Cap"]), max: getEquityAllocLimit("Small Cap") },
+    { key: "large", label: "Large Cap", icon: "▮▮▮", cls: "large", pct: pct(buckets["Large Cap"]), max: getEquityCapAllocTarget("Large Cap") },
+    { key: "mid", label: "Mid Cap", icon: "▮▮", cls: "mid", pct: pct(buckets["Mid Cap"]), max: getEquityCapAllocTarget("Mid Cap") },
+    { key: "small", label: "Small Cap", icon: "▮", cls: "small", pct: pct(buckets["Small Cap"]), max: getEquityCapAllocTarget("Small Cap") },
     { key: "unclassified", label: "Unclassified", icon: "?", cls: "unclassified", pct: pct(buckets["Unclassified"]), max: null }
   ];
 }
@@ -5495,19 +5527,34 @@ function openSettingsModal() {
       <input type="text" id="settingsOwnerName" value="${escapeAttr(state.ownerName || "Ganesh")}">
     </div>
 
-    <h4>Equity Allocation Limits</h4>
-    <p class="settings-note" style="margin-top:0">Maximum recommended allocation (% of total Equity Invested Amount) per market-cap category. The Equity tab and Insights use these live — a stock's category comes from its imported Screener Market Cap.</p>
+    <h4>Equity Allocation Limits (Per Stock)</h4>
+    <p class="settings-note" style="margin-top:0">Maximum recommended allocation (% of total Equity Invested Amount) for any ONE stock, per market-cap category. The Equity tab's Alloc % column and Intelligent Insights' per-stock rows use these live — a stock's category comes from its imported Screener Market Cap.</p>
     <div class="settings-field">
-      <label for="settingsAllocLarge">Large Cap — max %</label>
+      <label for="settingsAllocLarge">Large Cap — max % per stock</label>
       <input type="text" inputmode="decimal" id="settingsAllocLarge" value="${escapeAttr(String(state.equityAllocLimits?.large ?? DEFAULT_EQUITY_ALLOC_LIMITS.large))}">
     </div>
     <div class="settings-field">
-      <label for="settingsAllocMid">Mid Cap — max %</label>
+      <label for="settingsAllocMid">Mid Cap — max % per stock</label>
       <input type="text" inputmode="decimal" id="settingsAllocMid" value="${escapeAttr(String(state.equityAllocLimits?.mid ?? DEFAULT_EQUITY_ALLOC_LIMITS.mid))}">
     </div>
     <div class="settings-field">
-      <label for="settingsAllocSmall">Small Cap — max %</label>
+      <label for="settingsAllocSmall">Small Cap — max % per stock</label>
       <input type="text" inputmode="decimal" id="settingsAllocSmall" value="${escapeAttr(String(state.equityAllocLimits?.small ?? DEFAULT_EQUITY_ALLOC_LIMITS.small))}">
+    </div>
+
+    <h4>Equity Allocation Targets (Overall Portfolio, by Market Cap)</h4>
+    <p class="settings-note" style="margin-top:0">Target % of your TOTAL Equity portfolio for each market-cap category as a whole (e.g. Large Cap should make up around 70% overall). Shown in the "Cap Allocation" cards on Stock Analysis → Intelligent Insights — separate from the per-stock limits above.</p>
+    <div class="settings-field">
+      <label for="settingsCapTargetLarge">Large Cap — target % of portfolio</label>
+      <input type="text" inputmode="decimal" id="settingsCapTargetLarge" value="${escapeAttr(String(state.equityCapAllocTargets?.large ?? DEFAULT_EQUITY_CAP_ALLOC_TARGETS.large))}">
+    </div>
+    <div class="settings-field">
+      <label for="settingsCapTargetMid">Mid Cap — target % of portfolio</label>
+      <input type="text" inputmode="decimal" id="settingsCapTargetMid" value="${escapeAttr(String(state.equityCapAllocTargets?.mid ?? DEFAULT_EQUITY_CAP_ALLOC_TARGETS.mid))}">
+    </div>
+    <div class="settings-field">
+      <label for="settingsCapTargetSmall">Small Cap — target % of portfolio</label>
+      <input type="text" inputmode="decimal" id="settingsCapTargetSmall" value="${escapeAttr(String(state.equityCapAllocTargets?.small ?? DEFAULT_EQUITY_CAP_ALLOC_TARGETS.small))}">
     </div>
 
     <h4>Live Price API</h4>
@@ -5563,6 +5610,11 @@ function openSettingsModal() {
           large: parseLimit("settingsAllocLarge", DEFAULT_EQUITY_ALLOC_LIMITS.large),
           mid: parseLimit("settingsAllocMid", DEFAULT_EQUITY_ALLOC_LIMITS.mid),
           small: parseLimit("settingsAllocSmall", DEFAULT_EQUITY_ALLOC_LIMITS.small)
+        };
+        state.equityCapAllocTargets = {
+          large: parseLimit("settingsCapTargetLarge", DEFAULT_EQUITY_CAP_ALLOC_TARGETS.large),
+          mid: parseLimit("settingsCapTargetMid", DEFAULT_EQUITY_CAP_ALLOC_TARGETS.mid),
+          small: parseLimit("settingsCapTargetSmall", DEFAULT_EQUITY_CAP_ALLOC_TARGETS.small)
         };
         saveState();
         renderBrand();
