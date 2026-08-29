@@ -526,6 +526,31 @@ function setupColumnResize(colId, resizerSelector) {
   });
 }
 
+// Wires every "✕" clear button (see .filter-clear-btn in index.html)
+// generically: shows the button only once its paired <input> has text,
+// and clicking it clears the value, re-fires the exact same "input"
+// event the person typing would have fired (so each tab's own
+// setupSortAndFilter()/setupMobileSort() listener — unchanged — picks
+// it up and re-renders that tab's table), then returns focus to the
+// input. One function covers Equity/Debt/Mutual Funds/Gold/Stock
+// Analysis without any tab-specific code.
+function setupFilterClearButtons() {
+  document.querySelectorAll(".filter-clear-btn").forEach(btn => {
+    const input = document.getElementById(btn.dataset.clearTarget);
+    if (!input) return;
+    const wrap = btn.closest(".filter-clear-wrap, .sa-search-wrap");
+    const syncVisibility = () => { if (wrap) wrap.classList.toggle("has-value", !!input.value); };
+    syncVisibility();
+    input.addEventListener("input", syncVisibility);
+    btn.addEventListener("click", () => {
+      input.value = "";
+      syncVisibility();
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.focus();
+    });
+  });
+}
+
 // Finds an existing row in `array` via `matchFn` and merges
 // `updateFields` into it (preserving id and any field not being
 // imported, e.g. a live-fetched price); otherwise pushes a new
@@ -5667,6 +5692,7 @@ setupMobileSort("stockanalysis", "stockAnalysisMobileSort", "stockAnalysisMobile
 
 setupOverflowToggle("debtOverflowToggle", "debtToolbarSecondary");
 setupIntelligentInsightsControls();
+setupFilterClearButtons();
 
 setupFabAdd("fabAddDebt", "btnAddDebt");
 
