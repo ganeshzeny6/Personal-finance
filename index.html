@@ -1215,12 +1215,6 @@
     </div>
 
     <div class="card" style="margin-top:16px;">
-      <h3>Intelligent Insights <span class="hint">Equity — allocation + fundamentals, decision-support only</span></h3>
-      <p class="section-sub" style="margin:-4px 0 14px;">Combines each stock's current allocation (vs. your configured limit under Settings → Equity Allocation Limits) with Stock Analysis fundamentals. Low allocation alone is never treated as a Buy signal, and high allocation alone is never treated as a Sell signal — see the reasoning shown per stock.</p>
-      <div id="intelligentInsightsBody"></div>
-    </div>
-
-    <div class="card" style="margin-top:16px;">
       <h3>Mutual Fund Category Breakdown</h3>
       <div class="table-scroll">
         <table>
@@ -1347,6 +1341,13 @@
     </div>
 
     <div class="sa-detail-panel" id="saDetailPanel"></div>
+
+    <div class="card" style="margin-top:16px;">
+      <h3>Intelligent Insights <span class="hint">Equity — allocation + fundamentals, decision-support only</span></h3>
+      <p class="section-sub" style="margin:-4px 0 14px;">Combines each stock's current allocation (vs. your configured limit under Settings → Equity Allocation Limits) with the fundamentals above. Low allocation alone is never treated as a Buy signal, and high allocation alone is never treated as a Sell signal — see the reasoning shown per stock.</p>
+      <div id="capAllocationBreakdown" class="import-stat-row"></div>
+      <div id="intelligentInsightsBody"></div>
+    </div>
 
     <p class="settings-note">"Import Screener Data" reads an .xlsx with a header row (symbol, book_value, eps, industry_pe, roe, roce, etc. — same column names your Screener export uses) and matches each row to an Equity holding by Symbol. Re-importing replaces the whole Screener dataset. Click any row in the table above to see its full breakdown here.</p>
   </section>
