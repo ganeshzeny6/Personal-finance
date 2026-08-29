@@ -201,7 +201,13 @@ function blankState() {
     // above) so Drive import works out of the box; still editable from
     // Settings if these ever need to change.
     googleDriveClientId: DEFAULT_GOOGLE_DRIVE_CLIENT_ID,
-    googleDriveApiKey: DEFAULT_GOOGLE_DRIVE_API_KEY
+    googleDriveApiKey: DEFAULT_GOOGLE_DRIVE_API_KEY,
+    // Market Snapshot (Dashboard): last-known live values for Nifty Bank /
+    // NIFTY 50 / SENSEX, keyed by INDEX_DEFINITIONS[].key. Persisted like
+    // everything else in `state` so the snapshot still has something to
+    // show (marked stale) immediately after a reload, before the next
+    // 30-second live refresh lands. Populated by refreshIndexData().
+    indexData: {}
   };
 }
 
@@ -226,7 +232,8 @@ function mergeIntoState(saved) {
     // these had real defaults — treat that the same as "never set"
     // rather than letting a blank string win.
     googleDriveClientId: saved.googleDriveClientId || DEFAULT_GOOGLE_DRIVE_CLIENT_ID,
-    googleDriveApiKey: saved.googleDriveApiKey || DEFAULT_GOOGLE_DRIVE_API_KEY
+    googleDriveApiKey: saved.googleDriveApiKey || DEFAULT_GOOGLE_DRIVE_API_KEY,
+    indexData: { ...(saved.indexData || {}) }
   };
 }
 
@@ -755,7 +762,6 @@ function renderEquity() {
     // Alloc % reflects each stock's share of total invested capital,
     // not its share of current market value.
     const allocPct = totals.invested > 0 ? (Number(row.invested) / totals.invested) * 100 : 0;
-    const pendingBadge = row.livePricePending ? '<span class="pending-badge">Pending</span>' : "";
     const capCategory = getEquityCapCategory(row, screenerMap);
     const allocMax = getEquityAllocLimit(capCategory);
     const allocStatus = allocLimitStatus(allocPct, allocMax);
@@ -773,7 +779,7 @@ function renderEquity() {
       <td data-label="Invested Amt"><input type="number" step="any" value="${roundedInputValue(row.invested)}" data-field="invested" disabled></td>
       <td data-label="Units"><input type="number" step="any" value="${roundedInputValue(row.units)}" data-field="units" disabled></td>
       <td class="c-avg" data-label="Avg Price">${fmtNum(d.avgPrice)}</td>
-      <td data-label="LTP"><div class="price-cell"><input type="number" step="any" value="${roundedInputValue(row.ltp)}" data-field="ltp" disabled>${pendingBadge}</div></td>
+      <td data-label="LTP">${renderEquityPriceCellHTML(row)}</td>
       <td class="c-cv" data-label="Current Value">${fmtNum(d.currentValue)}</td>
       <td class="c-pl ${plClass(d.pl)}" data-label="P&amp;L">${fmtNum(d.pl)}</td>
       <td class="c-plpct ${plClass(d.pl)}" data-label="P&amp;L %">${fmtPct(d.plPct)}</td>
@@ -944,6 +950,79 @@ async function fetchHoldingsData() {
   return json;
 }
 
+// Header spellings accepted for each new live market-data column added to
+// the Apps Script sheet (Previous Close / Open Price / Day High / Day Low /
+// 52W High / 52W Low). Matched case-insensitively, same convention as every
+// other header lookup in this file (buildMFCategoryMap, toHoldingRecord,
+// etc.) — column order in the sheet never matters.
+const MARKET_DATA_FIELD_CANDIDATES = {
+  prevClose: ["Previous Close", "Prev Close", "PrevClose"],
+  open: ["Open Price", "Open"],
+  dayHigh: ["Day High", "High"],
+  dayLow: ["Day Low", "Low"],
+  high52: ["52W High", "52 Week High", "52WHigh", "High 52W"],
+  low52: ["52W Low", "52 Week Low", "52WLow", "Low 52W"]
+};
+
+// Builds a Map from every identifier column found (uppercased, trimmed) to
+// that row's cleaned OHLC/52W figures — mirrors buildPriceMap()'s id-matching
+// convention (Stock Name or Symbol) so the same `state.equity` name lookup
+// already used for LTP also finds this data. A field that isn't present or
+// isn't parseable comes back null (not 0) so callers can leave the
+// last-saved value alone instead of clobbering it — see refreshEquityPrices().
+function buildMarketDataMap(rows, idCandidates) {
+  const map = new Map();
+  if (!Array.isArray(rows)) return map;
+  rows.forEach(obj => {
+    const keys = Object.keys(obj);
+    const findVal = (candidates) => {
+      const k = keys.find(k => candidates.some(c => c.toLowerCase() === k.trim().toLowerCase()));
+      return k !== undefined ? parseIndianNumber(obj[k]) : null;
+    };
+    let idVal = "";
+    for (const idName of idCandidates) {
+      const idKey = keys.find(k => k.trim().toLowerCase() === idName.toLowerCase());
+      if (idKey && String(obj[idKey] || "").trim()) { idVal = String(obj[idKey]).trim().toUpperCase(); break; }
+    }
+    if (!idVal) return;
+    map.set(idVal, {
+      prevClose: findVal(MARKET_DATA_FIELD_CANDIDATES.prevClose),
+      open: findVal(MARKET_DATA_FIELD_CANDIDATES.open),
+      dayHigh: findVal(MARKET_DATA_FIELD_CANDIDATES.dayHigh),
+      dayLow: findVal(MARKET_DATA_FIELD_CANDIDATES.dayLow),
+      high52: findVal(MARKET_DATA_FIELD_CANDIDATES.high52),
+      low52: findVal(MARKET_DATA_FIELD_CANDIDATES.low52)
+    });
+  });
+  return map;
+}
+
+// Day Change % is always derived here from LTP + Previous Close — never
+// read as a separately-supplied percentage column, per spec. Returns null
+// (renders as a dash) rather than 0 when either side isn't usable yet, so
+// "no data" is never shown as "unchanged".
+function dayChangePct(ltp, prevClose) {
+  const p = Number(prevClose);
+  const l = Number(ltp);
+  if (!p || p <= 0 || !l || l <= 0) return null;
+  return ((l - p) / p) * 100;
+}
+
+// Compact green/red/neutral badge used next to LTP on both Equity and
+// Stock Analysis — a single shared renderer so the two tabs' badges never
+// drift apart visually. `stale` marks a row whose OHLC/52W fields didn't
+// all come back on the last refresh (LTP/Day Change can still be current
+// even when e.g. 52W High briefly failed) — shown as a small dot with an
+// explanatory title rather than hiding or guessing the value.
+function renderDayChangeBadgeHTML(ltp, prevClose, stale) {
+  const chg = dayChangePct(ltp, prevClose);
+  if (chg === null) return '<span class="dc-badge muted">—</span>';
+  const cls = chg > 0 ? "pos" : chg < 0 ? "neg" : "muted";
+  const arrow = chg > 0 ? "▲" : chg < 0 ? "▼" : "•";
+  const staleTitle = stale ? "Some live fields could not refresh this cycle — showing last known values." : "";
+  return `<span class="dc-badge ${cls}"${staleTitle ? ` title="${escapeAttr(staleTitle)}"` : ""}>${arrow} ${chg >= 0 ? "+" : ""}${fmtNum(chg, 2)}%${stale ? '<span class="dc-stale-dot">•</span>' : ""}</span>`;
+}
+
 // Builds a Map from every identifier column found (uppercased,
 // trimmed) to the parsed price, so a stock can be matched by
 // either its plain name or its Google Finance-style symbol.
@@ -1029,6 +1108,10 @@ async function refreshEquityPrices() {
   if (state.equity.length === 0) return { ok: 0, fail: 0, failedRows: [], skipped: true };
   const data = await fetchPriceData();
   const priceMap = buildPriceMap(data.stocks, ["Stock Name", "Symbol"], ["Live Price", "Price"]);
+  // Same data.stocks payload, same identifier columns — just reading the
+  // extra Previous Close/Open/Day High/Day Low/52W High/52W Low columns
+  // that have now been added to the sheet. No separate fetch/endpoint.
+  const marketDataMap = buildMarketDataMap(data.stocks, ["Stock Name", "Symbol"]);
   let ok = 0;
   const failedRows = [];
   state.equity.forEach(row => {
@@ -1036,13 +1119,58 @@ async function refreshEquityPrices() {
     if (key && priceMap.has(key)) {
       row.ltp = priceMap.get(key);
       row.livePricePending = false;
+      const md = marketDataMap.get(key);
+      // Only overwrite a field when this refresh actually returned a
+      // usable number for it — an individually blank/unparseable column
+      // (e.g. 52W High momentarily empty) leaves that one field at its
+      // last saved value instead of wiping it, per the "keep the last
+      // valid value" requirement. row.marketDataStale flags the row
+      // whenever any of the six fields didn't come back this cycle, so
+      // the UI can show a small "stale" indicator without hiding data.
+      if (md) {
+        if (md.prevClose !== null) row.prevClose = md.prevClose;
+        if (md.open !== null) row.openPrice = md.open;
+        if (md.dayHigh !== null) row.dayHigh = md.dayHigh;
+        if (md.dayLow !== null) row.dayLow = md.dayLow;
+        if (md.high52 !== null) row.high52Live = md.high52;
+        if (md.low52 !== null) row.low52Live = md.low52;
+        row.marketDataStale = [md.prevClose, md.open, md.dayHigh, md.dayLow, md.high52, md.low52].some(v => v === null);
+      } else {
+        row.marketDataStale = true;
+      }
       ok++;
     } else {
       failedRows.push({ name: row.name || "(unnamed)", key });
+      row.marketDataStale = true;
     }
   });
   saveState();
   return { ok, fail: failedRows.length, failedRows };
+}
+
+// Compact LTP cell used on the Equity tab: the existing price input +
+// Pending badge (unchanged), plus a Day Change % badge and a small OHLC/
+// 52W tooltip — no new table column, so the table's width is untouched;
+// the extra detail only adds a little height to this one cell.
+function renderEquityPriceCellHTML(row) {
+  const pendingBadge = row.livePricePending ? '<span class="pending-badge">Pending</span>' : "";
+  const chgHTML = renderDayChangeBadgeHTML(row.ltp, row.prevClose, row.marketDataStale);
+  const tipParts = [];
+  if (row.openPrice != null) tipParts.push(`Open ${fmtNum(row.openPrice, 2)}`);
+  if (row.dayHigh != null) tipParts.push(`Day High ${fmtNum(row.dayHigh, 2)}`);
+  if (row.dayLow != null) tipParts.push(`Day Low ${fmtNum(row.dayLow, 2)}`);
+  if (row.high52Live != null) tipParts.push(`52W High ${fmtNum(row.high52Live, 2)}`);
+  if (row.low52Live != null) tipParts.push(`52W Low ${fmtNum(row.low52Live, 2)}`);
+  const tooltip = tipParts.length ? tipParts.join(" · ") : "OHLC / 52W data not available yet";
+  return `
+    <div class="price-cell">
+      <input type="number" step="any" value="${roundedInputValue(row.ltp)}" data-field="ltp" disabled>${pendingBadge}
+    </div>
+    <div class="eq-price-meta" title="${escapeAttr(tooltip)}">
+      ${chgHTML}
+      ${row.prevClose != null ? `<span class="eq-prevclose">Prev ${fmtNum(row.prevClose, 1)}</span>` : ""}
+    </div>
+  `;
 }
 
 async function runEquityRefresh(statusEl) {
@@ -1677,6 +1805,134 @@ async function runGoldRefresh(statusEl) {
 // runGoldRefresh() the same way this button used to.
 
 /* ============================================================
+   MARKET SNAPSHOT (Nifty Bank / NIFTY 50 / SENSEX)
+   Shown on the Dashboard tab. Reuses the exact same live-data
+   endpoint (fetchPriceData()) the Equity tab's live refresh already
+   calls — expects an optional `indices` array in the JSON payload,
+   one row per index, keyed by that row's own header text (same
+   flexible-header convention as everything else in this file). If
+   the deployed Apps Script doesn't return an `indices` array yet,
+   each card just shows "No live data yet" rather than breaking.
+   ============================================================ */
+
+const INDEX_DEFINITIONS = [
+  { key: "niftybank", label: "Nifty Bank", candidates: ["Nifty Bank", "Bank Nifty", "NIFTY BANK", "NIFTYBANK"] },
+  { key: "nifty50", label: "NIFTY 50", candidates: ["NIFTY 50", "Nifty 50", "Nifty50", "NIFTY"] },
+  { key: "sensex", label: "SENSEX", candidates: ["SENSEX", "Sensex", "BSE Sensex"] }
+];
+
+// Builds a Map from index name (uppercased, trimmed) to its cleaned
+// value/prevClose/52W High/Low — mirrors buildMarketDataMap()'s
+// per-field null-on-missing behavior. The index's own name/label
+// column is matched flexibly ("Index", "Name", "Index Name").
+function buildIndexRecordsMap(rows) {
+  const map = new Map();
+  if (!Array.isArray(rows)) return map;
+  rows.forEach(obj => {
+    const keys = Object.keys(obj);
+    const findVal = (candidates) => {
+      const k = keys.find(k => candidates.some(c => c.toLowerCase() === k.trim().toLowerCase()));
+      return k !== undefined ? parseIndianNumber(obj[k]) : null;
+    };
+    const nameKey = keys.find(k => ["Index", "Name", "Index Name"].some(c => c.toLowerCase() === k.trim().toLowerCase()));
+    const name = nameKey ? String(obj[nameKey] || "").trim() : "";
+    if (!name) return;
+    map.set(name.toUpperCase(), {
+      value: findVal(["Live Price", "Value", "Price", "Current Value"]),
+      prevClose: findVal(MARKET_DATA_FIELD_CANDIDATES.prevClose),
+      high52: findVal(MARKET_DATA_FIELD_CANDIDATES.high52),
+      low52: findVal(MARKET_DATA_FIELD_CANDIDATES.low52)
+    });
+  });
+  return map;
+}
+
+function findIndexRecord(map, candidates) {
+  for (const c of candidates) {
+    const rec = map.get(c.toUpperCase());
+    if (rec) return rec;
+  }
+  return null;
+}
+
+// Shared worker, same pattern as refreshEquityPrices()/refreshMFPrices():
+// fetches once, updates state.indexData in place (field-by-field, so a
+// single missing column doesn't wipe the rest), then re-renders. Silently
+// no-ops (marks existing cards stale) if the endpoint doesn't return an
+// `indices` array at all — this is additive to the existing sheet, not a
+// hard requirement of it.
+async function refreshIndexData() {
+  let data;
+  try {
+    data = await fetchPriceData();
+  } catch (e) {
+    INDEX_DEFINITIONS.forEach(def => { if (state.indexData[def.key]) state.indexData[def.key].stale = true; });
+    renderMarketSnapshot();
+    return;
+  }
+  const map = buildIndexRecordsMap(data.indices);
+  let changed = false;
+  INDEX_DEFINITIONS.forEach(def => {
+    const rec = findIndexRecord(map, def.candidates);
+    const existing = state.indexData[def.key] || {};
+    if (rec && rec.value !== null) {
+      state.indexData[def.key] = {
+        value: rec.value,
+        prevClose: rec.prevClose !== null ? rec.prevClose : (existing.prevClose ?? null),
+        high52: rec.high52 !== null ? rec.high52 : (existing.high52 ?? null),
+        low52: rec.low52 !== null ? rec.low52 : (existing.low52 ?? null),
+        stale: [rec.prevClose, rec.high52, rec.low52].some(v => v === null)
+      };
+      changed = true;
+    } else if (state.indexData[def.key]) {
+      state.indexData[def.key].stale = true;
+    }
+  });
+  if (changed) saveState();
+  renderMarketSnapshot();
+}
+
+function renderMarketSnapshot() {
+  const el = document.getElementById("marketSnapshotGrid");
+  if (!el) return;
+  el.innerHTML = INDEX_DEFINITIONS.map(def => {
+    const rec = state.indexData[def.key];
+    if (!rec || rec.value === null || rec.value === undefined) {
+      return `
+        <div class="ms-card">
+          <div class="ms-card-top"><span class="ms-name">${escapeAttr(def.label)}</span></div>
+          <div class="ms-empty">No live data yet</div>
+        </div>`;
+    }
+    const chg = dayChangePct(rec.value, rec.prevClose);
+    const chgCls = chg === null ? "muted" : chg > 0 ? "pos" : chg < 0 ? "neg" : "muted";
+    const chgText = chg === null ? "—" : `${chg >= 0 ? "+" : ""}${fmtNum(chg, 2)}% today`;
+    const hasRange = rec.high52 !== null && rec.low52 !== null && rec.high52 > rec.low52;
+    let barPct = 50, pctFromLow = null, pctFromHigh = null;
+    if (hasRange) {
+      pctFromLow = ((rec.value - rec.low52) / rec.low52) * 100;
+      pctFromHigh = ((rec.high52 - rec.value) / rec.high52) * 100;
+      barPct = Math.max(0, Math.min(100, ((rec.value - rec.low52) / (rec.high52 - rec.low52)) * 100));
+    }
+    return `
+      <div class="ms-card${rec.stale ? " ms-stale" : ""}">
+        <div class="ms-card-top">
+          <span class="ms-name">${escapeAttr(def.label)}</span>
+          ${rec.stale ? '<span class="ms-stale-badge" title="Some fields could not refresh this cycle — showing last known values">stale</span>' : ""}
+        </div>
+        <div class="ms-value">${fmtNum(rec.value, 0)}</div>
+        <div class="ms-chg ${chgCls}">${chgText}</div>
+        ${hasRange ? `
+          <div class="ms-range-track"><div class="ms-range-dot" style="left:${barPct}%"></div></div>
+          <div class="ms-range-labels"><span>52W Low ${fmtNum(rec.low52, 0)}</span><span>52W High ${fmtNum(rec.high52, 0)}</span></div>
+          <div class="ms-range-pct"><span class="pos">+${fmtNum(pctFromLow, 1)}% from Low</span><span class="neg">-${fmtNum(pctFromHigh, 1)}% from High</span></div>
+        ` : '<div class="ms-empty">52W range not available</div>'}
+      </div>
+    `;
+  }).join("");
+}
+
+/* ============================================================
    DASHBOARD
    ============================================================ */
 
@@ -1748,6 +2004,7 @@ function renderDashboard() {
   document.getElementById("allocTotalIdealPct").textContent = fmtNum(idealTotal) + "%";
 
   renderPieChart(classes, netWorth);
+  renderMarketSnapshot();
   // Keeps Insights live whenever it's the visible tab (e.g. during the
   // 30-second auto price refresh); renderInsights() itself no-ops if
   // that tab isn't currently open.
@@ -2660,6 +2917,13 @@ function stockAnalysisDerived(equityRow, screener) {
   const industryPe = screener ? screener.industry_pe : null;
   const industryPbv = screener ? screener.industry_pbv : null;
   const hl = screener ? parseHighLow(screener.high_low) : { high: null, low: null };
+  // 52W High/Low: the live-data endpoint (same one Equity's LTP refresh
+  // already uses — see refreshEquityPrices()/row.high52Live/low52Live) is
+  // the source of truth once it's been fetched at least once. Screener's
+  // static high_low column is only a fallback before that first live
+  // refresh completes, never used once live data is present.
+  const low52 = (equityRow.low52Live !== undefined && equityRow.low52Live !== null) ? equityRow.low52Live : hl.low;
+  const high52 = (equityRow.high52Live !== undefined && equityRow.high52Live !== null) ? equityRow.high52Live : hl.high;
 
   // PE and P/B are ALWAYS computed here from LTP — never read as a
   // pre-calculated column from the Screener file, per spec.
@@ -2686,15 +2950,25 @@ function stockAnalysisDerived(equityRow, screener) {
     else if (pb < 2) pbClass = "pb-orange";
   }
 
-  const gainFromLow = (hl.low !== null && hl.low > 0 && ltp > 0) ? ((ltp - hl.low) / hl.low) * 100 : null;
-  const dropFromHigh = (hl.high !== null && hl.high > 0 && ltp > 0) ? ((hl.high - ltp) / hl.high) * 100 : null;
+  const gainFromLow = (low52 !== null && low52 > 0 && ltp > 0) ? ((ltp - low52) / low52) * 100 : null;
+  const dropFromHigh = (high52 !== null && high52 > 0 && ltp > 0) ? ((high52 - ltp) / high52) * 100 : null;
 
   const marketCap = screener ? screener.market_cap : null;
   const capCategory = marketCapCategory(marketCap);
 
   return {
     ltp, sector, isFinancial,
-    low52: hl.low, high52: hl.high, gainFromLow, dropFromHigh,
+    low52, high52, gainFromLow, dropFromHigh,
+    // Live OHLC/Prev Close, read straight off the Equity row that this
+    // Stock Analysis row is joined from (same live-price refresh, no
+    // separate fetch). Day Change % is always derived from LTP/Prev
+    // Close here, never taken as a pre-supplied percentage.
+    prevClose: (equityRow.prevClose === undefined) ? null : equityRow.prevClose,
+    openPrice: (equityRow.openPrice === undefined) ? null : equityRow.openPrice,
+    dayHigh: (equityRow.dayHigh === undefined) ? null : equityRow.dayHigh,
+    dayLow: (equityRow.dayLow === undefined) ? null : equityRow.dayLow,
+    dayChangePct: dayChangePct(ltp, equityRow.prevClose),
+    marketDataStale: !!equityRow.marketDataStale,
     eps, pe, industryPe, buyReco,
     capCategory,
     bookValue, pb, pbClass, industryPbv,
@@ -3243,10 +3517,18 @@ function renderStockAnalysisDetailPanel(joinedRows) {
       </div>
       <div style="text-align:right;">
         <div class="sa-detail-price">${fmtNum(d.ltp)}</div>
+        <div class="sa-detail-meta">${renderDayChangeBadgeHTML(d.ltp, d.prevClose, d.marketDataStale)}</div>
         <div class="sa-detail-meta">${buyHTML}</div>
       </div>
     </div>
     <div class="sa-detail-sections">
+      <div class="sa-detail-section">
+        <div class="sa-detail-section-title">Live Market Data${d.marketDataStale ? ' <span class="sa-stale-tag" title="Some fields could not refresh this cycle — showing last known values">stale</span>' : ""}</div>
+        <div class="sa-detail-row"><span class="k">Previous Close</span><span class="v">${fmtOrDash(d.prevClose)}</span></div>
+        <div class="sa-detail-row"><span class="k">Open</span><span class="v">${fmtOrDash(d.openPrice)}</span></div>
+        <div class="sa-detail-row"><span class="k">Day High / Low</span><span class="v">${fmtOrDash(d.dayHigh)} / ${fmtOrDash(d.dayLow)}</span></div>
+        <div class="sa-detail-row"><span class="k">52W High / Low</span><span class="v">${fmtOrDash(d.high52)} / ${fmtOrDash(d.low52)}</span></div>
+      </div>
       <div class="sa-detail-section">
         <div class="sa-detail-section-title">Valuation</div>
         <div class="sa-detail-row"><span class="k">PE / Industry PE</span><span class="v">${fmtOrDash(d.pe)} / ${fmtOrDash(d.industryPe)}</span></div>
@@ -3706,7 +3988,7 @@ function renderStockAnalysis() {
       </td>
       <td class="left" data-label="Sector">${escapeAttr(d.sector || "—")}</td>
       <td class="left" data-label="Market Cap Category">${d.capCategory ? escapeAttr(d.capCategory) : '<span class="muted">—</span>'}</td>
-      <td data-label="LTP">${fmtNum(d.ltp)}</td>
+      <td data-label="LTP"><div class="sa-ltp-cell"><span>${fmtNum(d.ltp)}</span>${renderDayChangeBadgeHTML(d.ltp, d.prevClose, d.marketDataStale)}</div></td>
       <td class="left" data-label="52W Low / High">${renderRangeBarHTML(d)}</td>
       <td class="${d.gainFromLow > 0 ? 'pos' : ''}" data-label="Gain from Low %">${fmtOrDash(d.gainFromLow, 1, "%")}</td>
       <td class="${d.dropFromHigh > 0 ? 'neg' : ''}" data-label="Drop from High %">${fmtOrDash(d.dropFromHigh, 1, "%")}</td>
@@ -3855,7 +4137,10 @@ function renderStockAnalysisMobileDeck(pageRows, fullFilteredRows) {
             <div class="sa-mobile-card-name">${escapeAttr(row.name || "")}</div>
             <div class="sa-mobile-card-sector">${escapeAttr(d.sector || "Sector not set")}${d.capCategory ? " · " + escapeAttr(d.capCategory) : ""}</div>
           </div>
-          <div class="sa-mobile-card-price">${fmtNum(d.ltp)}</div>
+          <div>
+            <div class="sa-mobile-card-price">${fmtNum(d.ltp)}</div>
+            <div class="sa-mobile-card-chg">${renderDayChangeBadgeHTML(d.ltp, d.prevClose, d.marketDataStale)}</div>
+          </div>
         </div>
         <div class="sa-mobile-card-grid">
           <div class="sa-mobile-metric"><div class="l">PE</div><div class="v">${fmtOrDash(d.pe)}</div></div>
@@ -5721,6 +6006,7 @@ function runAllLiveRefreshes() {
   runEquityRefresh(document.getElementById("equityFetchStatus"));
   runMFRefresh(document.getElementById("mfFetchStatus"));
   runGoldRefresh(document.getElementById("goldFetchStatus"));
+  refreshIndexData();
 }
 runAllLiveRefreshes();
 setInterval(runAllLiveRefreshes, LIVE_REFRESH_INTERVAL_MS);

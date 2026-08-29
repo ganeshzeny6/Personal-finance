@@ -343,6 +343,59 @@
   .neg{color:var(--negative);}
   .muted{color:var(--text-faint);}
 
+  /* ---- Live market data: Day Change badge (Equity LTP cell, Stock
+     Analysis LTP cell/mobile card/detail panel) — one shared look. ---- */
+  .dc-badge{
+    display:inline-flex;align-items:center;gap:2px;
+    font-family:var(--font-mono);font-size:10.5px;font-weight:600;
+    white-space:nowrap;
+  }
+  .dc-badge.pos{color:var(--positive);}
+  .dc-badge.neg{color:var(--negative);}
+  .dc-badge.muted{color:var(--text-faint);font-weight:500;}
+  .dc-stale-dot{color:var(--warning);margin-left:2px;cursor:help;}
+  .sa-stale-tag{
+    font-family:var(--font-body);font-size:9.5px;font-weight:600;color:var(--warning);
+    background:var(--warning-soft);border-radius:5px;padding:1px 6px;margin-left:6px;cursor:help;
+  }
+
+  /* Equity tab: compact secondary line under the LTP input — Day Change
+     badge + Previous Close. Wraps within the existing fixed column width
+     instead of widening the table (OHLC/52W figures live in the title
+     tooltip on this same block, not inline, to stay compact). */
+  .eq-price-meta{
+    display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+    margin-top:3px;cursor:help;white-space:normal;
+  }
+  .eq-prevclose{font-family:var(--font-mono);font-size:10px;color:var(--text-faint);}
+
+  /* Stock Analysis: LTP cell (desktop table) + mobile card */
+  .sa-ltp-cell{display:flex;flex-direction:column;align-items:flex-end;gap:2px;}
+  .sa-mobile-card-chg{text-align:right;margin-top:2px;}
+
+  /* ---- Market Snapshot (Dashboard) ---- */
+  .ms-snapshot-card{margin-bottom:16px;}
+  .ms-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;}
+  .ms-card{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:14px 16px;}
+  .ms-card.ms-stale{border-color:var(--warning);}
+  .ms-card-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;}
+  .ms-name{font-family:var(--font-display);font-size:12.5px;font-weight:600;color:var(--text);}
+  .ms-stale-badge{
+    font-family:var(--font-body);font-size:9.5px;font-weight:600;color:var(--warning);
+    background:var(--warning-soft);border-radius:5px;padding:1px 6px;cursor:help;
+  }
+  .ms-value{font-family:var(--font-mono);font-size:21px;font-weight:600;color:var(--text);line-height:1.1;}
+  .ms-chg{font-family:var(--font-mono);font-size:11.5px;font-weight:600;margin-top:3px;}
+  .ms-range-track{position:relative;height:5px;border-radius:3px;margin-top:11px;background:linear-gradient(90deg, var(--negative), var(--warning), var(--positive));opacity:.55;}
+  .ms-range-dot{position:absolute;top:50%;width:9px;height:9px;border-radius:50%;background:var(--text);border:2px solid var(--bg);transform:translate(-50%,-50%);}
+  .ms-range-labels{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:9.5px;color:var(--text-faint);margin-top:5px;}
+  .ms-range-pct{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10px;font-weight:600;margin-top:3px;}
+  .ms-empty{font-size:11px;color:var(--text-faint);margin-top:8px;}
+
+  @media (max-width:600px){
+    .ms-grid{grid-template-columns:1fr;}
+  }
+
   /* Equity allocation-limit status — colors the existing Alloc % cell
      rather than adding a new column, so the table's structure/colspans
      stay untouched. ".alloc-within" is intentionally unstyled (default
@@ -913,6 +966,11 @@
           <input type="text" inputmode="decimal" id="cashInput" placeholder="0">
         </div>
       </div>
+    </div>
+
+    <div class="card ms-snapshot-card">
+      <h3>Market Position <span class="hint">Nifty Bank · NIFTY 50 · SENSEX</span></h3>
+      <div class="ms-grid" id="marketSnapshotGrid"></div>
     </div>
 
     <div class="dash-grid">
@@ -1515,6 +1573,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-08-29-3"></script>
+<script src="app.js?v=2026-08-29-4"></script>
 </body>
 </html>
