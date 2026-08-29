@@ -1908,7 +1908,23 @@ function renderInsightsDonut(existingChart, canvasId, entries, totalValue) {
 // tuning.
 
 function fundamentalValuationVerdict(d) {
-  if (d.pe === null || d.industryPe === null || d.industryPe <= 0) return "unknown";
+  const pbVerdict = () => {
+    if (d.pb === null || !d.industryPbv) return "unknown";
+    const pbRatio = d.pb / d.industryPbv;
+    if (pbRatio <= 0.9) return "attractive";
+    if (pbRatio >= 1.3) return "unattractive";
+    return "neutral";
+  };
+  // Financial-sector stocks (banks/NBFC/insurance) don't use PE as a
+  // valuation lens at all — earnings there can swing on provisioning,
+  // write-offs or actuarial reserves, making PE unreliable. P/B vs
+  // Industry P/B is the appropriate measure instead.
+  if (d.isFinancial) return pbVerdict();
+  // For everyone else: PE is skipped (not penalized) when missing,
+  // zero, negative, or the industry figure isn't usable — a
+  // negative/zero PE must never be read as "cheap". P/B fills in as a
+  // fallback lens when PE isn't usable.
+  if (d.pe === null || d.pe <= 0 || d.industryPe === null || d.industryPe <= 0) return pbVerdict();
   const peRatio = d.pe / d.industryPe;
   const pbRatio = (d.pb !== null && d.industryPbv) ? d.pb / d.industryPbv : null;
   if (peRatio <= 0.9 && (pbRatio === null || pbRatio <= 1.1)) return "attractive";
@@ -1918,16 +1934,28 @@ function fundamentalValuationVerdict(d) {
 
 function fundamentalHealthVerdict(d, bankingLatest) {
   const signals = [];
-  if (d.roe !== null) signals.push(d.roe >= 15 ? 1 : d.roe >= 10 ? 0 : -1);
-  if (d.roce !== null) signals.push(d.roce >= 15 ? 1 : d.roce >= 10 ? 0 : -1);
-  if (d.isFinancial && d.roa !== null) signals.push(d.roa >= 1 ? 1 : d.roa >= 0.5 ? 0 : -1);
-  if (d.debtToEquity !== null) signals.push(d.debtToEquity <= 0.5 ? 1 : d.debtToEquity <= 1.5 ? 0 : -1);
-  if (d.intCoverage !== null) signals.push(d.intCoverage >= 5 ? 1 : d.intCoverage >= 2 ? 0 : -1);
-  if (bankingLatest && bankingLatest.metrics) {
-    const m = bankingLatest.metrics;
-    if (m.gnpa && m.gnpa.value !== null && m.gnpa.value !== undefined) signals.push(m.gnpa.value <= 2 ? 1 : m.gnpa.value <= 4 ? 0 : -1);
-    if (m.crar && m.crar.value !== null && m.crar.value !== undefined) signals.push(m.crar.value >= 14 ? 1 : m.crar.value >= 11 ? 0 : -1);
-    if (m.nim && m.nim.value !== null && m.nim.value !== undefined) signals.push(m.nim.value >= 3 ? 1 : m.nim.value >= 2 ? 0 : -1);
+  if (d.isFinancial) {
+    // ROA (not ROE/ROCE), and Debt-to-Equity/Interest Coverage are
+    // skipped entirely — leverage is structural for a lender/insurer,
+    // not a red flag the way it would be for a manufacturer.
+    if (d.roa !== null) signals.push(d.roa >= 1 ? 1 : d.roa >= 0.5 ? 0 : -1);
+    const isLender = /bank|nbfc/i.test(d.sector || "");
+    if (isLender && bankingLatest && bankingLatest.metrics) {
+      const m = bankingLatest.metrics;
+      if (m.gnpa && m.gnpa.value !== null && m.gnpa.value !== undefined) signals.push(m.gnpa.value <= 2 ? 1 : m.gnpa.value <= 4 ? 0 : -1);
+      if (m.crar && m.crar.value !== null && m.crar.value !== undefined) signals.push(m.crar.value >= 14 ? 1 : m.crar.value >= 11 ? 0 : -1);
+      if (m.nim && m.nim.value !== null && m.nim.value !== undefined) signals.push(m.nim.value >= 3 ? 1 : m.nim.value >= 2 ? 0 : -1);
+    } else if (!isLender && d.fcfPrevAnn !== null) {
+      // Insurance (or another Financial match that isn't a lender):
+      // no GNPA/CRAR/NIM to lean on, so Free Cash Flow direction
+      // stands in as a general health signal instead.
+      signals.push(d.fcfPrevAnn > 0 ? 1 : -1);
+    }
+  } else {
+    if (d.roe !== null) signals.push(d.roe >= 15 ? 1 : d.roe >= 10 ? 0 : -1);
+    if (d.roce !== null) signals.push(d.roce >= 15 ? 1 : d.roce >= 10 ? 0 : -1);
+    if (d.debtToEquity !== null) signals.push(d.debtToEquity <= 0.5 ? 1 : d.debtToEquity <= 1.5 ? 0 : -1);
+    if (d.intCoverage !== null) signals.push(d.intCoverage >= 5 ? 1 : d.intCoverage >= 2 ? 0 : -1);
   }
   if (signals.length === 0) return "unknown";
   const avg = signals.reduce((a, b) => a + b, 0) / signals.length;
@@ -1955,10 +1983,20 @@ function fundamentalGrowthVerdict(d) {
 // never recalculated differently.
 function describeInsightFactors(d) {
   const parts = [];
-  if (d.pe !== null && d.industryPe !== null) parts.push(`PE ${fmtNum(d.pe, 1)} vs Industry ${fmtNum(d.industryPe, 1)}`);
-  if (d.roe !== null) parts.push(`ROE ${fmtNum(d.roe, 1)}%`);
-  if (d.roce !== null) parts.push(`ROCE ${fmtNum(d.roce, 1)}%`);
-  if (d.debtToEquity !== null) parts.push(`D/E ${fmtNum(d.debtToEquity, 2)}`);
+  if (d.isFinancial) {
+    // Same rationale as fundamentalValuationVerdict()/
+    // computeFundamentalView(): P/B and ROA are the meaningful lenses
+    // for banks/NBFC/insurance, not PE/ROE/Debt-to-Equity.
+    if (d.pb !== null && d.industryPbv) parts.push(`P/B ${fmtNum(d.pb, 2)} vs Industry ${fmtNum(d.industryPbv, 2)}`);
+    if (d.roa !== null) parts.push(`ROA ${fmtNum(d.roa, 2)}%`);
+    if (d.roe !== null) parts.push(`ROE ${fmtNum(d.roe, 1)}%`);
+  } else {
+    if (d.pe !== null && d.pe > 0 && d.industryPe !== null) parts.push(`PE ${fmtNum(d.pe, 1)} vs Industry ${fmtNum(d.industryPe, 1)}`);
+    else if (d.pb !== null && d.industryPbv) parts.push(`P/B ${fmtNum(d.pb, 2)} vs Industry ${fmtNum(d.industryPbv, 2)}`);
+    if (d.roe !== null) parts.push(`ROE ${fmtNum(d.roe, 1)}%`);
+    if (d.roce !== null) parts.push(`ROCE ${fmtNum(d.roce, 1)}%`);
+    if (d.debtToEquity !== null) parts.push(`D/E ${fmtNum(d.debtToEquity, 2)}`);
+  }
   if (d.epsGrowth3y !== null) parts.push(`EPS Growth 3Y ${fmtNum(d.epsGrowth3y, 1)}%`);
   if (d.profitVar3y !== null) parts.push(`Profit Growth 3Y ${fmtNum(d.profitVar3y, 1)}%`);
   return parts.join(", ");
@@ -2058,6 +2096,38 @@ const INSIGHT_CATEGORY_ORDER = [
   { key: "No Action", cls: "none", defaultOpen: false }
 ];
 
+// "I need % for each cap allocation" — a compact stat row above the
+// Intelligent Insights list showing what share of total Equity
+// Invested Amount currently sits in each market-cap category, next to
+// its configured Settings -> Equity Allocation Limits max. Reuses
+// getEquityCapCategory()/getEquityAllocLimit() — the exact same join
+// and limits the Equity tab's own Cap/Alloc % cells use, so this can
+// never disagree with what's shown there.
+function renderCapAllocationBreakdown() {
+  const el = document.getElementById("capAllocationBreakdown");
+  if (!el) return;
+  if (state.equity.length === 0) { el.innerHTML = ""; return; }
+  const screenerMap = buildScreenerMap();
+  const totalInvested = state.equity.reduce((s, r) => s + (Number(r.invested) || 0), 0);
+  const buckets = { "Large Cap": 0, "Mid Cap": 0, "Small Cap": 0, "Unclassified": 0 };
+  state.equity.forEach(row => {
+    const cap = getEquityCapCategory(row, screenerMap) || "Unclassified";
+    buckets[cap] = (buckets[cap] || 0) + (Number(row.invested) || 0);
+  });
+  const pct = (v) => totalInvested > 0 ? (v / totalInvested) * 100 : 0;
+  el.innerHTML = [
+    { label: "Large Cap", max: getEquityAllocLimit("Large Cap") },
+    { label: "Mid Cap", max: getEquityAllocLimit("Mid Cap") },
+    { label: "Small Cap", max: getEquityAllocLimit("Small Cap") },
+    { label: "Unclassified", max: null }
+  ].map(b => `
+    <div class="import-stat">
+      <div class="n">${fmtNum(pct(buckets[b.label]), 1)}%${b.max !== null ? `<span class="alloc-limit-note">/ ${b.max}%</span>` : ""}</div>
+      <div class="l">${escapeAttr(b.label)}</div>
+    </div>
+  `).join("");
+}
+
 // Renders the categorized, collapsible Intelligent Insights list. Each
 // category is a native <details> block so 50+ stocks stay scannable —
 // the two actionable categories (Consider Adding / Reduce-Sell) open
@@ -2065,6 +2135,7 @@ const INSIGHT_CATEGORY_ORDER = [
 function renderIntelligentInsights() {
   const el = document.getElementById("intelligentInsightsBody");
   if (!el) return;
+  renderCapAllocationBreakdown();
   if (state.equity.length === 0) {
     el.innerHTML = '<div class="insights-empty">No Equity holdings yet — add stocks and import Screener Data to see Intelligent Insights.</div>';
     return;
@@ -2161,8 +2232,6 @@ function renderInsights() {
       }).join("");
     }
   }
-
-  renderIntelligentInsights();
 }
 
 /* ============================================================
@@ -2338,7 +2407,7 @@ function pctOrNull(v) {
    ============================================================ */
 
 const SECTOR_PROFILES = {
-  financial:  { label: "Banks / NBFC / Insurance", useROA: true, roaGood: 1.0, roaWeak: 0.5, pbWeight: true, deRelevant: false },
+  financial:  { label: "Banks / NBFC / Insurance", useROA: true, roaGood: 1.0, roaWeak: 0.5, pbWeight: true, peRelevant: false, deRelevant: false },
   it:         { label: "IT / Technology", roeGood: 18, roeWeak: 10, roceGood: 18, roceWeak: 10, deGood: 0.3, deWeak: 0.8, icRelevant: false },
   pharma:     { label: "Pharma / Healthcare", roeGood: 15, roeWeak: 8, roceGood: 15, roceWeak: 8, deGood: 0.5, deWeak: 1.2, icGood: 5, icWeak: 2 },
   auto:       { label: "Auto / Auto Ancillary", roeGood: 13, roeWeak: 6, roceGood: 13, roceWeak: 6, deGood: 0.7, deWeak: 1.5, icGood: 4, icWeak: 1.5 },
@@ -2383,11 +2452,17 @@ function computeFundamentalView(row, screener, d) {
   const notes = { push: (text, signal = 0) => noteItems.push({ text, signal }) };
   const signals = [];
 
-  // Valuation — PE vs Industry PE is the default lens; Financials (and
-  // any stock where PE isn't meaningful, e.g. negative/near-zero
-  // earnings) lean on P/B vs Industry P/B instead or in addition.
+  // Valuation — PE vs Industry PE is the default lens, but it is
+  // deliberately NOT used at all for Financial-sector stocks
+  // (peRelevant: false): bank/NBFC/insurance earnings can swing on
+  // provisioning, write-offs or actuarial reserves, which makes PE
+  // unreliable there — P/B vs Industry P/B is the appropriate lens
+  // instead (profile.pbWeight is true for that profile). For every
+  // other sector, PE is skipped (not penalized) when it's missing,
+  // zero, negative, or the industry figure isn't usable — P/B fills
+  // in as a fallback lens if available.
   let valSignal = null;
-  if (d.pe !== null && d.pe > 0 && d.industryPe !== null && d.industryPe > 0) {
+  if (profile.peRelevant !== false && d.pe !== null && d.pe > 0 && d.industryPe !== null && d.industryPe > 0) {
     const r = d.pe / d.industryPe;
     valSignal = r <= 0.9 ? 1 : r >= 1.15 ? -1 : 0;
     notes.push(`PE ${fmtNum(d.pe, 1)} vs Industry ${fmtNum(d.industryPe, 1)}`, valSignal);
@@ -2446,12 +2521,28 @@ function computeFundamentalView(row, screener, d) {
   // for Financial-sector holdings instead, when researched.
   const healthParts = [];
   if (group === "financial") {
-    const bm = getLatestBankingMetrics((row.name || "").trim().toUpperCase());
-    if (bm && bm.metrics) {
-      const m = bm.metrics;
-      if (m.gnpa && m.gnpa.value !== null && m.gnpa.value !== undefined) { const s = m.gnpa.value <= 2 ? 1 : m.gnpa.value <= 4 ? 0 : -1; healthParts.push(s); notes.push(`GNPA ${fmtNum(m.gnpa.value, 2)}%`, s); }
-      if (m.crar && m.crar.value !== null && m.crar.value !== undefined) { const s = m.crar.value >= 14 ? 1 : m.crar.value >= 11 ? 0 : -1; healthParts.push(s); notes.push(`CRAR ${fmtNum(m.crar.value, 2)}%`, s); }
-      if (m.nim && m.nim.value !== null && m.nim.value !== undefined) healthParts.push(m.nim.value >= 3 ? 1 : m.nim.value >= 2 ? 0 : -1);
+    // GNPA/CRAR/NIM are lender-specific (asset quality, capital
+    // adequacy, lending margin) and don't apply to a pure insurer —
+    // only pull them in for sector text that actually says
+    // bank/NBFC, not just any "financial" match (which also covers
+    // Insurance).
+    const isLender = /bank|nbfc/i.test(d.sector || "");
+    if (isLender) {
+      const bm = getLatestBankingMetrics((row.name || "").trim().toUpperCase());
+      if (bm && bm.metrics) {
+        const m = bm.metrics;
+        if (m.gnpa && m.gnpa.value !== null && m.gnpa.value !== undefined) { const s = m.gnpa.value <= 2 ? 1 : m.gnpa.value <= 4 ? 0 : -1; healthParts.push(s); notes.push(`GNPA ${fmtNum(m.gnpa.value, 2)}%`, s); }
+        if (m.crar && m.crar.value !== null && m.crar.value !== undefined) { const s = m.crar.value >= 14 ? 1 : m.crar.value >= 11 ? 0 : -1; healthParts.push(s); notes.push(`CRAR ${fmtNum(m.crar.value, 2)}%`, s); }
+        if (m.nim && m.nim.value !== null && m.nim.value !== undefined) healthParts.push(m.nim.value >= 3 ? 1 : m.nim.value >= 2 ? 0 : -1);
+      }
+    } else if (d.fcfPrevAnn !== null) {
+      // Insurance (or another Financial-sector match that isn't a
+      // lender): no bank-specific metrics to lean on, so Free Cash
+      // Flow direction is used as a general health fallback instead
+      // of leaving this dimension empty.
+      const s = d.fcfPrevAnn > 0 ? 1 : -1;
+      healthParts.push(s);
+      notes.push(`Free Cash Flow ${fmtNum(d.fcfPrevAnn, 0)}`, s);
     }
   } else {
     if (d.debtToEquity !== null) { const s = d.debtToEquity <= profile.deGood ? 1 : d.debtToEquity >= profile.deWeak ? -1 : 0; healthParts.push(s); notes.push(`D/E ${fmtNum(d.debtToEquity, 2)}`, s); }
@@ -3211,6 +3302,7 @@ function renderStockAnalysis() {
   // whatever's selected even if a search term would hide its row.
   renderStockAnalysisSummary(rows);
   renderStockAnalysisDetailPanel(rows);
+  renderIntelligentInsights();
 
   const ui = tableUI.stockanalysis;
   if (ui.filter) {
@@ -5177,7 +5269,7 @@ function openSettingsModal() {
         saveState();
         renderBrand();
         renderEquity();
-        renderInsights();
+        renderStockAnalysis();
         closeModal();
       }
     }
