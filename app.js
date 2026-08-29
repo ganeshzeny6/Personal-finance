@@ -353,15 +353,25 @@ const tableUI = {
   debt:   { sortCol: "maturityDate", sortDir: 1, filter: "" },
   mf:     { sortCol: "allocPct", sortDir: -1, filter: "" },
   gold:   { sortCol: null, sortDir: 1, filter: "" },
-  stockanalysis: { sortCol: null, sortDir: 1, filter: "", page: 1 }
+  stockanalysis: { sortCol: null, sortDir: 1, filter: "", page: 1, pageSize: "10" }
 };
 
-// Desktop Stock Analysis table shows this many holdings per page,
-// with Prev/Next + numbered pagination below the table. The mobile
-// swipe-card deck reuses the exact same page slice (see
-// renderStockAnalysis()) so desktop and mobile always agree on
-// "what page am I on".
-const STOCK_ANALYSIS_PAGE_SIZE = 7;
+// Desktop Stock Analysis table shows tableUI.stockanalysis.pageSize
+// holdings per page (person-selectable via the dropdown next to the
+// pagination controls — 10/20/50/100/All), with Prev/Next + numbered
+// pagination below the table. The mobile swipe-card deck reuses the
+// exact same page slice (see renderStockAnalysis()) so desktop and
+// mobile always agree on "what page am I on". "10" is just the
+// starting default — STOCK_ANALYSIS_PAGE_SIZE_OPTIONS is the actual
+// list of choices offered.
+const STOCK_ANALYSIS_PAGE_SIZE_OPTIONS = ["10", "20", "50", "100", "all"];
+
+// Resolves the current dropdown selection to a number of rows (or
+// Infinity for "All"), used everywhere a page needs to be sliced.
+function getStockAnalysisPageSize() {
+  const v = tableUI.stockanalysis.pageSize;
+  return v === "all" ? Infinity : (Number(v) || 10);
+}
 
 // Applies filter then sort to `rows`, given per-row lookup
 // functions for search text and sortable values. Returns a new
@@ -721,6 +731,7 @@ function equityGetSortValue(row, col, screenerMap) {
     case "units": return Number(row.units) || 0;
     case "avgPrice": return d.avgPrice;
     case "ltp": return Number(row.ltp) || 0;
+    case "dayChangePct": return dayChangePct(row.ltp, row.prevClose) ?? -Infinity;
     case "currentValue": return d.currentValue;
     case "pl": return d.pl;
     case "plPct": return d.plPct;
@@ -746,9 +757,9 @@ function renderEquity() {
   );
 
   if (state.equity.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="12">No stocks yet. Use "Import Holdings" to bring in your Zerodha Console export.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="13">No stocks yet. Use "Import Holdings" to bring in your Zerodha Console export.</td></tr>';
   } else if (displayRows.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="12">No stocks match this filter.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="13">No stocks match this filter.</td></tr>';
   }
 
   // Name, Invested, Units and LTP are only ever meant to change via
@@ -780,6 +791,7 @@ function renderEquity() {
       <td data-label="Units"><input type="number" step="any" value="${roundedInputValue(row.units)}" data-field="units" disabled></td>
       <td class="c-avg" data-label="Avg Price">${fmtNum(d.avgPrice)}</td>
       <td data-label="LTP">${renderEquityPriceCellHTML(row)}</td>
+      <td class="c-daychg" data-label="Day Chg %">${renderEquityDayChangeCellHTML(row)}</td>
       <td class="c-cv" data-label="Current Value">${fmtNum(d.currentValue)}</td>
       <td class="c-pl ${plClass(d.pl)}" data-label="P&amp;L">${fmtNum(d.pl)}</td>
       <td class="c-plpct ${plClass(d.pl)}" data-label="P&amp;L %">${fmtPct(d.plPct)}</td>
@@ -817,6 +829,7 @@ function renderEquity() {
   const mobPlCell = document.getElementById("eqMobTotalPL");
   mobPlCell.textContent = fmtINR(totals.pl);
   mobPlCell.className = plClass(totals.pl);
+  renderEquityMoversStrip();
 }
 
 // Lightweight refresh used on every keystroke-commit (input `change`):
@@ -863,6 +876,7 @@ function updateEquityComputed() {
   const mobPlCell = document.getElementById("eqMobTotalPL");
   mobPlCell.textContent = fmtINR(totals.pl);
   mobPlCell.className = plClass(totals.pl);
+  renderEquityMoversStrip();
 }
 
 // Equity rows are no longer created by hand — Name, Invested, Units
@@ -1148,13 +1162,27 @@ async function refreshEquityPrices() {
   return { ok, fail: failedRows.length, failedRows };
 }
 
-// Compact LTP cell used on the Equity tab: the existing price input +
-// Pending badge (unchanged), plus a Day Change % badge and a small OHLC/
-// 52W tooltip — no new table column, so the table's width is untouched;
-// the extra detail only adds a little height to this one cell.
+// Plain LTP cell used on the Equity tab — just the price input + a
+// Pending badge. Day Change % now lives in its own sortable column
+// (see renderEquityDayChangeCellHTML() below) instead of being crammed
+// underneath the price input.
 function renderEquityPriceCellHTML(row) {
   const pendingBadge = row.livePricePending ? '<span class="pending-badge">Pending</span>' : "";
-  const chgHTML = renderDayChangeBadgeHTML(row.ltp, row.prevClose, row.marketDataStale);
+  return `
+    <div class="price-cell">
+      <input type="number" step="any" value="${roundedInputValue(row.ltp)}" data-field="ltp" disabled>${pendingBadge}
+    </div>
+  `;
+}
+
+// Standalone "Day Chg %" column cell — a modern rounded chip (colored
+// by direction) plus a small Previous Close line underneath, with the
+// full OHLC/52W breakdown available as a hover tooltip. Splitting this
+// out of the LTP cell into its own column is what makes it sortable
+// (see data-col="dayChangePct" in the table header) and gives it room
+// to read clearly instead of being squeezed under the price input.
+function renderEquityDayChangeCellHTML(row) {
+  const chg = dayChangePct(row.ltp, row.prevClose);
   const tipParts = [];
   if (row.openPrice != null) tipParts.push(`Open ${fmtNum(row.openPrice, 2)}`);
   if (row.dayHigh != null) tipParts.push(`Day High ${fmtNum(row.dayHigh, 2)}`);
@@ -1162,14 +1190,39 @@ function renderEquityPriceCellHTML(row) {
   if (row.high52Live != null) tipParts.push(`52W High ${fmtNum(row.high52Live, 2)}`);
   if (row.low52Live != null) tipParts.push(`52W Low ${fmtNum(row.low52Live, 2)}`);
   const tooltip = tipParts.length ? tipParts.join(" · ") : "OHLC / 52W data not available yet";
+  if (chg === null) {
+    return `<div class="dc-chip muted" title="${escapeAttr(tooltip)}">—</div>`;
+  }
+  const cls = chg > 0 ? "pos" : chg < 0 ? "neg" : "muted";
+  const arrow = chg > 0 ? "▲" : chg < 0 ? "▼" : "•";
   return `
-    <div class="price-cell">
-      <input type="number" step="any" value="${roundedInputValue(row.ltp)}" data-field="ltp" disabled>${pendingBadge}
-    </div>
-    <div class="eq-price-meta" title="${escapeAttr(tooltip)}">
-      ${chgHTML}
-      ${row.prevClose != null ? `<span class="eq-prevclose">Prev ${fmtNum(row.prevClose, 1)}</span>` : ""}
-    </div>
+    <div class="dc-chip ${cls}" title="${escapeAttr(tooltip)}">${arrow} ${chg >= 0 ? "+" : ""}${fmtNum(chg, 2)}%${row.marketDataStale ? '<span class="dc-stale-dot" title="Some live fields could not refresh this cycle">•</span>' : ""}</div>
+    ${row.prevClose != null ? `<div class="eq-prevclose">Prev ${fmtNum(row.prevClose, 1)}</div>` : ""}
+  `;
+}
+
+// Tallies today's movers across every Equity holding with a usable
+// Day Change % (see dayChangePct()) — purely a display count, nothing
+// recalculated differently from what each row's chip already shows.
+function computeEquityMovers() {
+  let up = 0, down = 0, flat = 0;
+  state.equity.forEach(row => {
+    const chg = dayChangePct(row.ltp, row.prevClose);
+    if (chg === null) return;
+    if (chg > 0) up++; else if (chg < 0) down++; else flat++;
+  });
+  return { up, down, flat };
+}
+
+function renderEquityMoversStrip() {
+  const el = document.getElementById("equityMoversStrip");
+  if (!el) return;
+  if (state.equity.length === 0) { el.innerHTML = ""; return; }
+  const { up, down, flat } = computeEquityMovers();
+  el.innerHTML = `
+    <span class="m-pill up">▲ ${up} Up</span>
+    <span class="m-pill down">▼ ${down} Down</span>
+    <span class="m-pill flat">• ${flat} Flat</span>
   `;
 }
 
@@ -1834,7 +1887,7 @@ function buildIndexRecordsMap(rows) {
       const k = keys.find(k => candidates.some(c => c.toLowerCase() === k.trim().toLowerCase()));
       return k !== undefined ? parseIndianNumber(obj[k]) : null;
     };
-    const nameKey = keys.find(k => ["Index", "Name", "Index Name"].some(c => c.toLowerCase() === k.trim().toLowerCase()));
+    const nameKey = keys.find(k => ["Index", "Name", "Index Name", "Stock Name"].some(c => c.toLowerCase() === k.trim().toLowerCase()));
     const name = nameKey ? String(obj[nameKey] || "").trim() : "";
     if (!name) return;
     map.set(name.toUpperCase(), {
@@ -1870,7 +1923,14 @@ async function refreshIndexData() {
     renderMarketSnapshot();
     return;
   }
-  const map = buildIndexRecordsMap(data.indices);
+  // Prefer a dedicated `indices` array if the Apps Script returns one,
+  // but fall back to matching Nifty Bank / NIFTY 50 / SENSEX by name
+  // straight out of the existing `stocks` array — this is how they
+  // already show up in most people's sheets (same Stock Name/Symbol/
+  // Live Price/Previous Close/... columns as any other stock row), so
+  // no separate Indices tab or Apps Script change is required.
+  const sourceRows = (Array.isArray(data.indices) && data.indices.length > 0) ? data.indices : data.stocks;
+  const map = buildIndexRecordsMap(sourceRows);
   let changed = false;
   INDEX_DEFINITIONS.forEach(def => {
     const rec = findIndexRecord(map, def.candidates);
@@ -3959,15 +4019,18 @@ function renderStockAnalysis() {
     return;
   }
 
-  // Pagination: 7 holdings per page on the desktop table. Clamp the
-  // stored page against the current filtered/sorted result count so
-  // e.g. narrowing a search doesn't leave the view stuck on a page
-  // number that no longer exists.
-  const totalPages = Math.max(1, Math.ceil(rows.length / STOCK_ANALYSIS_PAGE_SIZE));
+  // Pagination: person-selectable holdings per page (see the dropdown
+  // rendered in renderStockAnalysisPagination()). Clamp the stored page
+  // against the current filtered/sorted result count so e.g. narrowing
+  // a search doesn't leave the view stuck on a page number that no
+  // longer exists. "All" (pageSize === Infinity) is handled specially
+  // since (page-1) * Infinity would otherwise be NaN when page is 1.
+  const pageSize = getStockAnalysisPageSize();
+  const totalPages = pageSize === Infinity ? 1 : Math.max(1, Math.ceil(rows.length / pageSize));
   if (ui.page > totalPages) ui.page = totalPages;
   if (ui.page < 1) ui.page = 1;
-  const startIdx = (ui.page - 1) * STOCK_ANALYSIS_PAGE_SIZE;
-  const pageRows = rows.slice(startIdx, startIdx + STOCK_ANALYSIS_PAGE_SIZE);
+  const startIdx = pageSize === Infinity ? 0 : (ui.page - 1) * pageSize;
+  const pageRows = pageSize === Infinity ? rows.slice() : rows.slice(startIdx, startIdx + pageSize);
 
   pageRows.forEach(({ row, d }) => {
     const tr = document.createElement("tr");
@@ -4039,7 +4102,7 @@ function renderStockAnalysis() {
     tbody.appendChild(tr);
   });
 
-  renderStockAnalysisPagination(rows.length, ui.page, totalPages);
+  renderStockAnalysisPagination(rows.length, ui.page, totalPages, pageSize);
   renderStockAnalysisMobileDeck(pageRows, rows);
 }
 
@@ -4063,12 +4126,12 @@ function selectStockAnalysisRow(rowKey, fullFilteredRows) {
 // collapse to first/last + a window around the current page (with
 // ellipses) once there are more than 7 pages, so this stays usable
 // even with a couple hundred holdings.
-function renderStockAnalysisPagination(totalCount, page, totalPages) {
+function renderStockAnalysisPagination(totalCount, page, totalPages, pageSize) {
   const el = document.getElementById("saPagination");
   if (!el) return;
   if (totalCount === 0) { el.innerHTML = ""; return; }
-  const startN = (page - 1) * STOCK_ANALYSIS_PAGE_SIZE + 1;
-  const endN = Math.min(totalCount, page * STOCK_ANALYSIS_PAGE_SIZE);
+  const startN = pageSize === Infinity ? 1 : (page - 1) * pageSize + 1;
+  const endN = pageSize === Infinity ? totalCount : Math.min(totalCount, page * pageSize);
 
   const pageNumbers = [];
   if (totalPages <= 7) {
@@ -4087,12 +4150,18 @@ function renderStockAnalysisPagination(totalCount, page, totalPages) {
       : `<button class="sa-page-btn${n === page ? " active" : ""}" data-page="${n}">${n}</button>`
   ).join("");
 
+  const sizeSelectHTML = `
+    <select class="filter-input sa-page-size-select" id="saPageSize" title="Holdings per page">
+      ${STOCK_ANALYSIS_PAGE_SIZE_OPTIONS.map(opt => `<option value="${opt}" ${tableUI.stockanalysis.pageSize === opt ? "selected" : ""}>${opt === "all" ? "Show All" : opt + " / page"}</option>`).join("")}
+    </select>`;
+
   el.innerHTML = `
     <div class="sa-pagination-info">Showing ${startN}–${endN} of ${totalCount}</div>
     <div class="sa-pagination-controls">
       <button class="sa-page-btn" id="saPagePrev" ${page <= 1 ? "disabled" : ""} title="Previous page">‹</button>
       ${btnsHTML}
       <button class="sa-page-btn" id="saPageNext" ${page >= totalPages ? "disabled" : ""} title="Next page">›</button>
+      ${sizeSelectHTML}
     </div>
   `;
   el.querySelectorAll("button[data-page]").forEach(btn => {
@@ -4102,6 +4171,12 @@ function renderStockAnalysisPagination(totalCount, page, totalPages) {
   const nextBtn = document.getElementById("saPageNext");
   if (prevBtn) prevBtn.addEventListener("click", () => { tableUI.stockanalysis.page = Math.max(1, page - 1); renderStockAnalysis(); });
   if (nextBtn) nextBtn.addEventListener("click", () => { tableUI.stockanalysis.page = Math.min(totalPages, page + 1); renderStockAnalysis(); });
+  const sizeSelect = document.getElementById("saPageSize");
+  if (sizeSelect) sizeSelect.addEventListener("change", () => {
+    tableUI.stockanalysis.pageSize = sizeSelect.value;
+    tableUI.stockanalysis.page = 1;
+    renderStockAnalysis();
+  });
 }
 
 // Mobile/tablet swipe-card deck — one card per holding, same page
@@ -4176,7 +4251,8 @@ function renderStockAnalysisMobileDeck(pageRows, fullFilteredRows) {
   // (tableUI.stockanalysis.page) so switching between mobile and
   // desktop widths never disagrees on which page is showing.
   const ui = tableUI.stockanalysis;
-  const totalPages = Math.max(1, Math.ceil((fullFilteredRows || pageRows).length / STOCK_ANALYSIS_PAGE_SIZE));
+  const mobilePageSize = getStockAnalysisPageSize();
+  const totalPages = mobilePageSize === Infinity ? 1 : Math.max(1, Math.ceil((fullFilteredRows || pageRows).length / mobilePageSize));
   paginationEl.innerHTML = `
     <button class="sa-page-btn" id="saMobilePagePrev" ${ui.page <= 1 ? "disabled" : ""}>‹ Prev</button>
     <span class="sa-pagination-info">Page ${ui.page} of ${totalPages}</span>
