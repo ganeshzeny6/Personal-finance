@@ -2034,8 +2034,9 @@ function computeStockInsight(row, screenerMap) {
 
   if (!screener || knownCount === 0) {
     return {
-      row, category: "No Action", categoryClass: "none", allocPct, allocMax, allocStatus,
-      reason: `Insufficient Data — ${!screener ? "no Screener fundamentals imported for this stock yet" : "not enough fundamental fields available to form a view"}. ${allocText}.`
+      row, category: "Insufficient Data", categoryClass: "insuff", allocPct, allocMax, allocStatus,
+      reason: `Insufficient Data — ${!screener ? "no Screener fundamentals imported for this stock yet" : "not enough fundamental fields available to form a view"}. ${allocText}.`,
+      d, screener, valuation, health, growth, bankingLatest, allocText, capCategory
     };
   }
 
@@ -2085,7 +2086,7 @@ function computeStockInsight(row, screenerMap) {
     }
   }
 
-  return { row, category, categoryClass, allocPct, allocMax, allocStatus, reason };
+  return { row, category, categoryClass, allocPct, allocMax, allocStatus, reason, d, screener, valuation, health, growth, bankingLatest, allocText, capCategory };
 }
 
 const INSIGHT_CATEGORY_ORDER = [
@@ -2093,8 +2094,93 @@ const INSIGHT_CATEGORY_ORDER = [
   { key: "Reduce / Sell", cls: "reduce", defaultOpen: true },
   { key: "Watch", cls: "watch", defaultOpen: false },
   { key: "Hold", cls: "hold", defaultOpen: false },
-  { key: "No Action", cls: "none", defaultOpen: false }
+  { key: "No Action", cls: "none", defaultOpen: false },
+  { key: "Insufficient Data", cls: "insuff", defaultOpen: false }
 ];
+
+// ---- Intelligent Insights v2 (UI-only state, not persisted) ----
+const ii2State = {
+  pill: "All",           // All | Consider Adding | Hold | Watch | Reduce / Sell
+  marketCap: "all",      // all | Large Cap | Mid Cap | Small Cap | Unclassified
+  sortBy: "score",        // score | alloc | name
+  visibleCount: 10,
+  whyOpen: {}             // rowKey -> bool, remembered for the page session
+};
+
+const II2_PILLS = ["All", "Consider Adding", "Hold", "Watch", "Reduce / Sell"];
+
+// Converts the three qualitative verdicts (valuation/health/growth) into a
+// single 0-100 score + label — a display convenience only. It re-uses the
+// exact verdicts computeStockInsight() already derived for the actual
+// recommendation; it does not introduce a second, independent scoring model.
+function computeInsightScore(ins) {
+  const map = { attractive: 1, strong: 1, neutral: 0, unattractive: -1, weak: -1, unknown: null };
+  const vals = [map[ins.valuation], map[ins.health], map[ins.growth]].filter(v => v !== null && v !== undefined);
+  if (vals.length === 0) return { score: null, scoreLabel: "N/A" };
+  const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+  const score = Math.round(((avg + 1) / 2) * 100);
+  let scoreLabel;
+  if (score >= 70) scoreLabel = "Strong";
+  else if (score >= 55) scoreLabel = "Good";
+  else if (score >= 35) scoreLabel = "Moderate";
+  else scoreLabel = "Weak";
+  return { score, scoreLabel };
+}
+
+function ii2ScoreColor(score) {
+  if (score === null || score === undefined) return "var(--text-faint)";
+  if (score >= 70) return "var(--positive)";
+  if (score >= 55) return "var(--gold)";
+  if (score >= 35) return "var(--warning)";
+  return "var(--negative)";
+}
+
+// Picks 4-5 sector-appropriate metrics to show per stock, per spec section 8 —
+// Financials lean on P/B, ROE, ROA and (when researched) NIM/GNPA; every
+// other sector leans on PE, ROE, EPS Growth and Debt-to-Equity. Every value
+// here is read straight from `d`/bankingLatest (stockAnalysisDerived() /
+// getLatestBankingMetrics() output) — nothing recalculated.
+function computeInsightMetrics(ins) {
+  const d = ins.d;
+  const metrics = [];
+  const pushVs = (label, value, decimals, suffix, industry, lowerIsBetter) => {
+    if (value === null || value === undefined) return;
+    let cmp = "";
+    if (industry !== null && industry !== undefined && industry > 0) {
+      const better = lowerIsBetter ? value < industry : value > industry;
+      cmp = `<span class="${better ? "pos" : "neg"}">${better ? "↓" : "↑"} vs ${fmtNum(industry, decimals)}</span>`;
+    }
+    metrics.push({ label, value: fmtNum(value, decimals) + suffix, cmp });
+  };
+  if (d.isFinancial) {
+    pushVs("P/B", d.pb, 2, "", d.industryPbv, true);
+    pushVs("ROE", d.roe, 1, "%", null);
+    pushVs("ROA", d.roa, 2, "%", null);
+    const bm = ins.bankingLatest && ins.bankingLatest.metrics;
+    if (bm && bm.nim && bm.nim.value !== null && bm.nim.value !== undefined) metrics.push({ label: "NIM", value: fmtNum(bm.nim.value, 1) + "%", cmp: "" });
+    if (bm && bm.gnpa && bm.gnpa.value !== null && bm.gnpa.value !== undefined) metrics.push({ label: "GNPA", value: fmtNum(bm.gnpa.value, 2) + "%", cmp: "" });
+  } else {
+    pushVs("PE", d.pe, 1, "", d.industryPe, true);
+    if (d.roe !== null) metrics.push({ label: "ROE", value: fmtNum(d.roe, 1) + "%", cmp: "" });
+    else if (d.roce !== null) metrics.push({ label: "ROCE", value: fmtNum(d.roce, 1) + "%", cmp: "" });
+    if (d.epsGrowth3y !== null) metrics.push({ label: "EPS Growth 3Y", value: fmtNum(d.epsGrowth3y, 1) + "%", cmp: "" });
+    if (d.debtToEquity !== null) metrics.push({ label: "D/E", value: fmtNum(d.debtToEquity, 2), cmp: "" });
+  }
+  return metrics.slice(0, 5);
+}
+
+// Short blurb shown directly under the recommendation badge — one line,
+// distinct from the fuller "Why?" reasoning below it.
+function ii2ShortDescription(ins) {
+  switch (ins.category) {
+    case "Consider Adding": return "Strong fundamentals with room in allocation.";
+    case "Hold": return ins.allocStatus === "above" ? "Fundamentals reasonable, but already above your limit." : "Good business, fairly valued. Hold for now.";
+    case "Watch": return "Fundamentals are mixed/neutral — worth monitoring.";
+    case "Reduce / Sell": return ins.allocStatus === "above" ? "Allocation above limit and fundamentals show weakness." : "Fundamentals indicate weakness across the board.";
+    case "Insufficient Data": return "Not enough data yet to form a fundamentals view.";
+    default: return "Fundamentals don't currently support adding more.";
+  }
+}
 
 // "I need % for each cap allocation" — a compact stat row above the
 // Intelligent Insights list showing what share of total Equity
@@ -2103,6 +2189,10 @@ const INSIGHT_CATEGORY_ORDER = [
 // getEquityCapCategory()/getEquityAllocLimit() — the exact same join
 // and limits the Equity tab's own Cap/Alloc % cells use, so this can
 // never disagree with what's shown there.
+// Four cards: Large/Mid/Small Cap (vs. Settings -> Equity Allocation
+// Limits) + Unclassified. Colored green/orange/red by how close each
+// bucket is to its configured max (or neutral/blue when there's no
+// limit to compare against, i.e. Unclassified).
 function renderCapAllocationBreakdown() {
   const el = document.getElementById("capAllocationBreakdown");
   if (!el) return;
@@ -2115,68 +2205,219 @@ function renderCapAllocationBreakdown() {
     buckets[cap] = (buckets[cap] || 0) + (Number(row.invested) || 0);
   });
   const pct = (v) => totalInvested > 0 ? (v / totalInvested) * 100 : 0;
+  const ICONS = { "Large Cap": "📊", "Mid Cap": "📈", "Small Cap": "📉", "Unclassified": "❔" };
+
   el.innerHTML = [
     { label: "Large Cap", max: getEquityAllocLimit("Large Cap") },
     { label: "Mid Cap", max: getEquityAllocLimit("Mid Cap") },
     { label: "Small Cap", max: getEquityAllocLimit("Small Cap") },
     { label: "Unclassified", max: null }
-  ].map(b => `
-    <div class="import-stat">
-      <div class="n">${fmtNum(pct(buckets[b.label]), 1)}%${b.max !== null ? `<span class="alloc-limit-note">/ ${b.max}%</span>` : ""}</div>
-      <div class="l">${escapeAttr(b.label)}</div>
+  ].map(b => {
+    const current = pct(buckets[b.label]);
+    const status = b.max !== null ? (allocLimitStatus(current, b.max) || "within") : "neutral";
+    const fillPct = b.max !== null ? Math.min(100, (current / b.max) * 100) : Math.min(100, current);
+    let subHTML;
+    if (b.max === null) {
+      subHTML = `<span class="ii2-cap-status neutral">No limit set</span>`;
+    } else if (current > b.max) {
+      subHTML = `<span class="ii2-cap-status above">+${fmtNum(current - b.max, 1)}% over limit</span>`;
+    } else if (status === "approaching") {
+      subHTML = `<span class="ii2-cap-status approaching">+${fmtNum(b.max - current, 1)}% room left</span>`;
+    } else {
+      subHTML = `<span class="ii2-cap-status within">Within limit</span>`;
+    }
+    return `
+      <div class="ii2-cap-card">
+        <div class="ii2-cap-top">
+          <div class="ii2-cap-icon ${status}">${ICONS[b.label]}</div>
+          <div>
+            <div class="ii2-cap-label">${escapeAttr(b.label)}</div>
+            <div class="ii2-cap-value">${fmtNum(current, 1)}%</div>
+            <div class="ii2-cap-sub">of ${b.max !== null ? b.max + "% limit" : "—"}</div>
+          </div>
+        </div>
+        <div class="ii2-cap-track"><div class="ii2-cap-fill ${status}" style="width:${fillPct}%"></div></div>
+        ${subHTML}
+      </div>
+    `;
+  }).join("");
+}
+
+// Compact bar: how many stocks currently fall into each recommendation
+// category, at a glance, before drilling into the filtered list below.
+function renderPortfolioSummaryBar(insights) {
+  const el = document.getElementById("portfolioSummaryBar");
+  if (!el) return;
+  const ICONS = { add: "↗", hold: "—", watch: "👁", reduce: "↘", none: "•", insuff: "❔" };
+  const counts = {};
+  INSIGHT_CATEGORY_ORDER.forEach(c => { counts[c.key] = 0; });
+  insights.forEach(ins => { counts[ins.category] = (counts[ins.category] || 0) + 1; });
+  el.innerHTML = `<span class="ii2-ps-label">Portfolio Summary</span>` + INSIGHT_CATEGORY_ORDER.map(c => `
+    <div class="ii2-ps-item">
+      <div class="ii2-ps-icon ${c.cls}">${ICONS[c.cls]}</div>
+      <div><div class="ii2-ps-n">${counts[c.key]}</div><div class="ii2-ps-l">${escapeAttr(c.key)}</div></div>
     </div>
   `).join("");
 }
 
-// Renders the categorized, collapsible Intelligent Insights list. Each
-// category is a native <details> block so 50+ stocks stay scannable —
-// the two actionable categories (Consider Adding / Reduce-Sell) open
-// by default, the rest collapsed.
+// Builds the filter pills + market-cap/sort dropdowns above the stock
+// list, and wires their change handlers to just re-run renderIntelligentInsights().
+function renderII2Toolbar() {
+  const pillsHTML = II2_PILLS.map(p => `<button type="button" class="ii2-pill${ii2State.pill === p ? " active" : ""}" data-pill="${escapeAttr(p)}">${escapeAttr(p)}</button>`).join("");
+  const capOptions = ["all", "Large Cap", "Mid Cap", "Small Cap", "Unclassified"]
+    .map(v => `<option value="${escapeAttr(v)}" ${ii2State.marketCap === v ? "selected" : ""}>${v === "all" ? "All Market Caps" : escapeAttr(v)}</option>`).join("");
+  const sortOptions = [["score", "Sort by: Score"], ["alloc", "Sort by: Allocation %"], ["name", "Sort by: Name"]]
+    .map(([v, l]) => `<option value="${v}" ${ii2State.sortBy === v ? "selected" : ""}>${l}</option>`).join("");
+  return `
+    <div class="ii2-toolbar">
+      <div class="ii2-toolbar-title">Top Insights</div>
+      <div class="ii2-pills">${pillsHTML}</div>
+      <div class="ii2-toolbar-right">
+        <select class="ii2-select" id="ii2MarketCapFilter">${capOptions}</select>
+        <select class="ii2-select" id="ii2SortBy">${sortOptions}</select>
+      </div>
+    </div>
+  `;
+}
+
+// One stock's row/card: allocation bar, market cap, recommendation
+// badge + one-line summary + Why? toggle, sector-appropriate key
+// metrics, and a circular fundamentals score. Every figure is read
+// straight from `ins` (computeStockInsight()'s output) — nothing here
+// recalculates the recommendation differently.
+function renderII2StockRow(ins) {
+  const row = ins.row;
+  const rowKey = (row.name || "").trim().toUpperCase();
+  const allocFillClass = ins.allocStatus === "above" ? "above" : ins.allocStatus === "approaching" ? "approaching" : "within";
+  const allocFillPct = ins.allocMax ? Math.min(100, (ins.allocPct / ins.allocMax) * 100) : Math.min(100, ins.allocPct);
+  const allocSubHTML = ins.allocMax === null
+    ? `<span class="muted">Cap unknown</span>`
+    : ins.allocPct > ins.allocMax
+      ? `<span class="neg">${fmtNum(ins.allocPct - ins.allocMax, 1)}% over limit</span>`
+      : `<span class="pos">${fmtNum(ins.allocMax - ins.allocPct, 1)}% room</span>`;
+  const metrics = computeInsightMetrics(ins);
+  const metricsHTML = metrics.length
+    ? metrics.map(m => `<div class="ii2-metric"><div class="l">${escapeAttr(m.label)}</div><div class="v">${m.value}</div><div class="c">${m.cmp}</div></div>`).join("")
+    : `<div class="muted">No fundamentals imported yet</div>`;
+  const score = ins.score;
+  const scoreColor = ii2ScoreColor(score);
+  const scoreRingBg = score === null
+    ? "var(--border)"
+    : `conic-gradient(${scoreColor} ${score * 3.6}deg, var(--border) 0)`;
+  const isOpen = !!ii2State.whyOpen[rowKey];
+
+  return `
+    <div class="ii2-row" data-row-key="${escapeAttr(rowKey)}">
+      <div class="ii2-row-stock">
+        <div class="ii2-row-avatar">${escapeAttr(stockMonogram(row.name))}</div>
+        <div>
+          <div class="ii2-row-name">${escapeAttr(row.name || "(unnamed)")}</div>
+          <div class="ii2-row-sector">${escapeAttr(ins.d.sector || "Sector not set")}</div>
+        </div>
+      </div>
+      <div>
+        <div class="ii2-row-alloc-nums">${fmtNum(ins.allocPct, 1)}%${ins.allocMax !== null ? ` / ${ins.allocMax}%` : ""}</div>
+        <div class="ii2-row-alloc-sub">${allocSubHTML}</div>
+        <div class="ii2-row-alloc-track"><div class="ii2-row-alloc-fill ${allocFillClass}" style="width:${allocFillPct}%;background:var(--${allocFillClass === "above" ? "negative" : allocFillClass === "approaching" ? "warning" : "positive"})"></div></div>
+      </div>
+      <div>
+        <div class="ii2-row-mcap-label">${ins.capCategory ? escapeAttr(ins.capCategory) : '<span class="muted">—</span>'}</div>
+        <div class="ii2-row-mcap-sub">${ins.d.marketCap !== null && ins.d.marketCap !== undefined ? "₹" + fmtNum(ins.d.marketCap, 0) + " Cr" : "—"}</div>
+      </div>
+      <div>
+        <span class="ii2-badge ${ins.categoryClass}">${escapeAttr(ins.category)}</span>
+        <div class="ii2-row-insight-desc">${escapeAttr(ii2ShortDescription(ins))}</div>
+        <span class="ii2-why-toggle" data-why-toggle="${escapeAttr(rowKey)}">Why? <span>${isOpen ? "⌃" : "⌄"}</span></span>
+      </div>
+      <div class="ii2-metrics-grid">${metricsHTML}</div>
+      <div class="ii2-score">
+        <div class="ii2-score-ring" style="background:${scoreRingBg}"><span class="ii2-score-num">${score === null ? "—" : score}</span></div>
+        <div class="ii2-score-label">${escapeAttr(ins.scoreLabel)}</div>
+      </div>
+      ${isOpen ? `<div class="ii2-why-body">
+        <div><strong>Allocation:</strong> ${escapeAttr(ins.allocText)}</div>
+        <div style="margin-top:6px;">
+          <span class="tag">Valuation: ${escapeAttr(ins.valuation)}</span>
+          <span class="tag">Financial Health: ${escapeAttr(ins.health)}</span>
+          <span class="tag">Growth: ${escapeAttr(ins.growth)}</span>
+        </div>
+        <div style="margin-top:8px;">${escapeAttr(ins.reason)}</div>
+      </div>` : ""}
+    </div>
+  `;
+}
+
+// Renders Cap Allocation cards, Portfolio Summary bar, and the
+// filterable/sortable/paginated "Top Insights" stock list — all driven
+// by the same computeStockInsight() output used by the recommendation
+// logic itself, so nothing shown here is a duplicate calculation.
 function renderIntelligentInsights() {
   const el = document.getElementById("intelligentInsightsBody");
   if (!el) return;
   renderCapAllocationBreakdown();
+  const summaryEl = document.getElementById("portfolioSummaryBar");
   if (state.equity.length === 0) {
-    el.innerHTML = '<div class="insights-empty">No Equity holdings yet — add stocks and import Screener Data to see Intelligent Insights.</div>';
+    if (summaryEl) summaryEl.innerHTML = "";
+    el.innerHTML = '<div class="ii2-empty">No Equity holdings yet — add stocks and import Screener Data to see Intelligent Insights.</div>';
     return;
   }
   const screenerMap = buildScreenerMap();
-  const insights = state.equity.map(row => computeStockInsight(row, screenerMap));
+  const insights = state.equity.map(row => {
+    const ins = computeStockInsight(row, screenerMap);
+    const { score, scoreLabel } = computeInsightScore(ins);
+    return { ...ins, score, scoreLabel };
+  });
+  renderPortfolioSummaryBar(insights);
 
-  const grouped = {};
-  INSIGHT_CATEGORY_ORDER.forEach(c => { grouped[c.key] = []; });
-  insights.forEach(ins => { (grouped[ins.category] || (grouped[ins.category] = [])).push(ins); });
+  let filtered = insights;
+  if (ii2State.pill !== "All") filtered = filtered.filter(ins => ins.category === ii2State.pill);
+  if (ii2State.marketCap !== "all") {
+    filtered = filtered.filter(ins => (ins.capCategory || "Unclassified") === ii2State.marketCap);
+  }
+  filtered = [...filtered].sort((a, b) => {
+    if (ii2State.sortBy === "alloc") return b.allocPct - a.allocPct;
+    if (ii2State.sortBy === "name") return (a.row.name || "").localeCompare(b.row.name || "");
+    return (b.score ?? -1) - (a.score ?? -1);
+  });
 
-  const sectionsHTML = INSIGHT_CATEGORY_ORDER.map(cfg => {
-    const items = grouped[cfg.key] || [];
-    if (items.length === 0) return "";
-    // Within a category, surface stocks furthest from/above their
-    // limit first — a simple, transparent ordering (not a second
-    // scoring model) so the most allocation-relevant rows lead.
-    const sorted = [...items].sort((a, b) =>
-      (b.allocPct - (b.allocMax ?? b.allocPct)) - (a.allocPct - (a.allocMax ?? a.allocPct))
-    );
-    const rowsHTML = sorted.map(ins => `
-      <div class="ii-row">
-        <div class="ii-row-top">
-          <span class="ii-row-name">${escapeAttr(ins.row.name || "(unnamed)")}</span>
-          <span class="ii-row-alloc">${fmtNum(ins.allocPct, 1)}%${ins.allocMax !== null ? ` / ${ins.allocMax}%` : ""}</span>
-        </div>
-        <div class="ii-row-reason">${escapeAttr(ins.reason)}</div>
-      </div>
-    `).join("");
-    return `
-      <details class="ii-details" ${cfg.defaultOpen ? "open" : ""}>
-        <summary class="ii-summary">
-          <span class="ii-cat-badge ii-cat-${cfg.cls}">${escapeAttr(cfg.key)}</span>
-          <span class="count">${items.length} stock${items.length === 1 ? "" : "s"}</span>
-        </summary>
-        <div class="ii-body">${rowsHTML}</div>
-      </details>
-    `;
-  }).join("");
+  const visible = filtered.slice(0, ii2State.visibleCount);
+  const listHeadHTML = `
+    <div class="ii2-list-head">
+      <div>Stock</div><div>Allocation (vs Limit)</div><div>Market Cap</div><div>Insight</div><div>Key Metrics (vs Industry)</div><div>Score</div>
+    </div>
+  `;
+  const rowsHTML = visible.map(renderII2StockRow).join("");
+  const showMoreHTML = filtered.length > visible.length
+    ? `<div class="ii2-show-more-wrap"><button class="btn btn-sm" id="ii2ShowMore">Show ${Math.min(10, filtered.length - visible.length)} more</button></div>`
+    : "";
 
-  el.innerHTML = sectionsHTML || '<div class="insights-empty">No insights to show yet.</div>';
+  el.innerHTML = renderII2Toolbar() +
+    (filtered.length === 0
+      ? '<div class="ii2-empty">No stocks match this filter.</div>'
+      : listHeadHTML + rowsHTML + showMoreHTML);
+
+  // Wire up pills / dropdowns / show-more / Why? toggles — rebuilt
+  // every render since the HTML above is rebuilt every render.
+  el.querySelectorAll(".ii2-pill").forEach(btn => {
+    btn.addEventListener("click", () => {
+      ii2State.pill = btn.dataset.pill;
+      ii2State.visibleCount = 10;
+      renderIntelligentInsights();
+    });
+  });
+  const capSel = document.getElementById("ii2MarketCapFilter");
+  if (capSel) capSel.addEventListener("change", () => { ii2State.marketCap = capSel.value; ii2State.visibleCount = 10; renderIntelligentInsights(); });
+  const sortSel = document.getElementById("ii2SortBy");
+  if (sortSel) sortSel.addEventListener("change", () => { ii2State.sortBy = sortSel.value; renderIntelligentInsights(); });
+  const moreBtn = document.getElementById("ii2ShowMore");
+  if (moreBtn) moreBtn.addEventListener("click", () => { ii2State.visibleCount += 10; renderIntelligentInsights(); });
+  el.querySelectorAll("[data-why-toggle]").forEach(t => {
+    t.addEventListener("click", () => {
+      const key = t.dataset.whyToggle;
+      ii2State.whyOpen[key] = !ii2State.whyOpen[key];
+      renderIntelligentInsights();
+    });
+  });
 }
 
 function renderInsights() {
