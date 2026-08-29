@@ -2322,6 +2322,142 @@ function pctOrNull(v) {
   return (v === null || v === undefined) ? null : v * 100;
 }
 
+/* ============================================================
+   SECTOR-AWARE FUNDAMENTAL VIEW (Stock Analysis)
+   A basic "how healthy do this stock's fundamentals look for ITS
+   sector" read — deliberately not a universal-threshold scorer.
+   Each sector group below gets its own thresholds and its own mix
+   of which metrics matter (e.g. Financials lean on ROA + P/B and
+   skip Debt-to-Equity entirely, since leverage is structural for a
+   bank; IT/FMCG expect high ROE and near-zero debt as normal).
+   Everything not covered by a specific group falls back to "other"'s
+   general-purpose thresholds. This is intentionally simple — a
+   handful of named signals averaged together, not an institutional
+   scoring model — and every signal shown is traceable in the reason
+   text, never hidden inside one number.
+   ============================================================ */
+
+const SECTOR_PROFILES = {
+  financial:  { label: "Banks / NBFC / Insurance", useROA: true, roaGood: 1.0, roaWeak: 0.5, pbWeight: true, deRelevant: false },
+  it:         { label: "IT / Technology", roeGood: 18, roeWeak: 10, roceGood: 18, roceWeak: 10, deGood: 0.3, deWeak: 0.8, icRelevant: false },
+  pharma:     { label: "Pharma / Healthcare", roeGood: 15, roeWeak: 8, roceGood: 15, roceWeak: 8, deGood: 0.5, deWeak: 1.2, icGood: 5, icWeak: 2 },
+  auto:       { label: "Auto / Auto Ancillary", roeGood: 13, roeWeak: 6, roceGood: 13, roceWeak: 6, deGood: 0.7, deWeak: 1.5, icGood: 4, icWeak: 1.5 },
+  energy:     { label: "Energy / Utilities", roeGood: 11, roeWeak: 5, roceGood: 11, roceWeak: 5, deGood: 1.5, deWeak: 2.5, icGood: 3, icWeak: 1.5 },
+  fmcg:       { label: "FMCG / Consumer", roeGood: 20, roeWeak: 12, roceGood: 20, roceWeak: 12, deGood: 0.3, deWeak: 0.8, icGood: 6, icWeak: 2.5 },
+  realestate: { label: "Real Estate / Infra / Construction", roeGood: 12, roeWeak: 6, roceGood: 10, roceWeak: 5, deGood: 1.2, deWeak: 2.2, icGood: 2.5, icWeak: 1.2 },
+  industrial: { label: "Manufacturing / Industrial", roeGood: 14, roeWeak: 7, roceGood: 14, roceWeak: 7, deGood: 0.8, deWeak: 1.8, icGood: 4, icWeak: 1.5 },
+  other:      { label: "General", roeGood: 15, roeWeak: 10, roceGood: 15, roceWeak: 10, deGood: 0.6, deWeak: 1.5, icGood: 5, icWeak: 2 }
+};
+
+// Coarse sector-group classifier off the free-text Sector field (from
+// the Equity tab) — matched case-insensitively against common Indian
+// market sector naming. Anything unmatched falls back to "other"
+// rather than guessing.
+function classifySectorGroup(sector) {
+  const s = String(sector || "");
+  if (/bank|financ|nbfc|insur/i.test(s)) return "financial";
+  if (/\bit\b|software|technology|tech\b/i.test(s)) return "it";
+  if (/pharma|healthcare|hospital/i.test(s)) return "pharma";
+  if (/auto/i.test(s)) return "auto";
+  if (/energy|oil|gas|power|utilit/i.test(s)) return "energy";
+  if (/fmcg|consumer|food|beverage/i.test(s)) return "fmcg";
+  if (/real estate|realty|construction|infra/i.test(s)) return "realestate";
+  if (/metal|cement|chemical|manufactur|industrial|engineering/i.test(s)) return "industrial";
+  return "other";
+}
+
+// The main entry point: one sector-aware Fundamental View per stock.
+// `d` is the same stockAnalysisDerived() output the table row already
+// uses (nothing recalculated differently). Returns
+// { view, cls, sectorGroup, sectorLabel, reason } — view is one of
+// Strong/Good/Neutral/Weak/Insufficient Data.
+function computeFundamentalView(row, screener, d) {
+  if (!screener) {
+    return { view: "Insufficient Data", cls: "insuff", sectorGroup: null, sectorLabel: null, reason: "No Screener fundamentals imported yet for this stock." };
+  }
+  const group = classifySectorGroup(d.sector);
+  const profile = { ...SECTOR_PROFILES.other, ...SECTOR_PROFILES[group] };
+  const notes = [];
+  const signals = [];
+
+  // Valuation — PE vs Industry PE is the default lens; Financials (and
+  // any stock where PE isn't meaningful, e.g. negative/near-zero
+  // earnings) lean on P/B vs Industry P/B instead or in addition.
+  let valSignal = null;
+  if (d.pe !== null && d.pe > 0 && d.industryPe !== null && d.industryPe > 0) {
+    const r = d.pe / d.industryPe;
+    valSignal = r <= 0.9 ? 1 : r >= 1.15 ? -1 : 0;
+    notes.push(`PE ${fmtNum(d.pe, 1)} vs Industry ${fmtNum(d.industryPe, 1)}`);
+  }
+  if (d.pb !== null && d.industryPbv && (profile.pbWeight || valSignal === null)) {
+    const rb = d.pb / d.industryPbv;
+    const pbSignal = rb <= 0.9 ? 1 : rb >= 1.3 ? -1 : 0;
+    valSignal = valSignal === null ? pbSignal : (valSignal + pbSignal) / 2;
+    notes.push(`P/B ${fmtNum(d.pb, 2)} vs Industry ${fmtNum(d.industryPbv, 2)}${d.pe === null ? " (PE not meaningful)" : ""}`);
+  }
+  if (valSignal !== null) signals.push(valSignal);
+
+  // Profitability — ROA for Financials (where ROE/ROCE are much less
+  // standard), ROE/ROCE for everyone else, each against that sector's
+  // own thresholds (e.g. FMCG's "good" ROE is IT's "weak" ROE).
+  let profSignal = null;
+  if (profile.useROA) {
+    if (d.roa !== null) {
+      profSignal = d.roa >= profile.roaGood ? 1 : d.roa <= profile.roaWeak ? -1 : 0;
+      notes.push(`ROA ${fmtNum(d.roa, 2)}%`);
+    }
+  } else {
+    const parts = [];
+    if (d.roe !== null) { parts.push(d.roe >= profile.roeGood ? 1 : d.roe <= profile.roeWeak ? -1 : 0); notes.push(`ROE ${fmtNum(d.roe, 1)}%`); }
+    if (d.roce !== null) { parts.push(d.roce >= profile.roceGood ? 1 : d.roce <= profile.roceWeak ? -1 : 0); notes.push(`ROCE ${fmtNum(d.roce, 1)}%`); }
+    if (parts.length) profSignal = parts.reduce((a, b) => a + b, 0) / parts.length;
+  }
+  if (profSignal !== null) signals.push(profSignal);
+
+  // Growth — EPS/Profit/Sales, same thresholds across sectors since
+  // "growing vs shrinking" is a fair comparison regardless of
+  // industry; what differs is which figure is available.
+  const growthParts = [];
+  if (d.epsGrowth3y !== null) { growthParts.push(d.epsGrowth3y >= 10 ? 1 : d.epsGrowth3y < 0 ? -1 : 0); notes.push(`EPS Growth 3Y ${fmtNum(d.epsGrowth3y, 1)}%`); }
+  if (d.profitVar3y !== null) { growthParts.push(d.profitVar3y >= 10 ? 1 : d.profitVar3y < 0 ? -1 : 0); notes.push(`Profit Growth 3Y ${fmtNum(d.profitVar3y, 1)}%`); }
+  if (d.salesGrowth5y !== null) growthParts.push(d.salesGrowth5y >= 8 ? 1 : d.salesGrowth5y < 0 ? -1 : 0);
+  if (d.qtrProfitVar !== null) growthParts.push(d.qtrProfitVar >= 8 ? 1 : d.qtrProfitVar < 0 ? -1 : 0);
+  if (growthParts.length) signals.push(growthParts.reduce((a, b) => a + b, 0) / growthParts.length);
+
+  // Financial Health — Debt-to-Equity + Interest Coverage + Free Cash
+  // Flow for non-Financials (skipped for banks/NBFCs, whose leverage
+  // is structural, not a red flag); Banking Metrics (GNPA/CRAR/NIM)
+  // for Financial-sector holdings instead, when researched.
+  const healthParts = [];
+  if (group === "financial") {
+    const bm = getLatestBankingMetrics((row.name || "").trim().toUpperCase());
+    if (bm && bm.metrics) {
+      const m = bm.metrics;
+      if (m.gnpa && m.gnpa.value !== null && m.gnpa.value !== undefined) { healthParts.push(m.gnpa.value <= 2 ? 1 : m.gnpa.value <= 4 ? 0 : -1); notes.push(`GNPA ${fmtNum(m.gnpa.value, 2)}%`); }
+      if (m.crar && m.crar.value !== null && m.crar.value !== undefined) { healthParts.push(m.crar.value >= 14 ? 1 : m.crar.value >= 11 ? 0 : -1); notes.push(`CRAR ${fmtNum(m.crar.value, 2)}%`); }
+      if (m.nim && m.nim.value !== null && m.nim.value !== undefined) healthParts.push(m.nim.value >= 3 ? 1 : m.nim.value >= 2 ? 0 : -1);
+    }
+  } else {
+    if (d.debtToEquity !== null) { healthParts.push(d.debtToEquity <= profile.deGood ? 1 : d.debtToEquity >= profile.deWeak ? -1 : 0); notes.push(`D/E ${fmtNum(d.debtToEquity, 2)}`); }
+    if (profile.icRelevant !== false && d.intCoverage !== null) { healthParts.push(d.intCoverage >= (profile.icGood || 5) ? 1 : d.intCoverage <= (profile.icWeak || 2) ? -1 : 0); notes.push(`Interest Coverage ${fmtNum(d.intCoverage, 1)}x`); }
+    if (d.fcfPrevAnn !== null) healthParts.push(d.fcfPrevAnn > 0 ? 1 : -1);
+  }
+  if (healthParts.length) signals.push(healthParts.reduce((a, b) => a + b, 0) / healthParts.length);
+
+  if (signals.length === 0) {
+    return { view: "Insufficient Data", cls: "insuff", sectorGroup: group, sectorLabel: profile.label, reason: `Screener data is imported, but not enough of the metrics relevant to ${profile.label} are available to form a view.` };
+  }
+
+  const overall = signals.reduce((a, b) => a + b, 0) / signals.length;
+  let view, cls, summary;
+  if (overall >= 0.6) { view = "Strong"; cls = "strong"; summary = "Valuation, profitability and growth all look healthy for this sector."; }
+  else if (overall >= 0.25) { view = "Good"; cls = "good"; summary = "Fundamentals are reasonable for this sector, with more positives than concerns."; }
+  else if (overall > -0.25) { view = "Neutral"; cls = "neutral"; summary = "Fundamentals are broadly stable, without a strong case either way."; }
+  else { view = "Weak"; cls = "weak"; summary = "Profitability, growth or valuation look weak relative to peers in this sector."; }
+
+  return { view, cls, sectorGroup: group, sectorLabel: profile.label, reason: `${summary}${notes.length ? " (" + notes.slice(0, 4).join(", ") + ")" : ""}` };
+}
+
 // Renders a derived numeric field as fixed-decimal text, or an
 // em-dash when the underlying Screener data hasn't been imported
 // yet for that holding — distinguishes "missing data" from "0".
@@ -2361,6 +2497,7 @@ function stockAnalysisGetSearchText(row, screener, d) {
     d.low52, d.high52, d.gainFromLow, d.dropFromHigh,
     d.eps, d.pe, d.industryPe,
     d.buyReco === null ? "" : (d.buyReco ? "Buy" : "Hold"),
+    d.fundamentalView, d.fundamentalSectorLabel,
     d.bookValue, d.pb, d.industryPbv,
     d.yieldPct, d.dividendYield, d.roe, d.roce, d.roa,
     d.debtToEquity, d.promoterHolding,
@@ -2383,6 +2520,7 @@ function stockAnalysisGetSortValue(d, col) {
     case "eps": return d.eps ?? -Infinity;
     case "pe": return d.pe ?? -Infinity;
     case "industryPe": return d.industryPe ?? -Infinity;
+    case "fundamentalView": return d.fundamentalView || "";
     case "bookValue": return d.bookValue ?? -Infinity;
     case "pb": return d.pb ?? -Infinity;
     case "roe": return d.roe ?? -Infinity;
@@ -2414,6 +2552,7 @@ const STOCK_ANALYSIS_COLUMNS = [
   { key: "pe", label: "PE" },
   { key: "industryPe", label: "Industry PE" },
   { key: "buyReco", label: "Buy Reco" },
+  { key: "fundamentalView", label: "Fundamental View" },
   { key: "bookValue", label: "Book Value" },
   { key: "pb", label: "P/B" },
   { key: "industryPbv", label: "Industry P/B" },
@@ -2690,7 +2829,22 @@ function renderStockAnalysisDetailPanel(joinedRows) {
         <div class="sa-detail-row"><span class="k">52W Low / High</span><span class="v">${fmtOrDash(d.low52)} / ${fmtOrDash(d.high52)}</span></div>
         <div class="sa-detail-row"><span class="k">Recommendation</span><span class="v">${buyHTML}</span></div>
       </div>
+      ${renderFundamentalViewSectionHTML(d)}
       ${renderBankingMetricsSectionHTML(row, d)}
+    </div>
+  `;
+}
+
+// Full-width detail-panel section for the sector-aware Fundamental
+// View — mirrors renderBankingMetricsSectionHTML()'s placement/layout
+// pattern. Everything shown here is read straight from `d`
+// (computeFundamentalView()'s output), nothing recalculated.
+function renderFundamentalViewSectionHTML(d) {
+  return `
+    <div class="sa-detail-section" style="grid-column:1/-1;">
+      <div class="sa-detail-section-title">Fundamental View${d.fundamentalSectorLabel ? " — " + escapeAttr(d.fundamentalSectorLabel) : ""}</div>
+      <div class="sa-detail-row"><span class="k">Overall</span><span class="v"><span class="fv-badge fv-${d.fundamentalViewCls}">${escapeAttr(d.fundamentalView)}</span></span></div>
+      <div class="sa-detail-row" style="border-bottom:none;"><span class="v" style="font-family:var(--font-body);font-weight:400;color:var(--text-muted);">${escapeAttr(d.fundamentalViewReason || "")}</span></div>
     </div>
   `;
 }
@@ -3014,6 +3168,11 @@ function renderStockAnalysis() {
     const screener = screenerMap.get((row.name || "").trim().toUpperCase());
     const d = stockAnalysisDerived(row, screener);
     d._name = row.name || "";
+    const fv = computeFundamentalView(row, screener, d);
+    d.fundamentalView = fv.view;
+    d.fundamentalViewCls = fv.cls;
+    d.fundamentalViewReason = fv.reason;
+    d.fundamentalSectorLabel = fv.sectorLabel;
     return { row, screener, d };
   });
 
@@ -3053,13 +3212,13 @@ function renderStockAnalysis() {
 
   tbody.innerHTML = "";
   if (state.equity.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="34">No Equity holdings yet — add stocks on the Equity tab first.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="35">No Equity holdings yet — add stocks on the Equity tab first.</td></tr>';
     document.getElementById("saPagination").innerHTML = "";
     renderStockAnalysisMobileDeck([]);
     return;
   }
   if (rows.length === 0) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="34">${excluded.size > 0 ? 'No holdings match this filter (some may be hidden — see "Hidden" above).' : 'No holdings match this filter.'}</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="35">${excluded.size > 0 ? 'No holdings match this filter (some may be hidden — see "Hidden" above).' : 'No holdings match this filter.'}</td></tr>`;
     document.getElementById("saPagination").innerHTML = "";
     renderStockAnalysisMobileDeck([]);
     return;
@@ -3102,6 +3261,7 @@ function renderStockAnalysis() {
       <td data-label="PE">${fmtOrDash(d.pe)}</td>
       <td data-label="Industry PE">${fmtOrDash(d.industryPe)}</td>
       <td class="left" data-label="Buy Reco">${buyHTML}</td>
+      <td class="left" data-label="Fundamental View"><span class="fv-badge fv-${d.fundamentalViewCls}" title="${escapeAttr(d.fundamentalViewReason || "")}">${escapeAttr(d.fundamentalView)}</span></td>
       <td data-label="Book Value">${fmtOrDash(d.bookValue)}</td>
       <td class="${d.pbClass}" data-label="P/B">${fmtOrDash(d.pb)}</td>
       <td data-label="Industry P/B">${fmtOrDash(d.industryPbv)}</td>
@@ -3251,6 +3411,7 @@ function renderStockAnalysisMobileDeck(pageRows, fullFilteredRows) {
         </div>
         <div class="sa-mobile-card-footer">
           ${renderRangeBarHTML(d)}
+          <span class="fv-badge fv-${d.fundamentalViewCls}" title="${escapeAttr(d.fundamentalViewReason || "")}">${escapeAttr(d.fundamentalView)}</span>
           ${buyHTML}
         </div>
       </div>
