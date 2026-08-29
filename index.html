@@ -741,96 +741,6 @@
     }
     #panel-dashboard table tbody td .ideal-input{width:70px;}
   }
-
-  /* ============================================================
-     INTELLIGENT INSIGHTS v2
-     ============================================================ */
-  .ii2-header-row{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap;margin-bottom:16px;}
-  .ii2-title{margin:0;font-family:var(--font-display);font-size:16px;font-weight:600;display:flex;align-items:center;gap:8px;}
-  .ii2-header-badge{background:var(--surface-2);border:1px solid var(--border);border-radius:20px;padding:6px 12px;font-size:11px;color:var(--text-muted);display:flex;align-items:center;gap:6px;white-space:nowrap;cursor:help;}
-  .ii2-info{color:var(--text-faint);}
-
-  .ii2-cap-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:16px;}
-  .ii2-cap-card{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;}
-  .ii2-cap-top{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
-  .ii2-cap-icon{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:15px;flex:0 0 auto;}
-  .ii2-cap-icon.within{background:var(--positive-soft);color:var(--positive);}
-  .ii2-cap-icon.approaching{background:var(--warning-soft);color:var(--warning);}
-  .ii2-cap-icon.above{background:var(--negative-soft);color:var(--negative);}
-  .ii2-cap-icon.neutral{background:#6f93c922;color:var(--blue);}
-  .ii2-cap-label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);}
-  .ii2-cap-value{font-family:var(--font-mono);font-size:19px;font-weight:700;color:var(--text);}
-  .ii2-cap-sub{font-size:11px;color:var(--text-faint);margin-top:1px;}
-  .ii2-cap-track{height:6px;border-radius:4px;background:var(--bg);overflow:hidden;margin:10px 0 8px;}
-  .ii2-cap-fill{height:100%;border-radius:4px;}
-  .ii2-cap-fill.within{background:var(--positive);}
-  .ii2-cap-fill.approaching{background:var(--warning);}
-  .ii2-cap-fill.above{background:var(--negative);}
-  .ii2-cap-fill.neutral{background:var(--blue);}
-  .ii2-cap-status{font-size:11.5px;font-weight:600;}
-  .ii2-cap-status.within{color:var(--positive);}
-  .ii2-cap-status.approaching{color:var(--warning);}
-  .ii2-cap-status.above{color:var(--negative);}
-  .ii2-cap-status.neutral{color:var(--text-faint);font-weight:500;}
-
-  .ii2-portfolio-summary{display:flex;flex-wrap:wrap;align-items:center;gap:22px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);padding:14px 18px;margin-bottom:18px;}
-  .ii2-ps-label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);margin-right:2px;}
-  .ii2-ps-item{display:flex;align-items:center;gap:8px;}
-  .ii2-ps-icon{width:26px;height:26px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:12px;flex:0 0 auto;}
-  .ii2-ps-icon.add{background:var(--positive-soft);color:var(--positive);}
-  .ii2-ps-icon.hold{background:#6f93c922;color:var(--blue);}
-  .ii2-ps-icon.watch{background:var(--warning-soft);color:var(--warning);}
-  .ii2-ps-icon.reduce{background:var(--negative-soft);color:var(--negative);}
-  .ii2-ps-icon.none, .ii2-ps-icon.insuff{background:var(--surface);color:var(--text-faint);}
-  .ii2-ps-n{font-family:var(--font-mono);font-weight:700;font-size:15px;color:var(--text);}
-  .ii2-ps-l{font-size:11px;color:var(--text-muted);}
-
-  .ii2-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;}
-  .ii2-toolbar-title{font-family:var(--font-display);font-size:14px;font-weight:600;white-space:nowrap;}
-  .ii2-pills{display:flex;gap:6px;flex-wrap:wrap;}
-  .ii2-pill{background:var(--surface-2);border:1px solid var(--border);border-radius:20px;padding:6px 13px;font-size:12px;font-weight:500;color:var(--text-muted);cursor:pointer;white-space:nowrap;}
-  .ii2-pill.active{background:var(--gold);border-color:var(--gold);color:#1b1408;font-weight:600;}
-  .ii2-toolbar-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-  .ii2-select{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font-body);font-size:12px;padding:7px 10px;}
-
-  .ii2-list-head{display:grid;grid-template-columns:1.7fr 1.3fr 1fr 1.9fr 2fr 0.7fr;gap:12px;padding:4px 14px 8px;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);}
-  .ii2-row{display:grid;grid-template-columns:1.7fr 1.3fr 1fr 1.9fr 2fr 0.7fr;gap:12px;align-items:center;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:10px;}
-  .ii2-row-stock{display:flex;align-items:center;gap:10px;}
-  .ii2-row-avatar{width:34px;height:34px;border-radius:9px;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--gold);flex:0 0 auto;}
-  .ii2-row-name{font-family:var(--font-display);font-weight:600;font-size:13.5px;color:var(--text);}
-  .ii2-row-sector{font-size:11px;color:var(--text-faint);}
-  .ii2-row-alloc-nums{font-family:var(--font-mono);font-size:13px;color:var(--text);}
-  .ii2-row-alloc-sub{font-size:10.5px;margin-top:3px;}
-  .ii2-row-alloc-track{height:5px;border-radius:3px;background:var(--bg);overflow:hidden;margin-top:6px;max-width:130px;}
-  .ii2-row-alloc-fill{height:100%;border-radius:3px;}
-  .ii2-row-mcap-label{font-size:12.5px;color:var(--text);}
-  .ii2-row-mcap-sub{font-size:10.5px;color:var(--text-faint);font-family:var(--font-mono);margin-top:2px;}
-  .ii2-row-insight-desc{font-size:11.5px;color:var(--text-muted);margin-top:6px;line-height:1.4;}
-  .ii2-why-toggle{font-size:11px;color:var(--gold);cursor:pointer;margin-top:6px;display:inline-flex;align-items:center;gap:3px;user-select:none;}
-  .ii2-metrics-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(64px,1fr));gap:8px;}
-  .ii2-metric .l{font-size:9.5px;text-transform:uppercase;color:var(--text-faint);letter-spacing:.03em;}
-  .ii2-metric .v{font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--text);}
-  .ii2-metric .c{font-size:10px;}
-  .ii2-score{display:flex;flex-direction:column;align-items:center;gap:2px;}
-  .ii2-score-ring{width:46px;height:46px;border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative;}
-  .ii2-score-ring::before{content:"";position:absolute;inset:4px;background:var(--surface-2);border-radius:50%;}
-  .ii2-score-num{position:relative;font-family:var(--font-mono);font-weight:700;font-size:13.5px;color:var(--text);}
-  .ii2-score-label{font-size:9.5px;color:var(--text-faint);}
-  .ii2-why-body{grid-column:1/-1;border-top:1px solid var(--border);margin-top:10px;padding-top:10px;font-size:12px;color:var(--text-muted);line-height:1.6;}
-  .ii2-why-body .tag{display:inline-block;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:2px 8px;font-size:10.5px;margin:2px 4px 2px 0;color:var(--text-muted);}
-  .ii2-show-more-wrap{text-align:center;margin-top:4px;}
-  .ii2-empty{color:var(--text-faint);font-size:12.5px;padding:24px 0;text-align:center;}
-  .ii2-badge{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-body);font-size:11px;font-weight:600;padding:3px 10px;border-radius:6px;letter-spacing:.02em;white-space:nowrap;}
-  .ii2-badge.add{background:var(--positive-soft);color:var(--positive);}
-  .ii2-badge.hold{background:#6f93c922;color:var(--blue);}
-  .ii2-badge.watch{background:var(--warning-soft);color:var(--warning);}
-  .ii2-badge.reduce{background:var(--negative-soft);color:var(--negative);}
-  .ii2-badge.none, .ii2-badge.insuff{background:var(--surface);color:var(--text-faint);}
-  @media (max-width:900px){
-    .ii2-list-head{display:none;}
-    .ii2-row{grid-template-columns:1fr;}
-    .ii2-row-alloc-track{max-width:none;}
-  }
 </style>
 </head>
 <body>
@@ -1432,16 +1342,10 @@
 
     <div class="sa-detail-panel" id="saDetailPanel"></div>
 
-    <div class="card ii2-card" style="margin-top:16px;">
-      <div class="ii2-header-row">
-        <div>
-          <h3 class="ii2-title">✨ Intelligent Insights</h3>
-          <p class="section-sub" style="margin:4px 0 0;">Combines each stock's current allocation (vs. your configured limit under Settings → Equity Allocation Limits) with fundamentals.</p>
-        </div>
-        <div class="ii2-header-badge" title="Recommendations combine portfolio allocation with valuation, profitability, growth and sector-specific fundamentals — never allocation alone in either direction.">Equity = allocation + fundamentals <span class="ii2-info">ⓘ</span></div>
-      </div>
-      <div id="capAllocationBreakdown" class="ii2-cap-cards"></div>
-      <div id="portfolioSummaryBar" class="ii2-portfolio-summary"></div>
+    <div class="card" style="margin-top:16px;">
+      <h3>Intelligent Insights <span class="hint">Equity — allocation + fundamentals, decision-support only</span></h3>
+      <p class="section-sub" style="margin:-4px 0 14px;">Combines each stock's current allocation (vs. your configured limit under Settings → Equity Allocation Limits) with the fundamentals above. Low allocation alone is never treated as a Buy signal, and high allocation alone is never treated as a Sell signal — see the reasoning shown per stock.</p>
+      <div id="capAllocationBreakdown" class="import-stat-row"></div>
       <div id="intelligentInsightsBody"></div>
     </div>
 
@@ -1460,6 +1364,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-08-29-2"></script>
+<script src="app.js?v=2026-08-28-5"></script>
 </body>
 </html>
