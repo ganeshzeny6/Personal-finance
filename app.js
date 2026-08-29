@@ -2036,7 +2036,8 @@ function computeStockInsight(row, screenerMap) {
 
   if (!screener || knownCount === 0) {
     return {
-      row, category: "No Action", categoryClass: "none", allocPct, allocMax, allocStatus,
+      row, category: "No Action", categoryClass: "none", allocPct, allocMax, allocStatus, d, factorsText,
+      fv: computeFundamentalView(row, screener, d),
       reason: `Insufficient Data — ${!screener ? "no Screener fundamentals imported for this stock yet" : "not enough fundamental fields available to form a view"}. ${allocText}.`
     };
   }
@@ -2098,16 +2099,50 @@ function computeStockInsight(row, screenerMap) {
     }
   }
 
-  return { row, category, categoryClass, allocPct, allocMax, allocStatus, reason };
+  // `d` and the Fundamental View badge are already-computed values
+  // (from stockAnalysisDerived()/computeFundamentalView(), same as the
+  // Stock Analysis table uses) — surfaced here purely for the redesigned
+  // Intelligent Insights row display; nothing new is calculated.
+  const fv = computeFundamentalView(row, screener, d);
+  return { row, category, categoryClass, allocPct, allocMax, allocStatus, reason, d, factorsText, fv };
 }
 
+// Every section starts COLLAPSED — with 50+ stocks the point of the
+// redesign is a compact default view; clicking a header expands it.
 const INSIGHT_CATEGORY_ORDER = [
-  { key: "Consider Adding", cls: "add", defaultOpen: true },
-  { key: "Reduce / Sell", cls: "reduce", defaultOpen: true },
+  { key: "Consider Adding", cls: "add", defaultOpen: false },
+  { key: "Reduce / Sell", cls: "reduce", defaultOpen: false },
   { key: "Watch", cls: "watch", defaultOpen: false },
   { key: "Hold", cls: "hold", defaultOpen: false },
   { key: "No Action", cls: "none", defaultOpen: false }
 ];
+
+// Portfolio Summary strip — counts per recommendation category, from
+// the exact same `insights` array renderIntelligentInsights() already
+// computed via computeStockInsight(). Purely a display aggregation.
+const INSIGHT_CATEGORY_ICONS = {
+  "Consider Adding": "📈",
+  "Reduce / Sell": "📉",
+  "Watch": "👁",
+  "Hold": "⏸",
+  "No Action": "➖"
+};
+function renderPortfolioSummary(insights) {
+  const el = document.getElementById("portfolioSummaryGrid");
+  if (!el) return;
+  const counts = {};
+  INSIGHT_CATEGORY_ORDER.forEach(c => { counts[c.key] = 0; });
+  insights.forEach(ins => { counts[ins.category] = (counts[ins.category] || 0) + 1; });
+  el.innerHTML = INSIGHT_CATEGORY_ORDER.map(c => `
+    <div class="iis-summary-card">
+      <div>
+        <div class="l">${escapeAttr(c.key)}</div>
+        <div class="n">${counts[c.key] || 0}</div>
+      </div>
+      <div class="iis-summary-icon">${INSIGHT_CATEGORY_ICONS[c.key] || ""}</div>
+    </div>
+  `).join("");
+}
 
 // "I need % for each cap allocation" — a compact stat row above the
 // Intelligent Insights list showing what share of total Equity
@@ -2133,12 +2168,25 @@ function renderCapAllocationBreakdown() {
     { label: "Mid Cap", max: getEquityAllocLimit("Mid Cap") },
     { label: "Small Cap", max: getEquityAllocLimit("Small Cap") },
     { label: "Unclassified", max: null }
-  ].map(b => `
-    <div class="import-stat">
-      <div class="n">${fmtNum(pct(buckets[b.label]), 1)}%${b.max !== null ? `<span class="alloc-limit-note">/ ${b.max}%</span>` : ""}</div>
-      <div class="l">${escapeAttr(b.label)}</div>
-    </div>
-  `).join("");
+  ].map(b => {
+    const p = pct(buckets[b.label]);
+    // allocLimitStatus()/allocLimitStatusLabel() are the exact same
+    // functions the Equity tab's Alloc % cell already uses — no new
+    // thresholds introduced here.
+    const status = allocLimitStatus(p, b.max);
+    const barPct = b.max ? Math.min(100, (p / b.max) * 100) : Math.min(100, p);
+    const barClass = status === "above" ? "above" : status === "approaching" ? "approaching" : "";
+    return `
+      <div class="iis-alloc-card">
+        <div class="iis-alloc-top">
+          <span class="iis-alloc-name">${escapeAttr(b.label)}</span>
+          <span class="iis-alloc-pct">${fmtNum(p, 1)}%</span>
+        </div>
+        <div class="iis-progress-track"><div class="iis-progress-fill ${barClass}" style="width:${barPct}%"></div></div>
+        <div class="iis-alloc-status ${barClass}">${b.max !== null ? `Limit ${b.max}%` : "No limit configured"}${status ? " · " + allocLimitStatusLabel(status) : ""}</div>
+      </div>
+    `;
+  }).join("");
 }
 
 // Renders the categorized, collapsible Intelligent Insights list. Each
@@ -2157,6 +2205,7 @@ function renderIntelligentInsights() {
   // fundamentals-driven list.
   const eligible = state.equity.filter(row => !isETFEquity(row));
   if (eligible.length === 0) {
+    renderPortfolioSummary([]);
     el.innerHTML = state.equity.length === 0
       ? '<div class="insights-empty">No Equity holdings yet — add stocks and import Screener Data to see Intelligent Insights.</div>'
       : '<div class="insights-empty">No non-ETF Equity holdings to assess — Intelligent Insights needs company-level fundamentals, which ETFs don\'t have.</div>';
@@ -2164,6 +2213,7 @@ function renderIntelligentInsights() {
   }
   const screenerMap = buildScreenerMap();
   const insights = eligible.map(row => computeStockInsight(row, screenerMap));
+  renderPortfolioSummary(insights);
 
   const grouped = {};
   INSIGHT_CATEGORY_ORDER.forEach(c => { grouped[c.key] = []; });
@@ -2178,15 +2228,44 @@ function renderIntelligentInsights() {
     const sorted = [...items].sort((a, b) =>
       (b.allocPct - (b.allocMax ?? b.allocPct)) - (a.allocPct - (a.allocMax ?? a.allocPct))
     );
-    const rowsHTML = sorted.map(ins => `
-      <div class="ii-row">
-        <div class="ii-row-top">
-          <span class="ii-row-name">${escapeAttr(ins.row.name || "(unnamed)")}</span>
-          <span class="ii-row-alloc">${fmtNum(ins.allocPct, 1)}%${ins.allocMax !== null ? ` / ${ins.allocMax}%` : ""}</span>
+    const rowsHTML = sorted.map(ins => {
+      const d = ins.d;
+      const capCat = d.capCategory || "Unclassified";
+      const barPct = ins.allocMax ? Math.min(100, (ins.allocPct / ins.allocMax) * 100) : Math.min(100, ins.allocPct);
+      const barClass = ins.allocStatus === "above" ? "above" : ins.allocStatus === "approaching" ? "approaching" : "";
+      // Fundamental View is the existing sector-aware view badge
+      // (computeFundamentalView() — same one shown on the Stock
+      // Analysis table/detail panel) standing in as the "Score"
+      // column: there is no separate numeric score anywhere in the
+      // app to display instead.
+      const fvHTML = ins.fv
+        ? `<span class="fv-badge fv-${ins.fv.cls}" title="${escapeAttr(ins.fv.reason || "")}">${escapeAttr(ins.fv.view)}</span>`
+        : '<span class="muted">—</span>';
+      return `
+        <div class="ii-row">
+          <div class="iis-row-grid">
+            <div data-label="Stock">
+              <div>
+                <div class="iis-stock-name">${escapeAttr(ins.row.name || "(unnamed)")}</div>
+                <div class="iis-stock-sector">${escapeAttr(d.sector || "Sector not set")}</div>
+              </div>
+            </div>
+            <div class="iis-alloc-cell" data-label="Allocation">
+              <div>
+                <div class="iis-progress-track"><div class="iis-progress-fill ${barClass}" style="width:${barPct}%"></div></div>
+                <div class="iis-alloc-status ${barClass}">${fmtNum(ins.allocPct, 1)}%${ins.allocMax !== null ? ` / ${ins.allocMax}%` : ""}</div>
+              </div>
+            </div>
+            <div data-label="Market Cap">${escapeAttr(capCat)}</div>
+            <div data-label="Insight"><span class="ii-cat-badge ii-cat-${cfg.cls}">${escapeAttr(ins.category)}</span></div>
+            <div class="iis-metrics-cell" data-label="Key Metrics">${escapeAttr(ins.factorsText || "—")}</div>
+            <div class="iis-score-cell" data-label="Fundamental View">${fvHTML}</div>
+          </div>
+          <button class="iis-why-toggle" type="button" data-why-toggle>Why? ▾</button>
+          <div class="iis-why-body">${escapeAttr(ins.reason)}</div>
         </div>
-        <div class="ii-row-reason">${escapeAttr(ins.reason)}</div>
-      </div>
-    `).join("");
+      `;
+    }).join("");
     return `
       <details class="ii-details" ${cfg.defaultOpen ? "open" : ""}>
         <summary class="ii-summary">
@@ -2199,6 +2278,19 @@ function renderIntelligentInsights() {
   }).join("");
 
   el.innerHTML = sectionsHTML || '<div class="insights-empty">No insights to show yet.</div>';
+
+  // "Why?" is a separate, per-stock disclosure nested inside each
+  // (already-collapsible) category section — expands just the
+  // reasoning text without affecting that section's open/closed state.
+  el.querySelectorAll("[data-why-toggle]").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const body = btn.nextElementSibling;
+      const open = body.classList.toggle("open");
+      btn.textContent = open ? "Why? ▴" : "Why? ▾";
+    });
+  });
 }
 
 function renderInsights() {

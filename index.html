@@ -215,6 +215,54 @@
   .ii-cat-reduce{background:var(--negative-soft);color:var(--negative);}
   .ii-cat-none{background:var(--surface-2);color:var(--text-faint);}
 
+  /* ============================================================
+     INTELLIGENT INSIGHTS — UI-ONLY REDESIGN
+     Everything here is presentation: cards/progress bars/collapsible
+     groups around data computeStockInsight()/renderCapAllocationBreakdown()
+     already produce. No calculation logic lives in this stylesheet.
+     ============================================================ */
+  .iis-section-label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);margin:18px 0 8px;font-weight:600;}
+  .card.iis-card > .iis-section-label:first-of-type{margin-top:4px;}
+
+  .iis-alloc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;}
+  .iis-alloc-card{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;}
+  .iis-alloc-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;}
+  .iis-alloc-name{font-family:var(--font-display);font-size:12.5px;font-weight:600;color:var(--text);}
+  .iis-alloc-pct{font-family:var(--font-mono);font-size:15px;font-weight:600;color:var(--text);}
+  .iis-progress-track{height:6px;border-radius:4px;background:var(--surface);overflow:hidden;margin-bottom:6px;}
+  .iis-progress-fill{height:100%;border-radius:4px;background:var(--positive);transition:width .2s ease;}
+  .iis-progress-fill.approaching{background:var(--warning);}
+  .iis-progress-fill.above{background:var(--negative);}
+  .iis-alloc-status{font-size:10.5px;color:var(--text-faint);}
+  .iis-alloc-status.above{color:var(--negative);}
+  .iis-alloc-status.approaching{color:var(--warning);}
+
+  .iis-summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:4px;}
+  .iis-summary-card{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px;}
+  .iis-summary-card .n{font-family:var(--font-mono);font-size:20px;font-weight:600;color:var(--text);}
+  .iis-summary-card .l{font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.04em;}
+  .iis-summary-icon{font-size:19px;opacity:.8;}
+
+  .iis-groups{margin-top:6px;}
+  .ii-summary:hover{background:var(--surface);}
+
+  .iis-row-grid{display:grid;grid-template-columns:1.6fr 1.3fr .9fr 1.2fr 1.8fr 1fr;gap:14px;align-items:center;}
+  .iis-stock-name{font-family:var(--font-display);font-size:13px;font-weight:600;color:var(--text);}
+  .iis-stock-sector{font-size:10.5px;color:var(--text-faint);margin-top:2px;}
+  .iis-metrics-cell{font-size:11px;color:var(--text-muted);line-height:1.5;}
+  .iis-score-cell{text-align:right;}
+  .iis-why-toggle{background:none;border:none;color:var(--gold);font-family:var(--font-body);font-size:11px;cursor:pointer;padding:0;margin-top:8px;text-align:left;}
+  .iis-why-body{display:none;font-size:11.5px;color:var(--text-muted);line-height:1.55;margin-top:6px;padding-top:8px;border-top:1px dashed var(--border);}
+  .iis-why-body.open{display:block;animation:fade .15s ease;}
+
+  @media (max-width:900px){
+    .iis-row-grid{grid-template-columns:1fr;gap:7px;}
+    .iis-row-grid > div{display:flex;justify-content:space-between;align-items:center;gap:10px;}
+    .iis-row-grid > div::before{content:attr(data-label);color:var(--text-faint);font-size:10px;text-transform:uppercase;letter-spacing:.04em;flex:0 0 auto;}
+    .iis-alloc-cell{align-items:flex-start !important;}
+    .iis-alloc-cell > div{width:100%;}
+  }
+
   .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;}
   .card h3{font-family:var(--font-display);font-size:14px;font-weight:600;margin:0 0 14px;display:flex;align-items:center;justify-content:space-between;}
   .card h3 .hint{font-family:var(--font-body);font-weight:400;font-size:11px;color:var(--text-faint);}
@@ -1342,11 +1390,15 @@
 
     <div class="sa-detail-panel" id="saDetailPanel"></div>
 
-    <div class="card" style="margin-top:16px;">
+    <div class="card iis-card" style="margin-top:16px;">
       <h3>Intelligent Insights <span class="hint">Equity — allocation + fundamentals, decision-support only</span></h3>
       <p class="section-sub" style="margin:-4px 0 14px;">Combines each stock's current allocation (vs. your configured limit under Settings → Equity Allocation Limits) with the fundamentals above. Low allocation alone is never treated as a Buy signal, and high allocation alone is never treated as a Sell signal — see the reasoning shown per stock.</p>
-      <div id="capAllocationBreakdown" class="import-stat-row"></div>
-      <div id="intelligentInsightsBody"></div>
+      <div class="iis-section-label">Allocation Summary</div>
+      <div id="capAllocationBreakdown" class="iis-alloc-grid"></div>
+      <div class="iis-section-label">Portfolio Summary</div>
+      <div id="portfolioSummaryGrid" class="iis-summary-grid"></div>
+      <div class="iis-section-label">Recommendations <span style="text-transform:none;letter-spacing:0;color:var(--text-faint);font-weight:400;">— click a category to expand</span></div>
+      <div id="intelligentInsightsBody" class="iis-groups"></div>
     </div>
 
     <p class="settings-note">"Import Screener Data" reads an .xlsx with a header row (symbol, book_value, eps, industry_pe, roe, roce, etc. — same column names your Screener export uses) and matches each row to an Equity holding by Symbol. Re-importing replaces the whole Screener dataset. Click any row in the table above to see its full breakdown here.</p>
@@ -1364,6 +1416,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-08-29-2"></script>
+<script src="app.js?v=2026-08-29-3"></script>
 </body>
 </html>
