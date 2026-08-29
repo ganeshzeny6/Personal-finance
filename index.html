@@ -191,6 +191,30 @@
   .performer-meta{font-family:var(--font-mono);font-size:11px;color:var(--text-faint);margin-top:4px;}
   .insights-empty{color:var(--text-faint);font-size:12.5px;padding:24px 0;text-align:center;}
 
+  /* Intelligent Insights — reuses .card/.performer-row visual language;
+     one <details> block per recommendation category so 50+ stocks stay
+     scannable instead of one long list. */
+  .ii-details{border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px;overflow:hidden;}
+  .ii-details:last-child{margin-bottom:0;}
+  .ii-summary{cursor:pointer;list-style:none;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface-2);font-family:var(--font-display);font-size:13px;font-weight:600;}
+  .ii-summary::-webkit-details-marker{display:none;}
+  .ii-summary::after{content:"▸";color:var(--text-faint);font-size:11px;transition:transform .15s ease;}
+  .ii-details[open] .ii-summary::after{transform:rotate(90deg);}
+  .ii-summary .count{font-family:var(--font-mono);font-weight:500;color:var(--text-faint);font-size:11.5px;}
+  .ii-body{padding:4px 16px 6px;}
+  .ii-row{padding:10px 0;border-bottom:1px solid var(--border);}
+  .ii-row:last-child{border-bottom:none;}
+  .ii-row-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:4px;flex-wrap:wrap;}
+  .ii-row-name{font-family:var(--font-display);font-size:13px;font-weight:600;color:var(--text);}
+  .ii-row-alloc{font-family:var(--font-mono);font-size:11px;color:var(--text-faint);white-space:nowrap;}
+  .ii-row-reason{font-size:12px;color:var(--text-muted);line-height:1.5;}
+  .ii-cat-badge{display:inline-block;font-family:var(--font-body);font-size:10px;font-weight:600;padding:2px 8px;border-radius:5px;letter-spacing:.02em;white-space:nowrap;}
+  .ii-cat-add{background:var(--positive-soft);color:var(--positive);}
+  .ii-cat-hold{background:var(--surface-2);color:var(--text-muted);}
+  .ii-cat-watch{background:var(--warning-soft);color:var(--warning);}
+  .ii-cat-reduce{background:var(--negative-soft);color:var(--negative);}
+  .ii-cat-none{background:var(--surface-2);color:var(--text-faint);}
+
   .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;}
   .card h3{font-family:var(--font-display);font-size:14px;font-weight:600;margin:0 0 14px;display:flex;align-items:center;justify-content:space-between;}
   .card h3 .hint{font-family:var(--font-body);font-weight:400;font-size:11px;color:var(--text-faint);}
@@ -223,6 +247,15 @@
   .pos{color:var(--positive);}
   .neg{color:var(--negative);}
   .muted{color:var(--text-faint);}
+
+  /* Equity allocation-limit status — colors the existing Alloc % cell
+     rather than adding a new column, so the table's structure/colspans
+     stay untouched. ".alloc-within" is intentionally unstyled (default
+     text color); approaching/above borrow the same warning/negative
+     tokens the Debt maturity highlighting already uses. */
+  td.c-alloc.alloc-approaching{color:var(--warning);font-weight:600;}
+  td.c-alloc.alloc-above{color:var(--negative);font-weight:600;}
+  .alloc-limit-note{color:var(--text-faint);font-family:var(--font-mono);font-size:10.5px;margin-left:2px;}
 
   /* Computed (read-only, non-input) cells: truncate with an ellipsis
      instead of silently overflowing into the neighboring cell when a
@@ -1174,6 +1207,12 @@
     </div>
 
     <div class="card" style="margin-top:16px;">
+      <h3>Intelligent Insights <span class="hint">Equity — allocation + fundamentals, decision-support only</span></h3>
+      <p class="section-sub" style="margin:-4px 0 14px;">Combines each stock's current allocation (vs. your configured limit under Settings → Equity Allocation Limits) with Stock Analysis fundamentals. Low allocation alone is never treated as a Buy signal, and high allocation alone is never treated as a Sell signal — see the reasoning shown per stock.</p>
+      <div id="intelligentInsightsBody"></div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
       <h3>Mutual Fund Category Breakdown</h3>
       <div class="table-scroll">
         <table>
@@ -1315,6 +1354,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-08-28-3"></script>
+<script src="app.js?v=2026-08-28-4"></script>
 </body>
 </html>

@@ -47,6 +47,13 @@ const DEFAULT_GOOGLE_DRIVE_API_KEY = "AIzaSyB0waRuXkp9Bh1k0CcmSea-BXcM6yY8WQs";
 
 const DEFAULT_IDEAL = { cash: 5, debt: 30, mf: 30, equity: 25, gold: 10 };
 
+// Equity tab: maximum recommended allocation % (of total Equity Invested
+// Amount) per market-cap category — editable under Settings -> Equity
+// Allocation Limits. Never hardcoded elsewhere; every place that needs a
+// limit reads state.equityAllocLimits (falling back to these defaults),
+// via getEquityAllocLimit() below.
+const DEFAULT_EQUITY_ALLOC_LIMITS = { large: 15, mid: 8, small: 5 };
+
 // Stock Analysis: columns hidden by default on a brand-new install, so
 // the table opens compact/scannable instead of showing all 32 fields
 // at once. Only ever applied via blankState() below — an existing
@@ -125,6 +132,9 @@ function blankState() {
   return {
     cash: 0,
     ideal: { ...DEFAULT_IDEAL },
+    // Equity tab: max allocation % per market-cap category — see
+    // DEFAULT_EQUITY_ALLOC_LIMITS above and getEquityAllocLimit() below.
+    equityAllocLimits: { ...DEFAULT_EQUITY_ALLOC_LIMITS },
     equity: [],
     debt: [],
     mf: [],
@@ -198,6 +208,7 @@ function mergeIntoState(saved) {
     ...blankState(),
     ...saved,
     ideal: { ...DEFAULT_IDEAL, ...(saved.ideal || {}) },
+    equityAllocLimits: { ...DEFAULT_EQUITY_ALLOC_LIMITS, ...(saved.equityAllocLimits || {}) },
     // Backfill: earlier saves may have an explicit "" here from before
     // these had real defaults — treat that the same as "never set"
     // rather than letting a blank string win.
@@ -604,6 +615,40 @@ function getEquityCapCategory(row, screenerMap) {
   return marketCapCategory(screener ? screener.market_cap : null);
 }
 
+// Looks up the configured max allocation % for a stock's cap category
+// (Settings -> Equity Allocation Limits, falling back to
+// DEFAULT_EQUITY_ALLOC_LIMITS). Returns null when the cap category
+// itself isn't known yet (no Screener match) — callers should treat
+// null as "no limit to compare against", not as 0%.
+function getEquityAllocLimit(capCategory) {
+  const limits = state.equityAllocLimits || DEFAULT_EQUITY_ALLOC_LIMITS;
+  if (capCategory === "Large Cap") return Number(limits.large) || 0;
+  if (capCategory === "Mid Cap") return Number(limits.mid) || 0;
+  if (capCategory === "Small Cap") return Number(limits.small) || 0;
+  return null;
+}
+
+// Classifies a stock's current (invested-based) allocation % against
+// its configured max: "within" (<=80% of the limit), "approaching"
+// (80-100% of the limit), or "above" (over the limit). Returns null
+// when maxPct is null (cap category unknown) so callers can render a
+// plain, unstyled cell rather than guess a status.
+function allocLimitStatus(allocPct, maxPct) {
+  if (maxPct === null || maxPct === undefined || maxPct <= 0) return null;
+  if (allocPct > maxPct) return "above";
+  if (allocPct >= maxPct * 0.8) return "approaching";
+  return "within";
+}
+
+function allocLimitStatusLabel(status) {
+  switch (status) {
+    case "within": return "Within allocation";
+    case "approaching": return "Approaching limit";
+    case "above": return "Above recommended limit";
+    default: return "";
+  }
+}
+
 function equityGetSearchText(row, screenerMap) {
   const d = equityDerived(row);
   const cap = getEquityCapCategory(row, screenerMap);
@@ -661,6 +706,13 @@ function renderEquity() {
     const allocPct = totals.invested > 0 ? (Number(row.invested) / totals.invested) * 100 : 0;
     const pendingBadge = row.livePricePending ? '<span class="pending-badge">Pending</span>' : "";
     const capCategory = getEquityCapCategory(row, screenerMap);
+    const allocMax = getEquityAllocLimit(capCategory);
+    const allocStatus = allocLimitStatus(allocPct, allocMax);
+    const allocCellClass = allocStatus ? `c-alloc alloc-${allocStatus}` : "c-alloc";
+    const allocTitle = allocStatus
+      ? `${allocLimitStatusLabel(allocStatus)} — limit ${allocMax}% (${capCategory})`
+      : "Import Screener Data to classify this stock's cap category and see its allocation limit";
+    const allocLimitNote = allocMax !== null ? `<span class="alloc-limit-note">/ ${allocMax}%</span>` : "";
     const tr = document.createElement("tr");
     tr.dataset.id = row.id;
     tr.innerHTML = `
@@ -674,7 +726,7 @@ function renderEquity() {
       <td class="c-cv" data-label="Current Value">${fmtNum(d.currentValue)}</td>
       <td class="c-pl ${plClass(d.pl)}" data-label="P&amp;L">${fmtNum(d.pl)}</td>
       <td class="c-plpct ${plClass(d.pl)}" data-label="P&amp;L %">${fmtPct(d.plPct)}</td>
-      <td class="c-alloc" data-label="Alloc %">${fmtNum(allocPct)}%</td>
+      <td class="${allocCellClass}" data-label="Alloc %" title="${escapeAttr(allocTitle)}">${fmtNum(allocPct)}%${allocLimitNote}</td>
       <td class="row-actions"><button class="icon-btn" title="Remove">✕</button></td>
     `;
     tr.querySelectorAll("input").forEach(inp => {
@@ -717,6 +769,7 @@ function renderEquity() {
 function updateEquityComputed() {
   const tbody = document.getElementById("equityTableBody");
   const totals = equityTotals();
+  const screenerMap = buildScreenerMap();
   state.equity.forEach(row => {
     const tr = tbody.querySelector(`tr[data-id="${row.id}"]`);
     if (!tr) return;
@@ -730,7 +783,15 @@ function updateEquityComputed() {
     const plPctCell = tr.querySelector(".c-plpct");
     plPctCell.textContent = fmtPct(d.plPct);
     plPctCell.className = "c-plpct " + plClass(d.pl);
-    tr.querySelector(".c-alloc").textContent = fmtNum(allocPct) + "%";
+    const capCategory = getEquityCapCategory(row, screenerMap);
+    const allocMax = getEquityAllocLimit(capCategory);
+    const allocStatus = allocLimitStatus(allocPct, allocMax);
+    const allocCell = tr.querySelector(".c-alloc");
+    allocCell.className = allocStatus ? `c-alloc alloc-${allocStatus}` : "c-alloc";
+    allocCell.title = allocStatus
+      ? `${allocLimitStatusLabel(allocStatus)} — limit ${allocMax}% (${capCategory})`
+      : "Import Screener Data to classify this stock's cap category and see its allocation limit";
+    allocCell.innerHTML = `${fmtNum(allocPct)}%${allocMax !== null ? `<span class="alloc-limit-note">/ ${allocMax}%</span>` : ""}`;
   });
   document.getElementById("eqTotalInvested").textContent = fmtINR(totals.invested);
   document.getElementById("eqTotalCurrent").textContent = fmtINR(totals.current);
@@ -1827,6 +1888,226 @@ function renderInsightsDonut(existingChart, canvasId, entries, totalValue) {
   });
 }
 
+/* ============================================================
+   INTELLIGENT INSIGHTS (Equity)
+   Decision-support only — combines each stock's allocation status
+   (vs. Settings -> Equity Allocation Limits) with a fundamentals
+   read-out built from the exact same figures Stock Analysis already
+   computes (stockAnalysisDerived()) plus saved Banking Metrics for
+   Financial-sector holdings. See computeStockInsight() below for the
+   actual decision logic — nothing here treats low allocation as a Buy
+   signal or high allocation as a Sell signal on its own.
+   ============================================================ */
+
+// Each verdict is deliberately NOT a single blended score — three
+// independent reads (valuation / financial health / growth), each one
+// of "attractive|unattractive|neutral|unknown" or "strong|weak|neutral|
+// unknown" — so every factor behind a recommendation can be shown to
+// the person rather than hidden inside one number. Thresholds below
+// are simple, named, and adjustable in one place if they ever need
+// tuning.
+
+function fundamentalValuationVerdict(d) {
+  if (d.pe === null || d.industryPe === null || d.industryPe <= 0) return "unknown";
+  const peRatio = d.pe / d.industryPe;
+  const pbRatio = (d.pb !== null && d.industryPbv) ? d.pb / d.industryPbv : null;
+  if (peRatio <= 0.9 && (pbRatio === null || pbRatio <= 1.1)) return "attractive";
+  if (peRatio >= 1.15 || (pbRatio !== null && pbRatio >= 1.3)) return "unattractive";
+  return "neutral";
+}
+
+function fundamentalHealthVerdict(d, bankingLatest) {
+  const signals = [];
+  if (d.roe !== null) signals.push(d.roe >= 15 ? 1 : d.roe >= 10 ? 0 : -1);
+  if (d.roce !== null) signals.push(d.roce >= 15 ? 1 : d.roce >= 10 ? 0 : -1);
+  if (d.isFinancial && d.roa !== null) signals.push(d.roa >= 1 ? 1 : d.roa >= 0.5 ? 0 : -1);
+  if (d.debtToEquity !== null) signals.push(d.debtToEquity <= 0.5 ? 1 : d.debtToEquity <= 1.5 ? 0 : -1);
+  if (d.intCoverage !== null) signals.push(d.intCoverage >= 5 ? 1 : d.intCoverage >= 2 ? 0 : -1);
+  if (bankingLatest && bankingLatest.metrics) {
+    const m = bankingLatest.metrics;
+    if (m.gnpa && m.gnpa.value !== null && m.gnpa.value !== undefined) signals.push(m.gnpa.value <= 2 ? 1 : m.gnpa.value <= 4 ? 0 : -1);
+    if (m.crar && m.crar.value !== null && m.crar.value !== undefined) signals.push(m.crar.value >= 14 ? 1 : m.crar.value >= 11 ? 0 : -1);
+    if (m.nim && m.nim.value !== null && m.nim.value !== undefined) signals.push(m.nim.value >= 3 ? 1 : m.nim.value >= 2 ? 0 : -1);
+  }
+  if (signals.length === 0) return "unknown";
+  const avg = signals.reduce((a, b) => a + b, 0) / signals.length;
+  if (avg >= 0.4) return "strong";
+  if (avg <= -0.4) return "weak";
+  return "neutral";
+}
+
+function fundamentalGrowthVerdict(d) {
+  const signals = [];
+  if (d.epsGrowth3y !== null) signals.push(d.epsGrowth3y >= 12 ? 1 : d.epsGrowth3y >= 0 ? 0 : -1);
+  if (d.epsGrowth5y !== null) signals.push(d.epsGrowth5y >= 12 ? 1 : d.epsGrowth5y >= 0 ? 0 : -1);
+  if (d.profitVar3y !== null) signals.push(d.profitVar3y >= 12 ? 1 : d.profitVar3y >= 0 ? 0 : -1);
+  if (d.salesGrowth5y !== null) signals.push(d.salesGrowth5y >= 10 ? 1 : d.salesGrowth5y >= 0 ? 0 : -1);
+  if (d.qtrProfitVar !== null) signals.push(d.qtrProfitVar >= 10 ? 1 : d.qtrProfitVar >= 0 ? 0 : -1);
+  if (signals.length === 0) return "unknown";
+  const avg = signals.reduce((a, b) => a + b, 0) / signals.length;
+  if (avg >= 0.4) return "strong";
+  if (avg <= -0.4) return "weak";
+  return "neutral";
+}
+
+// Short, factor-by-factor text shown under each stock — every number
+// here is read straight from `d` (stockAnalysisDerived() output),
+// never recalculated differently.
+function describeInsightFactors(d) {
+  const parts = [];
+  if (d.pe !== null && d.industryPe !== null) parts.push(`PE ${fmtNum(d.pe, 1)} vs Industry ${fmtNum(d.industryPe, 1)}`);
+  if (d.roe !== null) parts.push(`ROE ${fmtNum(d.roe, 1)}%`);
+  if (d.roce !== null) parts.push(`ROCE ${fmtNum(d.roce, 1)}%`);
+  if (d.debtToEquity !== null) parts.push(`D/E ${fmtNum(d.debtToEquity, 2)}`);
+  if (d.epsGrowth3y !== null) parts.push(`EPS Growth 3Y ${fmtNum(d.epsGrowth3y, 1)}%`);
+  if (d.profitVar3y !== null) parts.push(`Profit Growth 3Y ${fmtNum(d.profitVar3y, 1)}%`);
+  return parts.join(", ");
+}
+
+// The actual recommendation logic. Allocation status and the three
+// fundamental verdicts are combined — never allocation alone in
+// either direction. Returns "No Action — Insufficient Data" (rather
+// than guessing) when there's no Screener match or too few fields to
+// form any verdict.
+function computeStockInsight(row, screenerMap) {
+  const key = (row.name || "").trim().toUpperCase();
+  const screener = screenerMap.get(key);
+  const d = stockAnalysisDerived(row, screener);
+  const capCategory = d.capCategory;
+  const allocMax = getEquityAllocLimit(capCategory);
+
+  // Same invested-based allocation % the Equity tab itself shows —
+  // computed fresh from state.equity rather than duplicating
+  // equityTotals()'s internals, so it can never drift from that tab.
+  const totalInvested = state.equity.reduce((s, r) => s + (Number(r.invested) || 0), 0);
+  const allocPct = totalInvested > 0 ? (Number(row.invested) / totalInvested) * 100 : 0;
+  const allocStatus = allocLimitStatus(allocPct, allocMax);
+
+  const bankingLatest = d.isFinancial ? getLatestBankingMetrics(key) : null;
+  const valuation = fundamentalValuationVerdict(d);
+  const health = fundamentalHealthVerdict(d, bankingLatest);
+  const growth = fundamentalGrowthVerdict(d);
+  const knownCount = [valuation, health, growth].filter(v => v !== "unknown").length;
+
+  const factorsText = describeInsightFactors(d);
+  const allocText = allocMax !== null
+    ? `Allocation ${fmtNum(allocPct, 1)}% / Max ${allocMax}% (${capCategory})`
+    : `Allocation ${fmtNum(allocPct, 1)}% (cap category unknown — import Screener data)`;
+
+  if (!screener || knownCount === 0) {
+    return {
+      row, category: "No Action", categoryClass: "none", allocPct, allocMax, allocStatus,
+      reason: `Insufficient Data — ${!screener ? "no Screener fundamentals imported for this stock yet" : "not enough fundamental fields available to form a view"}. ${allocText}.`
+    };
+  }
+
+  const negatives = [valuation === "unattractive", health === "weak", growth === "weak"].filter(Boolean).length;
+  const positives = [valuation === "attractive", health === "strong", growth === "strong"].filter(Boolean).length;
+
+  let category, categoryClass, reason;
+
+  if (negatives >= 3) {
+    // Valuation, health AND growth all negative — a genuine Sell-level
+    // read that overrides a low allocation; don't add regardless of
+    // how little is currently held.
+    category = "Reduce / Sell"; categoryClass = "reduce";
+    reason = `Fundamental analysis indicates Sell — valuation, financial health and growth are all weak (${factorsText}). Do not increase allocation despite the current ${allocStatus === "above" ? "high" : "low"} portfolio allocation.`;
+  } else if (allocStatus === "above") {
+    if (negatives >= 1) {
+      category = "Reduce / Sell"; categoryClass = "reduce";
+      reason = `Allocation is already above your ${allocMax}% ${capCategory} limit (${fmtNum(allocPct, 1)}%), and fundamentals show weakness (${factorsText}). Consider trimming.`;
+    } else {
+      category = "Hold"; categoryClass = "hold";
+      reason = `${allocText}. Fundamentals are reasonable, but the position is already above your configured limit — hold rather than add.`;
+    }
+  } else if (allocStatus === "approaching") {
+    if (positives >= 2 && negatives === 0) {
+      category = "Hold"; categoryClass = "hold";
+      reason = `${allocText}. Fundamentals look good (${factorsText}), but allocation is already close to the limit — limited room to add more.`;
+    } else if (negatives >= 1) {
+      category = "Watch"; categoryClass = "watch";
+      reason = `${allocText}, and approaching the limit. Fundamentals show some weakness (${factorsText}) — worth monitoring rather than adding.`;
+    } else {
+      category = "Watch"; categoryClass = "watch";
+      reason = `${allocText}. Fundamentals are mixed/neutral — no strong case to add further while nearing the limit.`;
+    }
+  } else {
+    // allocStatus is "within" or null (cap category not yet known) —
+    // there's room to add, IF fundamentals actually support it. Low
+    // allocation alone never implies Buy.
+    if (positives >= 2 && negatives === 0) {
+      category = "Consider Adding"; categoryClass = "add";
+      reason = `${allocText}. Fundamental analysis is positive (${factorsText}) and valuation looks reasonable — may be worth considering for additional allocation.`;
+    } else if (negatives >= 1) {
+      category = "No Action"; categoryClass = "none";
+      reason = `${allocText}, but fundamentals/valuation do not support increasing the position (${factorsText}). No additional investment is suggested.`;
+    } else {
+      category = "Watch"; categoryClass = "watch";
+      reason = `${allocText}. Fundamentals are neutral/mixed — not a clear enough signal either way${factorsText ? " (" + factorsText + ")" : ""}.`;
+    }
+  }
+
+  return { row, category, categoryClass, allocPct, allocMax, allocStatus, reason };
+}
+
+const INSIGHT_CATEGORY_ORDER = [
+  { key: "Consider Adding", cls: "add", defaultOpen: true },
+  { key: "Reduce / Sell", cls: "reduce", defaultOpen: true },
+  { key: "Watch", cls: "watch", defaultOpen: false },
+  { key: "Hold", cls: "hold", defaultOpen: false },
+  { key: "No Action", cls: "none", defaultOpen: false }
+];
+
+// Renders the categorized, collapsible Intelligent Insights list. Each
+// category is a native <details> block so 50+ stocks stay scannable —
+// the two actionable categories (Consider Adding / Reduce-Sell) open
+// by default, the rest collapsed.
+function renderIntelligentInsights() {
+  const el = document.getElementById("intelligentInsightsBody");
+  if (!el) return;
+  if (state.equity.length === 0) {
+    el.innerHTML = '<div class="insights-empty">No Equity holdings yet — add stocks and import Screener Data to see Intelligent Insights.</div>';
+    return;
+  }
+  const screenerMap = buildScreenerMap();
+  const insights = state.equity.map(row => computeStockInsight(row, screenerMap));
+
+  const grouped = {};
+  INSIGHT_CATEGORY_ORDER.forEach(c => { grouped[c.key] = []; });
+  insights.forEach(ins => { (grouped[ins.category] || (grouped[ins.category] = [])).push(ins); });
+
+  const sectionsHTML = INSIGHT_CATEGORY_ORDER.map(cfg => {
+    const items = grouped[cfg.key] || [];
+    if (items.length === 0) return "";
+    // Within a category, surface stocks furthest from/above their
+    // limit first — a simple, transparent ordering (not a second
+    // scoring model) so the most allocation-relevant rows lead.
+    const sorted = [...items].sort((a, b) =>
+      (b.allocPct - (b.allocMax ?? b.allocPct)) - (a.allocPct - (a.allocMax ?? a.allocPct))
+    );
+    const rowsHTML = sorted.map(ins => `
+      <div class="ii-row">
+        <div class="ii-row-top">
+          <span class="ii-row-name">${escapeAttr(ins.row.name || "(unnamed)")}</span>
+          <span class="ii-row-alloc">${fmtNum(ins.allocPct, 1)}%${ins.allocMax !== null ? ` / ${ins.allocMax}%` : ""}</span>
+        </div>
+        <div class="ii-row-reason">${escapeAttr(ins.reason)}</div>
+      </div>
+    `).join("");
+    return `
+      <details class="ii-details" ${cfg.defaultOpen ? "open" : ""}>
+        <summary class="ii-summary">
+          <span class="ii-cat-badge ii-cat-${cfg.cls}">${escapeAttr(cfg.key)}</span>
+          <span class="count">${items.length} stock${items.length === 1 ? "" : "s"}</span>
+        </summary>
+        <div class="ii-body">${rowsHTML}</div>
+      </details>
+    `;
+  }).join("");
+
+  el.innerHTML = sectionsHTML || '<div class="insights-empty">No insights to show yet.</div>';
+}
+
 function renderInsights() {
   // Chart.js can't size a canvas inside a display:none panel, so skip
   // all chart work until the Insights tab is actually the active one.
@@ -1880,6 +2161,8 @@ function renderInsights() {
       }).join("");
     }
   }
+
+  renderIntelligentInsights();
 }
 
 /* ============================================================
@@ -4641,6 +4924,21 @@ function openSettingsModal() {
       <input type="text" id="settingsOwnerName" value="${escapeAttr(state.ownerName || "Ganesh")}">
     </div>
 
+    <h4>Equity Allocation Limits</h4>
+    <p class="settings-note" style="margin-top:0">Maximum recommended allocation (% of total Equity Invested Amount) per market-cap category. The Equity tab and Insights use these live — a stock's category comes from its imported Screener Market Cap.</p>
+    <div class="settings-field">
+      <label for="settingsAllocLarge">Large Cap — max %</label>
+      <input type="text" inputmode="decimal" id="settingsAllocLarge" value="${escapeAttr(String(state.equityAllocLimits?.large ?? DEFAULT_EQUITY_ALLOC_LIMITS.large))}">
+    </div>
+    <div class="settings-field">
+      <label for="settingsAllocMid">Mid Cap — max %</label>
+      <input type="text" inputmode="decimal" id="settingsAllocMid" value="${escapeAttr(String(state.equityAllocLimits?.mid ?? DEFAULT_EQUITY_ALLOC_LIMITS.mid))}">
+    </div>
+    <div class="settings-field">
+      <label for="settingsAllocSmall">Small Cap — max %</label>
+      <input type="text" inputmode="decimal" id="settingsAllocSmall" value="${escapeAttr(String(state.equityAllocLimits?.small ?? DEFAULT_EQUITY_ALLOC_LIMITS.small))}">
+    </div>
+
     <h4>Live Price API</h4>
     <p class="settings-note" style="margin-top:0">Your Google Apps Script Web App URL. Update it here if you ever redeploy and get a new <code>/exec</code> link — no code changes needed.</p>
     <div class="settings-field">
@@ -4686,8 +4984,19 @@ function openSettingsModal() {
         state.holdingsApiUrl = document.getElementById("settingsHoldingsApiUrl").value.trim() || DEFAULT_HOLDINGS_API_URL;
         state.googleDriveClientId = document.getElementById("settingsGoogleDriveClientId").value.trim() || DEFAULT_GOOGLE_DRIVE_CLIENT_ID;
         state.googleDriveApiKey = document.getElementById("settingsGoogleDriveApiKey").value.trim() || DEFAULT_GOOGLE_DRIVE_API_KEY;
+        const parseLimit = (id, fallback) => {
+          const v = parseFloat(document.getElementById(id).value);
+          return (isNaN(v) || v < 0) ? fallback : v;
+        };
+        state.equityAllocLimits = {
+          large: parseLimit("settingsAllocLarge", DEFAULT_EQUITY_ALLOC_LIMITS.large),
+          mid: parseLimit("settingsAllocMid", DEFAULT_EQUITY_ALLOC_LIMITS.mid),
+          small: parseLimit("settingsAllocSmall", DEFAULT_EQUITY_ALLOC_LIMITS.small)
+        };
         saveState();
         renderBrand();
+        renderEquity();
+        renderInsights();
         closeModal();
       }
     }
