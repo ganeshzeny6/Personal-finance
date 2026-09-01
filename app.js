@@ -5756,6 +5756,34 @@ let fbDb = null;
 let cloudUser = null;
 let cloudSyncTimer = null;
 
+// Safety-net snapshot taken immediately before any cloud-fetched data
+// is allowed to overwrite `state` — completely separate from the
+// Demo Data backup key. This is what makes a bad sync (e.g. an empty
+// or stale cloud document) recoverable from Settings -> "Restore
+// Pre-Sync Backup" instead of being an unrecoverable data-loss event.
+// Deliberately NOT wiped/rotated automatically — it always holds
+// whatever `state` looked like right before the most recent cloud
+// overwrite, so it stays useful even if the person doesn't notice a
+// problem until later.
+const PRE_CLOUD_SYNC_BACKUP_KEY = "ledger_pre_cloud_sync_backup_v1";
+
+function savePreCloudSyncBackup() {
+  try {
+    localStorage.setItem(PRE_CLOUD_SYNC_BACKUP_KEY, JSON.stringify({ state, savedAt: new Date().toISOString() }));
+  } catch (e) {
+    console.error("Could not save pre-cloud-sync backup:", e);
+  }
+}
+
+function getPreCloudSyncBackup() {
+  try {
+    const raw = localStorage.getItem(PRE_CLOUD_SYNC_BACKUP_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 // Still useful for the "is there anything worth pushing yet" check
 // when a brand-new sign-in finds no Firestore doc at all.
 function isStateEmpty(s) {
@@ -5814,6 +5842,24 @@ async function resolveCloudSync() {
     const snap = await fbDb.collection("portfolios").doc(cloudUser.uid).get({ source: "server" });
     if (snap.exists) {
       const cloud = snap.data();
+      // Guard against exactly what caused a real data-loss incident:
+      // an empty (or effectively empty) Firestore document — e.g. from
+      // an earlier sign-in before any real data existed — silently
+      // overwriting a device that actually has real holdings on it.
+      // The cloud doc existing is no longer treated as automatically
+      // authoritative; it only wins outright when it actually has data,
+      // or when local has nothing to lose anyway.
+      if (isStateEmpty(cloud) && !isStateEmpty(state)) {
+        savePreCloudSyncBackup();
+        updateCloudSyncUI("Sync paused");
+        openCloudConflictModal(cloud);
+        return;
+      }
+      // Snapshot whatever's currently loaded BEFORE it's replaced —
+      // this is the one-click-recoverable safety net (Settings ->
+      // "Restore Pre-Sync Backup") for every other overwrite case,
+      // not just the empty-doc one caught above.
+      savePreCloudSyncBackup();
       state = mergeIntoState(cloud);
       state.lastSaved = new Date().toISOString();
       // Refresh the offline-viewing cache only — this does NOT
@@ -5830,6 +5876,40 @@ async function resolveCloudSync() {
     console.error("Cloud sync failed:", e);
     updateCloudSyncUI("Sync error");
   }
+}
+
+// Shown only in the specific conflict case above: an empty cloud
+// document was fetched while this device actually has real data.
+// Pauses automatic resolution and asks explicitly which side should
+// win, rather than ever guessing. A pre-cloud-sync backup has already
+// been saved by the time this opens, so either choice here is safe to
+// reverse afterwards via Settings -> "Restore Pre-Sync Backup".
+function openCloudConflictModal(cloudData) {
+  const html = `
+    <p>Your Google account's cloud data is empty, but this device currently has real portfolio data. To avoid accidentally erasing it, cloud sync has been paused — nothing has been changed yet.</p>
+    <p>Which should be kept?</p>
+    <p class="settings-note">"Keep This Device's Data" pushes what's currently loaded here up to the cloud, replacing the empty cloud document. "Use Cloud Data" replaces what's on this device with the (empty) cloud document — only choose this if you're sure this device's data is stale or test data. A backup of this device's current data has already been saved locally either way (Settings → Restore Pre-Sync Backup).</p>
+  `;
+  openModal("Cloud Sync — Data Conflict", html, [
+    {
+      label: "Use Cloud Data", onClick: async () => {
+        state = mergeIntoState(cloudData);
+        state.lastSaved = new Date().toISOString();
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        renderAll();
+        updateCloudSyncUI();
+        closeModal();
+      }
+    },
+    {
+      label: "Keep This Device's Data", primary: true, onClick: async () => {
+        updateCloudSyncUI("Syncing…");
+        await pushStateToCloud();
+        updateCloudSyncUI();
+        closeModal();
+      }
+    }
+  ]);
 }
 
 document.getElementById("btnCloudSync").addEventListener("click", async () => {
@@ -5977,7 +6057,9 @@ function openSettingsModal() {
       <button class="btn" id="settingsBtnExportExcel">Export Excel</button>
       <button class="btn" id="settingsBtnExportJSON">Export JSON</button>
       <label class="btn btn-ghost" for="importFile">Import JSON</label>
+      <button class="btn btn-ghost" id="settingsBtnRestorePreCloudSync" style="display:none">Restore Pre-Sync Backup</button>
     </div>
+    <p class="settings-note" id="preCloudSyncBackupNote" style="display:none"></p>
   `;
   openModal("Settings", html, [
     { label: "Cancel", onClick: closeModal },
@@ -6018,6 +6100,27 @@ function openSettingsModal() {
     closeModal();
     openImportChooser();
   });
+
+  // Only shown when a pre-cloud-sync snapshot actually exists — this
+  // is the recovery path for the empty-cloud-doc scenario (and any
+  // other cloud overwrite) now that resolveCloudSync() always saves
+  // one before replacing `state` with cloud data.
+  const preSyncBackup = getPreCloudSyncBackup();
+  if (preSyncBackup) {
+    const restoreBtn = document.getElementById("settingsBtnRestorePreCloudSync");
+    const restoreNote = document.getElementById("preCloudSyncBackupNote");
+    restoreBtn.style.display = "";
+    restoreNote.style.display = "block";
+    restoreNote.textContent = `A snapshot from ${new Date(preSyncBackup.savedAt).toLocaleString()} — taken automatically just before the last cloud sync overwrite — is available to restore.`;
+    restoreBtn.addEventListener("click", () => {
+      const ok = confirm("Restore your data from just before the last cloud sync? This replaces whatever is currently loaded in the app (both on this device and, once saved, in the cloud).");
+      if (!ok) return;
+      state = mergeIntoState(preSyncBackup.state);
+      saveState();
+      renderAll();
+      closeModal();
+    });
+  }
 }
 
 document.getElementById("btnSettings").addEventListener("click", openSettingsModal);
