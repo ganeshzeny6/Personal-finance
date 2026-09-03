@@ -1076,15 +1076,29 @@
     .brand .mark{font-size:16px;line-height:1.3;}
   }
 
-  /* Readability floor for the smallest sub-10px labels, scoped to the
-     narrowest phones (<=390px) only — desktop/tablet/larger phones are
-     untouched. Purely a font-size bump, no layout/logic change. */
-  @media (max-width:390px){
+  /* Readability floor for the smallest sub-10px labels, scoped to
+     phone widths (<=430px, covering common larger phones too) —
+     desktop/tablet are untouched. Purely a font-size bump, no
+     layout/logic change. */
+  @media (max-width:430px){
     .ii-alloc-label, .mobile-totals .row, .ii-mobile-label,
-    .sa-mobile-metric .l, .ii-metric-chip .l, .stat-card .label,
-    .sa-stat-card .sa-stat-label{
+    .sa-mobile-metric .l, .ii-metric-chip .l,
+    .sa-stat-card .sa-stat-label, .ii-score-label, .ms-range-labels{
       font-size:10px;
     }
+  }
+
+  /* Touch-target comfort pass, mobile only (<=700px) — desktop keeps
+     its current compact density. Icon-only remove buttons and the
+     small text-chip controls (attention actions, filter chips, sort
+     shortcuts, calendar range toggle) get a slightly larger tap area
+     via padding, without changing font size or visual weight. */
+  @media (max-width:700px){
+    .dash-attn-action, .debt-cal-range-btn, .debt-sort-shortcut,
+    .ii-filter-tab, .btn-sm{
+      padding:8px 12px;
+    }
+    .debt-chip{padding:8px 14px;}
   }
 
   /* ============================================================
@@ -2041,6 +2055,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-09-03-4"></script>
+<script src="app.js?v=2026-09-03-5"></script>
 </body>
 </html>
