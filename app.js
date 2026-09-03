@@ -2264,7 +2264,9 @@ function renderDashHealth() {
 
 // Horizontal current-vs-target bars, replacing the old donut. Reads
 // the exact same classes/netWorth/state.ideal as the Edit Targets
-// modal below — never a separately-computed allocation.
+// modal below — never a separately-computed allocation. Rupee
+// amounts (current vs. planned) are the primary numbers per row,
+// with the current/target % shown as smaller secondary context.
 function renderDashAllocBars() {
   const el = document.getElementById("dashAllocBars");
   if (!el) return;
@@ -2272,8 +2274,9 @@ function renderDashAllocBars() {
   el.innerHTML = classes.map(c => {
     const currentPct = netWorth > 0 ? (c.current / netWorth) * 100 : 0;
     const idealPct = Number(state.ideal[c.key]) || 0;
+    const plannedAmount = (idealPct / 100) * netWorth;
     const diffPct = currentPct - idealPct;
-    const diffAmount = (diffPct / 100) * netWorth;
+    const diffAmount = c.current - plannedAmount;
     const over = diffPct > ATTENTION_DRIFT_THRESHOLD;
     const under = diffPct < -ATTENTION_DRIFT_THRESHOLD;
     const numCls = over ? "over" : under ? "under" : "";
@@ -2282,7 +2285,11 @@ function renderDashAllocBars() {
       <div class="dash-alloc-row">
         <div class="dash-alloc-top">
           <span class="dash-alloc-name"><span class="swatch" style="background:${ASSET_COLORS[c.key]}"></span>${escapeAttr(c.label)}</span>
-          <span class="dash-alloc-nums ${numCls}">${fmtNum(currentPct, 1)}% / ${fmtNum(idealPct, 1)}%</span>
+          <span class="dash-alloc-pct ${numCls}">${fmtNum(currentPct, 1)}% / ${fmtNum(idealPct, 1)}%</span>
+        </div>
+        <div class="dash-alloc-amounts">
+          <span>Invested <b>${fmtINR(c.current)}</b></span>
+          <span>Planned <b>${fmtINR(plannedAmount)}</b></span>
         </div>
         <div class="dash-alloc-track">
           <div class="dash-alloc-fill" style="width:${barPct}%;background:${ASSET_COLORS[c.key]}"></div>

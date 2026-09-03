@@ -256,14 +256,16 @@
   .dash-health-note{font-size:11.5px;color:var(--text-faint);margin-top:6px;line-height:1.5;}
 
   /* ---------- Asset allocation bars ---------- */
-  .dash-alloc-row{margin-bottom:11px;}
+  .dash-alloc-row{margin-bottom:13px;}
   .dash-alloc-row:last-child{margin-bottom:0;}
-  .dash-alloc-top{display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:3px;}
-  .dash-alloc-name{color:var(--text);display:flex;align-items:center;gap:6px;}
+  .dash-alloc-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;}
+  .dash-alloc-name{color:var(--text);display:flex;align-items:center;gap:6px;font-size:12.5px;}
   .dash-alloc-name .swatch{width:8px;height:8px;border-radius:50%;flex:none;}
-  .dash-alloc-nums{font-family:var(--font-mono);color:var(--text-muted);}
-  .dash-alloc-nums.over{color:var(--negative);}
-  .dash-alloc-nums.under{color:var(--warning);}
+  .dash-alloc-pct{font-family:var(--font-mono);font-size:10.5px;color:var(--text-faint);}
+  .dash-alloc-pct.over{color:var(--negative);}
+  .dash-alloc-pct.under{color:var(--warning);}
+  .dash-alloc-amounts{display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-muted);margin-bottom:5px;}
+  .dash-alloc-amounts b{font-family:var(--font-mono);font-weight:600;color:var(--text);}
   .dash-alloc-track{height:6px;background:var(--surface-2);border-radius:3px;position:relative;overflow:visible;}
   .dash-alloc-fill{height:100%;border-radius:3px;background:var(--blue);}
   .dash-alloc-target{position:absolute;top:-2px;width:2px;height:10px;background:var(--text-faint);border-radius:1px;}
@@ -1810,6 +1812,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-09-03-2"></script>
+<script src="app.js?v=2026-09-03-3"></script>
 </body>
 </html>
