@@ -277,6 +277,12 @@ function fmtNum(n, decimals = 2) {
   return n.toLocaleString("en-IN", { maximumFractionDigits: decimals, minimumFractionDigits: decimals });
 }
 
+// Small numeric clamp used by the Dashboard's Portfolio Health scoring
+// (keeps every 0-100 sub-score actually within 0-100).
+function clamp(n, min, max) {
+  return Math.max(min, Math.min(max, n));
+}
+
 function fmtPct(n) {
   n = Number(n) || 0;
   return (n >= 0 ? "" : "") + n.toFixed(2) + "%";
@@ -598,6 +604,17 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     if (btn.dataset.tab === "stockanalysis") renderStockAnalysis();
   });
 });
+
+// Dashboard primary actions — "Edit targets" and "Rebalance portfolio"
+// both open the same allocation-target editor; "View opportunities"
+// (both the attention-panel and footer buttons) and "View all
+// opportunities" jump to Stock Analysis, where Intelligent Insights
+// lives in full.
+document.getElementById("btnEditTargets")?.addEventListener("click", openIdealTargetsModal);
+document.getElementById("btnDashRebalance")?.addEventListener("click", openIdealTargetsModal);
+document.getElementById("btnDashAddMoney")?.addEventListener("click", openAddMoneyModal);
+document.getElementById("btnDashViewOpportunities")?.addEventListener("click", () => goToTab("stockanalysis"));
+document.getElementById("btnViewAllOpportunities")?.addEventListener("click", () => goToTab("stockanalysis"));
 
 /* ============================================================
    PORTFOLIO LOCK
@@ -1996,11 +2013,13 @@ function renderMarketSnapshot() {
    DASHBOARD
    ============================================================ */
 
-function renderDashboard() {
-  const cashInput = document.getElementById("cashInput");
-  if (document.activeElement !== cashInput) cashInput.value = state.cash ? fmtINR(state.cash) : "";
-  cashInput.disabled = isReadOnly();
-
+// Single source of truth for the 5 asset-class rows + net worth —
+// used by renderDashboard() itself, the Edit Targets modal, and the
+// allocation bars, so none of them can ever compute a different
+// number for the same thing. Pure read of existing totals functions;
+// no calculation here that didn't already exist in the old
+// renderDashboard().
+function computeAssetClassesAndNetWorth() {
   const eq = equityTotals();
   const debt = debtTotals();
   const mf = mfTotals();
@@ -2014,8 +2033,459 @@ function renderDashboard() {
     { key: "equity", label: "Equity Stocks",             current: eq.current,    invested: eq.invested },
     { key: "gold",   label: "Gold",                      current: gold.current,  invested: gold.invested }
   ];
-
   const netWorth = classes.reduce((s, c) => s + c.current, 0);
+  return { classes, netWorth, eq, debt, mf, gold, cash };
+}
+
+// Today's P&L, Equity only — Debt is valued at invested amount (no
+// intraday movement) and Mutual Funds/Gold don't carry a previous-
+// close field the way Equity's live-price refresh does, so a
+// portfolio-wide "today" figure would silently be wrong for those
+// asset classes. Rows missing prevClose are excluded from both the
+// P&L and its base value rather than treated as zero change.
+function computeTodaysEquityPL() {
+  let pl = 0, baseValue = 0, missing = 0;
+  state.equity.forEach(row => {
+    const units = Number(row.units) || 0;
+    const ltp = Number(row.ltp);
+    const prevClose = row.prevClose === null || row.prevClose === undefined ? NaN : Number(row.prevClose);
+    if (!units || !isFinite(ltp) || !isFinite(prevClose)) { missing++; return; }
+    pl += units * (ltp - prevClose);
+    baseValue += units * prevClose;
+  });
+  const pct = baseValue > 0 ? (pl / baseValue) * 100 : 0;
+  return { pl, pct, missing };
+}
+
+// A simple, honest market-hours heuristic (Mon-Fri 9:15-15:30 IST) —
+// doesn't account for exchange holidays, just gives the header a
+// reasonable open/closed signal without needing a live feed for it.
+function isIndianMarketOpenNow() {
+  const now = new Date();
+  const istString = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+  const ist = new Date(istString);
+  const day = ist.getDay();
+  if (day === 0 || day === 6) return false;
+  const minutesNow = ist.getHours() * 60 + ist.getMinutes();
+  return minutesNow >= (9 * 60 + 15) && minutesNow <= (15 * 60 + 30);
+}
+
+// "What needs your attention" — every item here reads off data that
+// already exists elsewhere (allocation drift from state.ideal, debt
+// maturity from maturityStatus(), attractive stocks from Intelligent
+// Insights' own category grouping). Nothing new is calculated, only
+// surfaced. Allocation drift below ATTENTION_DRIFT_THRESHOLD points
+// is treated as within tolerance and not shown, so small/expected
+// drift doesn't create noise.
+const ATTENTION_DRIFT_THRESHOLD = 3;
+
+function computeAttentionItems() {
+  const items = [];
+  const { classes, netWorth } = computeAssetClassesAndNetWorth();
+
+  classes.forEach(c => {
+    const currentPct = netWorth > 0 ? (c.current / netWorth) * 100 : 0;
+    const idealPct = Number(state.ideal[c.key]) || 0;
+    const diffPct = currentPct - idealPct;
+    if (Math.abs(diffPct) < ATTENTION_DRIFT_THRESHOLD) return;
+    const diffAmount = (diffPct / 100) * netWorth;
+    const over = diffPct > 0;
+    items.push({
+      severity: "warn",
+      title: `${c.label} allocation is ${fmtNum(Math.abs(diffPct), 1)}% ${over ? "above" : "below"} target`,
+      detail: `Current ${fmtNum(currentPct, 1)}% · Target ${fmtNum(idealPct, 1)}% · ${over ? "Overweight" : "Underweight"} ${fmtINR(Math.abs(diffAmount))}`,
+      actionLabel: "Rebalance",
+      onAction: openIdealTargetsModal,
+      sortKey: Math.abs(diffPct)
+    });
+  });
+
+  const maturingSoon = state.debt.filter(row => maturityStatus(row.maturityDate) === "maturity-soon");
+  if (maturingSoon.length > 0) {
+    const nearest = [...maturingSoon].sort((a, b) => (a.maturityDate || "").localeCompare(b.maturityDate || ""))[0];
+    items.push({
+      severity: "warn",
+      title: `${maturingSoon.length} ${maturingSoon.length === 1 ? "investment is" : "investments are"} maturing in the next 30 days`,
+      detail: `Next maturity: ${fmtINR(Number(nearest.maturityAmount) || 0)} on ${nearest.maturityDate || "—"}`,
+      actionLabel: "View debt",
+      onAction: () => goToTab("debt"),
+      sortKey: 50
+    });
+  }
+
+  const eligible = state.equity.filter(row => !isETFEquity(row));
+  if (eligible.length > 0) {
+    const screenerMap = buildScreenerMap();
+    const insights = eligible.map(row => computeStockInsight(row, screenerMap));
+    const attractive = insights.filter(ins => !ins.insufficientData && ins.category === "Consider Adding");
+    if (attractive.length > 0) {
+      items.push({
+        severity: "good",
+        title: `${attractive.length} stock${attractive.length === 1 ? "" : "s"} look${attractive.length === 1 ? "s" : ""} attractive`,
+        detail: "Based on valuation, fundamentals and current portfolio allocation",
+        actionLabel: "View opportunities",
+        onAction: () => goToTab("stockanalysis"),
+        sortKey: 20
+      });
+    }
+  }
+
+  items.sort((a, b) => b.sortKey - a.sortKey);
+  return items.slice(0, 5);
+}
+
+function renderDashAttention() {
+  const el = document.getElementById("dashAttentionList");
+  if (!el) return;
+  const items = computeAttentionItems();
+  if (items.length === 0) {
+    el.innerHTML = `<div class="dash-attn-empty">Nothing urgent right now — allocation, opportunities and upcoming maturities all look within range.</div>`;
+    return;
+  }
+  el.innerHTML = "";
+  items.forEach(item => {
+    const row = document.createElement("div");
+    row.className = "dash-attn-item";
+    row.innerHTML = `
+      <div class="dash-attn-dot ${item.severity}"></div>
+      <div class="dash-attn-body">
+        <div class="dash-attn-title">${escapeAttr(item.title)}</div>
+        <div class="dash-attn-detail">${escapeAttr(item.detail)}</div>
+      </div>
+      <button class="dash-attn-action">${escapeAttr(item.actionLabel)}</button>
+    `;
+    row.querySelector(".dash-attn-action").addEventListener("click", item.onAction);
+    el.appendChild(row);
+  });
+}
+
+// Portfolio Health — a new composite score (not present before this
+// redesign), built entirely from numbers the app already computes
+// elsewhere: allocation drift (state.ideal vs actual), equity
+// concentration/sector count for Diversification, and the same
+// valuation/health verdicts Intelligent Insights already assigns per
+// stock for Valuation/Quality. Risk combines concentration with
+// debt overweight. Weights/thresholds here are a judgment call, not
+// a recalculation of anything else in the app.
+function computeHealthScore() {
+  const { classes, netWorth } = computeAssetClassesAndNetWorth();
+
+  // Allocation
+  const drifts = classes.map(c => {
+    const currentPct = netWorth > 0 ? (c.current / netWorth) * 100 : 0;
+    const idealPct = Number(state.ideal[c.key]) || 0;
+    return Math.abs(currentPct - idealPct);
+  });
+  const avgDrift = drifts.reduce((a, b) => a + b, 0) / drifts.length;
+  const allocationScore = clamp(100 - avgDrift * 3, 0, 100);
+
+  const eligible = state.equity.filter(row => !isETFEquity(row));
+  const totalEquityInvested = state.equity.reduce((s, r) => s + (Number(r.invested) || 0), 0);
+  const largestStockPct = totalEquityInvested > 0
+    ? Math.max(0, ...state.equity.map(r => ((Number(r.invested) || 0) / totalEquityInvested) * 100))
+    : 0;
+  const sectorCount = new Set(state.equity.map(r => (r.sector || "").trim()).filter(Boolean)).size;
+
+  // Diversification
+  const diversificationScore = clamp(100 - Math.max(0, largestStockPct - 10) * 3 + Math.min(sectorCount, 8) * 1.5, 0, 100);
+
+  let valuationScore = 50, qualityScore = 50, worstNote = null;
+  if (eligible.length > 0) {
+    const screenerMap = buildScreenerMap();
+    const insights = eligible.map(row => computeStockInsight(row, screenerMap));
+    const scoreFromVerdicts = (getVerdict) => {
+      const weights = { attractive: 100, strong: 100, neutral: 60, unattractive: 20, weak: 20 };
+      const known = insights.map(getVerdict).filter(v => v !== "unknown");
+      if (known.length === 0) return 50;
+      return known.reduce((s, v) => s + (weights[v] ?? 60), 0) / known.length;
+    };
+    valuationScore = scoreFromVerdicts(ins => ins.valuation);
+    qualityScore = scoreFromVerdicts(ins => ins.health);
+  }
+
+  // Risk — inverse of equity concentration and debt overweight.
+  const debtRow = classes.find(c => c.key === "debt");
+  const debtCurrentPct = netWorth > 0 ? (debtRow.current / netWorth) * 100 : 0;
+  const debtIdealPct = Number(state.ideal.debt) || 0;
+  const debtOverweight = Math.max(0, debtCurrentPct - debtIdealPct);
+  const riskScore = clamp(100 - Math.max(0, largestStockPct - 10) * 2 - debtOverweight * 1.5, 0, 100);
+
+  const dims = [
+    { key: "Allocation", score: allocationScore },
+    { key: "Diversification", score: diversificationScore },
+    { key: "Valuation", score: valuationScore },
+    { key: "Quality", score: qualityScore },
+    { key: "Risk", score: riskScore }
+  ];
+  const overall = dims.reduce((s, d) => s + d.score, 0) / dims.length;
+  const worst = [...dims].sort((a, b) => a.score - b.score)[0];
+
+  let label = "Good", cls = "good";
+  if (overall < 50) { label = "Needs attention"; cls = "poor"; }
+  else if (overall < 72) { label = "Fair"; cls = "fair"; }
+
+  let note = "Your portfolio is healthy overall.";
+  if (worst.score < 65) {
+    const noteMap = {
+      Allocation: "but your asset allocation has drifted meaningfully from target.",
+      Diversification: "but concentration in a single stock or sector is on the higher side.",
+      Valuation: "but a meaningful share of your equity holdings look expensive right now.",
+      Quality: "but some holdings show weaker fundamental health than ideal.",
+      Risk: "but concentration and debt overweight are adding more risk than ideal."
+    };
+    note = `Your portfolio is healthy overall, ${noteMap[worst.key]}`;
+  }
+
+  return { overall, label, cls, dims, note };
+}
+
+function healthDimCls(score) {
+  if (score >= 72) return "good";
+  if (score >= 50) return "fair";
+  return "poor";
+}
+
+function renderDashHealth() {
+  const el = document.getElementById("dashHealthBody");
+  if (!el) return;
+  const h = computeHealthScore();
+  el.innerHTML = `
+    <div class="dash-health-score-row">
+      <span class="dash-health-score ${h.cls}">${fmtNum(h.overall, 0)}</span>
+      <span class="dash-health-label">/100 · ${escapeAttr(h.label)}</span>
+    </div>
+    ${h.dims.map(d => `
+      <div class="dash-health-row"><span>${escapeAttr(d.key)}</span><span>${fmtNum(d.score, 0)}</span></div>
+      <div class="dash-health-track"><div class="dash-health-fill ${healthDimCls(d.score)}" style="width:${Math.max(2, d.score)}%"></div></div>
+    `).join("")}
+    <div class="dash-health-note">${escapeAttr(h.note)}</div>
+  `;
+}
+
+// Horizontal current-vs-target bars, replacing the old donut. Reads
+// the exact same classes/netWorth/state.ideal as the Edit Targets
+// modal below — never a separately-computed allocation.
+function renderDashAllocBars() {
+  const el = document.getElementById("dashAllocBars");
+  if (!el) return;
+  const { classes, netWorth } = computeAssetClassesAndNetWorth();
+  el.innerHTML = classes.map(c => {
+    const currentPct = netWorth > 0 ? (c.current / netWorth) * 100 : 0;
+    const idealPct = Number(state.ideal[c.key]) || 0;
+    const diffPct = currentPct - idealPct;
+    const diffAmount = (diffPct / 100) * netWorth;
+    const over = diffPct > ATTENTION_DRIFT_THRESHOLD;
+    const under = diffPct < -ATTENTION_DRIFT_THRESHOLD;
+    const numCls = over ? "over" : under ? "under" : "";
+    const barPct = Math.max(0, Math.min(100, currentPct));
+    return `
+      <div class="dash-alloc-row">
+        <div class="dash-alloc-top">
+          <span class="dash-alloc-name"><span class="swatch" style="background:${ASSET_COLORS[c.key]}"></span>${escapeAttr(c.label)}</span>
+          <span class="dash-alloc-nums ${numCls}">${fmtNum(currentPct, 1)}% / ${fmtNum(idealPct, 1)}%</span>
+        </div>
+        <div class="dash-alloc-track">
+          <div class="dash-alloc-fill" style="width:${barPct}%;background:${ASSET_COLORS[c.key]}"></div>
+          <div class="dash-alloc-target" style="left:${Math.max(0, Math.min(100, idealPct))}%"></div>
+        </div>
+        ${Math.abs(diffPct) >= ATTENTION_DRIFT_THRESHOLD
+          ? `<div class="dash-alloc-diff ${numCls}">${over ? "+" : "-"}${fmtINR(Math.abs(diffAmount))} ${over ? "overweight" : "underweight"}</div>`
+          : ""}
+      </div>
+    `;
+  }).join("");
+}
+
+// Opens the existing ideal-% editor (previously an always-visible
+// table) inside a modal instead — same fields, same state.ideal
+// writes, same renderDashboard() refresh on change; just relocated
+// out of the main scroll so the Dashboard itself stays uncluttered.
+function openIdealTargetsModal() {
+  const { classes, netWorth } = computeAssetClassesAndNetWorth();
+  const idealTotal = Object.values(state.ideal).reduce((a, b) => a + (Number(b) || 0), 0);
+  const locked = isReadOnly();
+  const rowsHTML = classes.map(c => {
+    const currentPct = netWorth > 0 ? (c.current / netWorth) * 100 : 0;
+    const idealPct = Number(state.ideal[c.key]) || 0;
+    const diffPct = currentPct - idealPct;
+    const diffAmount = (diffPct / 100) * netWorth;
+    return `
+      <tr>
+        <td class="left"><div class="alloc-name"><span class="swatch" style="background:${ASSET_COLORS[c.key]}"></span>${escapeAttr(c.label)}</div></td>
+        <td data-label="Current Value">${fmtINR(c.current)}</td>
+        <td data-label="Current %">${fmtNum(currentPct)}%</td>
+        <td data-label="Target %"><input class="ideal-input" type="number" step="any" value="${idealPct}" data-key="${c.key}" ${locked ? "disabled" : ""}></td>
+        <td class="${plClass(diffPct)}" data-label="Diff %">${diffPct >= 0 ? "+" : ""}${fmtNum(diffPct)}%</td>
+        <td class="${plClass(diffAmount)}" data-label="Diff Amount">${diffAmount >= 0 ? "+" : ""}${fmtINR(diffAmount)}</td>
+      </tr>
+    `;
+  }).join("");
+
+  openModal(
+    "Edit allocation targets",
+    `
+      <p class="settings-note" style="margin-top:0">Target % is editable per row — used only to compute the drift shown on the Dashboard. Debt is valued at amount invested (FDs don't fluctuate day-to-day); Equity, Mutual Fund, and Gold ETF values use live prices fetched from your Google Sheet where available.</p>
+      <div class="table-scroll-wrap">
+        <table>
+          <thead><tr><th class="left">Asset Class</th><th>Current Value</th><th>Current %</th><th>Target %</th><th>Diff %</th><th>Diff Amount</th></tr></thead>
+          <tbody>${rowsHTML}</tbody>
+          <tfoot><tr><td class="left">Total</td><td>${fmtINR(netWorth)}</td><td>100%</td><td>${fmtNum(idealTotal)}%</td><td>—</td><td>—</td></tr></tfoot>
+        </table>
+      </div>
+    `,
+    [{ label: "Done", primary: true, onClick: closeModal }]
+  );
+
+  document.querySelectorAll(".ideal-input").forEach(input => {
+    input.addEventListener("change", (e) => {
+      state.ideal[e.target.dataset.key] = parseFloat(e.target.value) || 0;
+      saveState();
+      renderDashboard();
+      openIdealTargetsModal();
+    });
+  });
+}
+
+// UI entry point only, per the redesign brief — collects an amount
+// and explains what's coming next, without touching any backend
+// allocation/rebalancing logic.
+function openAddMoneyModal() {
+  openModal(
+    "Add new money",
+    `
+      <p class="settings-note" style="margin-top:0">Enter an amount to see a suggested allocation across your asset classes and top opportunities, based on your current vs. target allocation, valuation, and portfolio risk.</p>
+      <div class="settings-field">
+        <label>Amount to invest</label>
+        <input type="text" inputmode="decimal" id="addMoneyAmount" placeholder="e.g. 50000">
+      </div>
+      <p class="settings-note" id="addMoneyNote"></p>
+    `,
+    [
+      { label: "Cancel", onClick: closeModal },
+      {
+        label: "Get suggestion", primary: true, onClick: () => {
+          const val = parseFloat((document.getElementById("addMoneyAmount").value || "").replace(/,/g, ""));
+          const noteEl = document.getElementById("addMoneyNote");
+          if (!val || val <= 0) { noteEl.textContent = "Enter a valid amount first."; return; }
+          noteEl.textContent = `Suggested-allocation logic for ${fmtINR(val)} is coming in a future update — for now, check "Asset allocation" and "Investment opportunities" above for where you're underweight and what looks attractive.`;
+        }
+      }
+    ]
+  );
+}
+
+// Investment Opportunities — top 5 by the existing Intelligent
+// Insights score, restricted to "Consider Adding"/"Watch" so the
+// Dashboard only ever surfaces stocks that insight engine itself
+// already flagged as worth a look. No separate scoring logic.
+function computeDashboardOpportunities() {
+  const eligible = state.equity.filter(row => !isETFEquity(row));
+  if (eligible.length === 0) return [];
+  const screenerMap = buildScreenerMap();
+  const insights = eligible
+    .map(row => computeStockInsight(row, screenerMap))
+    .filter(ins => !ins.insufficientData && (ins.category === "Consider Adding" || ins.category === "Watch"));
+  insights.sort((a, b) => {
+    const sa = computeInsightScoreDisplay(a.valuation, a.health, a.growth).score ?? -1;
+    const sb = computeInsightScoreDisplay(b.valuation, b.health, b.growth).score ?? -1;
+    return sb - sa;
+  });
+  return insights.slice(0, 5);
+}
+
+const VALUATION_LABELS = { attractive: "Cheap", neutral: "Fair", unattractive: "Expensive", unknown: "—" };
+
+function renderDashOpportunities() {
+  const el = document.getElementById("dashOpportunitiesList");
+  if (!el) return;
+  const opportunities = computeDashboardOpportunities();
+  if (opportunities.length === 0) {
+    el.innerHTML = `<div class="dash-opp-empty">No standout opportunities right now — check Intelligent Insights on the Stock Analysis tab for the full picture.</div>`;
+    return;
+  }
+  el.innerHTML = opportunities.map(ins => {
+    const score = computeInsightScoreDisplay(ins.valuation, ins.health, ins.growth);
+    const isAdd = ins.category === "Consider Adding";
+    const totalInvested = state.equity.reduce((s, r) => s + (Number(r.invested) || 0), 0);
+    const allocPct = totalInvested > 0 ? (Number(ins.row.invested) / totalInvested) * 100 : 0;
+    return `
+      <div class="dash-opp-row">
+        <span class="dash-opp-name" title="${escapeAttr(ins.row.name || "")}">${escapeAttr(ins.row.name || "(unnamed)")}</span>
+        <span class="dash-opp-score ${isAdd ? "add" : "watch"}">${score.score ?? "—"}</span>
+        <span class="dash-opp-tag">${VALUATION_LABELS[ins.valuation] || "—"}</span>
+        <span class="dash-opp-alloc">${fmtNum(allocPct, 1)}% / ${ins.allocMax !== null ? ins.allocMax + "%" : "—"}</span>
+        <span class="dash-opp-action ${isAdd ? "add" : "watch"}">${isAdd ? "BUY" : "WATCH"}</span>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderDashPerformers() {
+  const { positives, negatives } = computeEquityPerformers();
+  const topEl = document.getElementById("dashTopContributors");
+  const lowEl = document.getElementById("dashBiggestLosers");
+  if (!topEl || !lowEl) return;
+
+  const renderList = (target, items, emptyMsg) => {
+    if (items.length === 0) { target.innerHTML = `<div class="dash-perf-empty">${emptyMsg}</div>`; return; }
+    target.innerHTML = items.slice(0, 3).map(({ row, d }) => `
+      <div class="dash-perf-item">
+        <span class="dash-perf-name" title="${escapeAttr(row.name || "")}">${escapeAttr(row.name || "(unnamed)")}</span>
+        <span class="dash-perf-val ${plClass(d.pl) === "muted" ? "" : plClass(d.pl)}">${d.pl >= 0 ? "+" : ""}${fmtINR(d.pl)}</span>
+      </div>
+    `).join("");
+  };
+  renderList(topEl, positives, "No gainers yet.");
+  renderList(lowEl, negatives, "No losers — nothing in the red.");
+}
+
+function renderDashBreakdown() {
+  const grid = document.getElementById("dashBreakdownGrid");
+  const totalEl = document.getElementById("dashBreakdownTotal");
+  if (!grid || !totalEl) return;
+  const { netWorth } = computeAssetClassesAndNetWorth();
+  const rows = [
+    { n: state.equity.length, l: "Total Stocks" },
+    { n: state.mf.length, l: "Mutual Funds" },
+    { n: state.debt.length, l: "Debt Instruments" },
+    { n: state.gold.length, l: "Gold Holdings" }
+  ];
+  grid.innerHTML = rows.map(r => `
+    <div class="dash-breakdown-item">
+      <div class="dash-breakdown-n">${r.n}</div>
+      <div class="dash-breakdown-l">${escapeAttr(r.l)}</div>
+    </div>
+  `).join("");
+  totalEl.textContent = fmtINR(netWorth);
+}
+
+function renderDashHeaderBits() {
+  const lastEl = document.getElementById("dashLastUpdated");
+  const labelEl = document.getElementById("dashMarketLabel");
+  const dotEl = document.getElementById("dashMarketDot");
+  if (lastEl) lastEl.textContent = "Last updated: " + (state.lastSaved ? new Date(state.lastSaved).toLocaleTimeString() : "—");
+  const open = isIndianMarketOpenNow();
+  if (labelEl) labelEl.textContent = open ? "Open" : "Closed";
+  if (dotEl) dotEl.className = "dash-market-dot " + (open ? "open" : "closed");
+}
+
+// Switches to another tab exactly the way clicking its button would —
+// reuses the existing tab-switch handler rather than duplicating its
+// panel/active-class logic here.
+function goToTab(tabKey) {
+  const btn = document.querySelector(`.tab-btn[data-tab="${tabKey}"]`);
+  if (btn) btn.click();
+}
+
+function renderDashboard() {
+  const cashInput = document.getElementById("cashInput");
+  if (document.activeElement !== cashInput) cashInput.value = state.cash ? fmtINR(state.cash) : "";
+  cashInput.disabled = isReadOnly();
+
+  const { eq, netWorth } = computeAssetClassesAndNetWorth();
+  const debt = debtTotals();
+  const mf = mfTotals();
+  const gold = goldTotals();
   const totalInvested = debt.invested + mf.invested + eq.invested + gold.invested; // cash excluded from "invested"
   // Debt/cash don't have a live mark-to-market P&L (FDs are valued
   // at invested amount, not fluctuating day-to-day) — Equity, MF
@@ -2028,42 +2498,22 @@ function renderDashboard() {
   document.getElementById("statTotalInvested").textContent = fmtINR(totalInvested);
   const plEl = document.getElementById("statOverallPL");
   plEl.textContent = fmtINR(overallPL);
-  plEl.className = "value " + plClass(overallPL);
-  const plPctEl = document.getElementById("statOverallPLPct");
-  plPctEl.textContent = fmtPct(overallPLPct) + " (Equity + MF + Gold)";
+  plEl.className = "dash-kpi-value " + plClass(overallPL);
+  document.getElementById("statOverallPLPct").textContent = fmtPct(overallPLPct) + " (Equity + MF + Gold)";
 
-  // allocation table
-  const idealTotal = Object.values(state.ideal).reduce((a, b) => a + (Number(b) || 0), 0);
-  const tbody = document.getElementById("allocTableBody");
-  tbody.innerHTML = "";
-  const locked = isReadOnly();
-  classes.forEach(c => {
-    const currentPct = netWorth > 0 ? (c.current / netWorth) * 100 : 0;
-    const idealPct = Number(state.ideal[c.key]) || 0;
-    const diffPct = currentPct - idealPct;
-    const diffAmount = (diffPct / 100) * netWorth;
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td class="left"><div class="alloc-name"><span class="swatch" style="background:${ASSET_COLORS[c.key]}"></span>${c.label}</div></td>
-      <td data-label="Current Value">${fmtINR(c.current)}</td>
-      <td data-label="Current %">${fmtNum(currentPct)}%</td>
-      <td data-label="Ideal %"><input class="ideal-input" type="number" step="any" value="${idealPct}" data-key="${c.key}" ${locked ? "disabled" : ""}></td>
-      <td class="${plClass(diffPct)}" data-label="Diff %">${diffPct >= 0 ? "+" : ""}${fmtNum(diffPct)}%</td>
-      <td class="${plClass(diffAmount)}" data-label="Diff Amount">${diffAmount >= 0 ? "+" : ""}${fmtINR(diffAmount)}</td>
-    `;
-    tr.querySelector(".ideal-input").addEventListener("change", (e) => {
-      state.ideal[c.key] = parseFloat(e.target.value) || 0;
-      saveState();
-      renderDashboard();
-    });
-    tbody.appendChild(tr);
-  });
+  const today = computeTodaysEquityPL();
+  const todayPLEl = document.getElementById("statTodayPL");
+  todayPLEl.textContent = fmtINR(today.pl);
+  todayPLEl.className = "dash-kpi-value " + plClass(today.pl);
+  document.getElementById("statTodayPLPct").textContent = fmtPct(today.pct) + (today.missing > 0 ? ` · ${today.missing} stock(s) missing live data` : "");
 
-  document.getElementById("allocTotalValue").textContent = fmtINR(netWorth);
-  document.getElementById("allocTotalCurrentPct").textContent = "100%";
-  document.getElementById("allocTotalIdealPct").textContent = fmtNum(idealTotal) + "%";
-
-  renderPieChart(classes, netWorth);
+  renderDashHeaderBits();
+  renderDashAttention();
+  renderDashHealth();
+  renderDashAllocBars();
+  renderDashOpportunities();
+  renderDashPerformers();
+  renderDashBreakdown();
   renderMarketSnapshot();
   // Keeps Insights live whenever it's the visible tab (e.g. during the
   // 30-second auto price refresh); renderInsights() itself no-ops if
@@ -2076,6 +2526,7 @@ function renderDashboard() {
 
 function renderPieChart(classes, netWorth) {
   const ctx = document.getElementById("allocPie");
+  if (!ctx) return; // canvas removed from the redesigned Dashboard — bars replace the donut
   const labels = classes.map(c => c.label);
   const data = classes.map(c => netWorth > 0 ? +(c.current / netWorth * 100).toFixed(2) : 0);
   const colors = classes.map(c => ASSET_COLORS[c.key]);

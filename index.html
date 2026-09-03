@@ -195,6 +195,132 @@
   .dash-grid{display:grid;grid-template-columns:1.6fr 1fr;gap:16px;}
   @media (max-width:900px){.dash-grid{grid-template-columns:1fr;}}
 
+  /* ---------- Dashboard header ---------- */
+  .dash-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:18px;}
+  .dash-header-title{font-family:var(--font-display);font-size:20px;font-weight:600;color:var(--text);margin:0;}
+  .dash-header-sub{font-size:12.5px;color:var(--text-faint);margin:2px 0 0;}
+  .dash-header-right{text-align:right;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);white-space:nowrap;}
+  .dash-market-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-left:5px;}
+  .dash-market-dot.open{background:var(--positive);}
+  .dash-market-dot.closed{background:var(--text-faint);}
+
+  /* ---------- KPI cards ---------- */
+  .dash-kpi-grid{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr;gap:12px;margin-bottom:16px;}
+  .dash-kpi-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;}
+  .dash-kpi-card.hero{background:linear-gradient(135deg, var(--surface-2), var(--surface));border-color:var(--gold-soft);}
+  .dash-kpi-label{font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-faint);margin-bottom:8px;}
+  .dash-kpi-value{font-family:var(--font-mono);font-size:22px;font-weight:600;color:var(--text);}
+  .dash-kpi-card.hero .dash-kpi-value{color:var(--gold);font-size:26px;}
+  .dash-kpi-sub{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);margin-top:4px;}
+  .dash-cash-row{display:flex;align-items:center;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);}
+  .dash-cash-row label{font-size:11px;color:var(--text-faint);white-space:nowrap;}
+  .dash-cash-row input{
+    flex:1;min-width:0;background:transparent;border:1px solid transparent;border-radius:6px;
+    color:var(--text);font-family:var(--font-mono);font-size:13px;font-weight:600;padding:4px 6px;text-align:right;
+  }
+  .dash-cash-row input::placeholder{color:var(--text-faint);font-weight:400;}
+  .dash-cash-row input:hover:not(:disabled){border-color:var(--border);}
+  .dash-cash-row input:focus{border-color:var(--gold);outline:none;background:var(--surface-2);}
+  .dash-cash-row input:disabled{opacity:1;-webkit-text-fill-color:var(--text);color:var(--text);background:transparent;border-color:transparent;}
+
+  /* ---------- What needs your attention ---------- */
+  .dash-attn-item{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border);}
+  .dash-attn-item:last-child{border-bottom:none;}
+  .dash-attn-dot{width:8px;height:8px;border-radius:50%;margin-top:5px;flex:none;}
+  .dash-attn-dot.warn{background:var(--warning);}
+  .dash-attn-dot.good{background:var(--positive);}
+  .dash-attn-dot.bad{background:var(--negative);}
+  .dash-attn-body{flex:1;min-width:0;}
+  .dash-attn-title{font-size:13px;color:var(--text);}
+  .dash-attn-detail{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);margin-top:2px;}
+  .dash-attn-action{
+    flex:none;background:transparent;border:1px solid var(--border);color:var(--text-muted);
+    font-size:11px;border-radius:7px;padding:5px 10px;cursor:pointer;white-space:nowrap;font-family:var(--font-body);
+  }
+  .dash-attn-action:hover{border-color:var(--gold);color:var(--text);}
+  .dash-attn-empty{font-size:12.5px;color:var(--text-muted);padding:6px 0;}
+
+  /* ---------- Portfolio health ---------- */
+  .dash-health-score-row{display:flex;align-items:baseline;gap:8px;margin-bottom:14px;}
+  .dash-health-score{font-family:var(--font-mono);font-size:28px;font-weight:600;color:var(--text);}
+  .dash-health-score.good{color:var(--positive);}
+  .dash-health-score.fair{color:var(--warning);}
+  .dash-health-score.poor{color:var(--negative);}
+  .dash-health-label{font-size:12px;color:var(--text-muted);}
+  .dash-health-row{display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-bottom:3px;}
+  .dash-health-track{height:5px;background:var(--surface-2);border-radius:3px;margin-bottom:9px;overflow:hidden;}
+  .dash-health-fill{height:100%;border-radius:3px;}
+  .dash-health-fill.good{background:var(--positive);}
+  .dash-health-fill.fair{background:var(--warning);}
+  .dash-health-fill.poor{background:var(--negative);}
+  .dash-health-note{font-size:11.5px;color:var(--text-faint);margin-top:6px;line-height:1.5;}
+
+  /* ---------- Asset allocation bars ---------- */
+  .dash-alloc-row{margin-bottom:11px;}
+  .dash-alloc-row:last-child{margin-bottom:0;}
+  .dash-alloc-top{display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:3px;}
+  .dash-alloc-name{color:var(--text);display:flex;align-items:center;gap:6px;}
+  .dash-alloc-name .swatch{width:8px;height:8px;border-radius:50%;flex:none;}
+  .dash-alloc-nums{font-family:var(--font-mono);color:var(--text-muted);}
+  .dash-alloc-nums.over{color:var(--negative);}
+  .dash-alloc-nums.under{color:var(--warning);}
+  .dash-alloc-track{height:6px;background:var(--surface-2);border-radius:3px;position:relative;overflow:visible;}
+  .dash-alloc-fill{height:100%;border-radius:3px;background:var(--blue);}
+  .dash-alloc-target{position:absolute;top:-2px;width:2px;height:10px;background:var(--text-faint);border-radius:1px;}
+  .dash-alloc-diff{font-family:var(--font-mono);font-size:10.5px;color:var(--text-faint);margin-top:3px;}
+  .dash-alloc-diff.over{color:var(--negative);}
+  .dash-alloc-diff.under{color:var(--warning);}
+  .dash-alloc-footer{display:flex;justify-content:flex-end;margin-top:12px;}
+
+  /* ---------- Investment opportunities ---------- */
+  .dash-opp-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;}
+  .dash-opp-row:last-child{border-bottom:none;}
+  .dash-opp-name{font-weight:600;color:var(--text);width:96px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .dash-opp-score{font-family:var(--font-mono);font-size:11px;border-radius:5px;padding:2px 7px;flex:none;}
+  .dash-opp-score.add{background:var(--positive-soft);color:var(--positive);}
+  .dash-opp-score.watch{background:var(--warning-soft);color:var(--warning);}
+  .dash-opp-tag{color:var(--text-muted);font-size:11px;width:64px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .dash-opp-alloc{color:var(--text-muted);font-family:var(--font-mono);font-size:10.5px;flex:1;min-width:0;text-align:right;}
+  .dash-opp-action{flex:none;font-size:10px;border-radius:5px;padding:3px 9px;font-weight:600;}
+  .dash-opp-action.add{background:var(--positive-soft);color:var(--positive);}
+  .dash-opp-action.watch{background:var(--warning-soft);color:var(--warning);}
+  .dash-opp-empty, .dash-perf-empty{font-size:12.5px;color:var(--text-muted);padding:4px 0;}
+
+  /* ---------- Top contributors / losers ---------- */
+  .dash-perf-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  .dash-perf-item{display:flex;justify-content:space-between;font-size:11.5px;padding:5px 0;border-bottom:1px solid var(--border);}
+  .dash-perf-item:last-child{border-bottom:none;}
+  .dash-perf-name{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:8px;}
+  .dash-perf-val{font-family:var(--font-mono);flex:none;}
+  .dash-perf-val.pos{color:var(--positive);}
+  .dash-perf-val.neg{color:var(--negative);}
+
+  /* ---------- Quick breakdown ---------- */
+  .dash-breakdown-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px;}
+  .dash-breakdown-item{text-align:center;}
+  .dash-breakdown-n{font-family:var(--font-mono);font-size:18px;font-weight:600;color:var(--text);}
+  .dash-breakdown-l{font-size:10.5px;color:var(--text-faint);margin-top:2px;}
+  .dash-breakdown-total{display:flex;justify-content:space-between;align-items:center;padding-top:12px;border-top:1px solid var(--border);font-size:12.5px;color:var(--text-muted);}
+  .dash-breakdown-total b{font-family:var(--font-mono);color:var(--text);font-size:14px;}
+
+  /* ---------- Primary actions ---------- */
+  .dash-actions-row{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 22px;}
+
+  /* ---------- Section spacing ---------- */
+  .dash-section{margin-bottom:16px;}
+
+  @media (max-width:700px){
+    .dash-header{margin-bottom:14px;}
+    .dash-header-title{font-size:18px;}
+    .dash-kpi-grid{grid-template-columns:1fr 1fr;}
+    .dash-kpi-card.hero{grid-column:1 / -1;}
+    .dash-perf-grid{grid-template-columns:1fr 1fr;gap:8px;}
+    .dash-breakdown-grid{grid-template-columns:1fr 1fr;row-gap:14px;}
+    .dash-opp-name{width:74px;}
+    .dash-opp-tag{display:none;}
+    .dash-actions-row .btn{flex:1 1 calc(50% - 4px);text-align:center;}
+  }
+
   /* Insights tab: Top/Worst Performers lists + Sector/Category donuts */
   .insights-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
   @media (max-width:900px){.insights-grid{grid-template-columns:1fr;}}
@@ -1020,74 +1146,105 @@
 
   <!-- ============ DASHBOARD ============ -->
   <section class="panel active" id="panel-dashboard">
-    <h2 class="section-title">Net worth overview</h2>
-    <p class="section-sub">Snapshot across all asset classes. Cash is entered manually; everything else rolls up from its tab.</p>
 
-    <div class="stat-row">
-      <div class="stat-card hero">
-        <div class="label">Net Worth</div>
-        <div class="value" id="statNetWorth">₹0</div>
+    <div class="dash-header">
+      <div>
+        <h2 class="dash-header-title">Dashboard</h2>
+        <p class="dash-header-sub">Your portfolio at a glance</p>
       </div>
-      <div class="stat-card">
-        <div class="label">Total Amount Invested</div>
-        <div class="value" id="statTotalInvested">₹0</div>
+      <div class="dash-header-right">
+        <div id="dashLastUpdated">Last updated: —</div>
+        <div>Market: <span id="dashMarketLabel">—</span><span class="dash-market-dot" id="dashMarketDot"></span></div>
       </div>
-      <div class="stat-card">
-        <div class="label">Overall Profit / Loss</div>
-        <div class="value" id="statOverallPL">₹0</div>
-        <div class="subvalue" id="statOverallPLPct">0%</div>
-      </div>
-      <div class="stat-card">
-        <div class="label">Cash on hand</div>
-        <div class="cash-edit">
+    </div>
+
+    <div class="dash-kpi-grid">
+      <div class="dash-kpi-card hero">
+        <div class="dash-kpi-label">Portfolio Value</div>
+        <div class="dash-kpi-value" id="statNetWorth">₹0</div>
+        <div class="dash-cash-row">
+          <label for="cashInput">Cash on hand</label>
           <input type="text" inputmode="decimal" id="cashInput" placeholder="0">
+        </div>
+      </div>
+      <div class="dash-kpi-card">
+        <div class="dash-kpi-label">Invested Amount</div>
+        <div class="dash-kpi-value" id="statTotalInvested">₹0</div>
+      </div>
+      <div class="dash-kpi-card">
+        <div class="dash-kpi-label">Overall P&amp;L</div>
+        <div class="dash-kpi-value" id="statOverallPL">₹0</div>
+        <div class="dash-kpi-sub" id="statOverallPLPct">0%</div>
+      </div>
+      <div class="dash-kpi-card">
+        <div class="dash-kpi-label">Today's P&amp;L <span class="hint">(Equity)</span></div>
+        <div class="dash-kpi-value" id="statTodayPL">₹0</div>
+        <div class="dash-kpi-sub" id="statTodayPLPct">0%</div>
+      </div>
+    </div>
+
+    <div class="dash-section card">
+      <h3>What needs your attention</h3>
+      <div id="dashAttentionList"></div>
+    </div>
+
+    <div class="dash-grid dash-section">
+      <div class="card">
+        <h3>Asset allocation <span class="hint">current vs. target</span></h3>
+        <div id="dashAllocBars"></div>
+        <div class="dash-alloc-footer">
+          <button class="btn btn-ghost" id="btnEditTargets">Edit targets</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Portfolio health</h3>
+        <div id="dashHealthBody"></div>
+      </div>
+    </div>
+
+    <div class="dash-section card">
+      <h3>Investment opportunities <span class="hint">top picks from Intelligent Insights</span></h3>
+      <div id="dashOpportunitiesList"></div>
+      <div class="dash-alloc-footer">
+        <button class="btn btn-ghost" id="btnViewAllOpportunities">View all opportunities</button>
+      </div>
+    </div>
+
+    <div class="dash-section card">
+      <h3>Portfolio movers <span class="hint">by absolute P&amp;L</span></h3>
+      <div class="dash-perf-grid">
+        <div>
+          <div class="dash-kpi-label" style="margin-bottom:8px;">Top contributors</div>
+          <div id="dashTopContributors"></div>
+        </div>
+        <div>
+          <div class="dash-kpi-label" style="margin-bottom:8px;">Biggest losers</div>
+          <div id="dashBiggestLosers"></div>
         </div>
       </div>
     </div>
 
-    <div class="card ms-snapshot-card">
+    <div class="dash-actions-row">
+      <button class="btn btn-ghost" id="btnDashViewOpportunities">View opportunities</button>
+      <button class="btn btn-ghost" id="btnDashRebalance">Rebalance portfolio</button>
+      <button class="btn btn-ghost" id="btnDashAddMoney">Add new money</button>
+    </div>
+
+    <div class="dash-section card ms-snapshot-card">
       <h3>Market Position <span class="hint">Nifty Bank · NIFTY 50 · SENSEX</span></h3>
       <div class="ms-grid" id="marketSnapshotGrid"></div>
     </div>
 
-    <div class="dash-grid">
-      <div class="card">
-        <h3>Asset allocation <span class="hint">current vs. ideal</span></h3>
-        <div class="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th class="left">Asset Class</th>
-                <th>Current Value</th>
-                <th>Current %</th>
-                <th>Ideal %</th>
-                <th>Diff %</th>
-                <th>Diff Amount</th>
-              </tr>
-            </thead>
-            <tbody id="allocTableBody"></tbody>
-            <tfoot>
-              <tr>
-                <td class="left">Total</td>
-                <td id="allocTotalValue">₹0</td>
-                <td id="allocTotalCurrentPct">100%</td>
-                <td id="allocTotalIdealPct">100%</td>
-                <td>—</td>
-                <td>—</td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-        <p class="settings-note">Ideal % is editable per row — used only to compute the drift shown here. Debt is valued at amount invested (FDs don't fluctuate day-to-day); Equity, Mutual Fund, and Gold ETF values use live prices fetched from your Google Sheet where available.</p>
-      </div>
-
-      <div class="card">
-        <h3>Current allocation</h3>
-        <div class="chart-wrap">
-          <canvas id="allocPie"></canvas>
-        </div>
+    <div class="dash-section card">
+      <h3>Quick portfolio breakdown</h3>
+      <div class="dash-breakdown-grid" id="dashBreakdownGrid"></div>
+      <div class="dash-breakdown-total">
+        <span>Total portfolio value</span>
+        <b id="dashBreakdownTotal">₹0</b>
       </div>
     </div>
+
   </section>
 
   <!-- ============ EQUITY ============ -->
@@ -1653,6 +1810,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-09-03-1"></script>
+<script src="app.js?v=2026-09-03-2"></script>
 </body>
 </html>
