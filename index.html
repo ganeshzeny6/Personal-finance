@@ -323,6 +323,127 @@
     .dash-actions-row .btn{flex:1 1 calc(50% - 4px);text-align:center;}
   }
 
+  /* ============ DEBT DASHBOARD (redesign) ============ */
+
+  .debt-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:16px;}
+  .debt-header-title{font-family:var(--font-display);font-size:20px;font-weight:600;color:var(--text);margin:0;}
+  .debt-header-sub{font-size:12.5px;color:var(--text-faint);margin:4px 0 0;max-width:520px;}
+  .debt-header-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start;}
+  .debt-last-updated{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);width:100%;text-align:right;margin-top:4px;}
+
+  .debt-kpi-grid{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr 1fr;gap:12px;margin-bottom:16px;}
+  .debt-kpi-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;}
+  .debt-kpi-card.hero{background:linear-gradient(135deg, var(--surface-2), var(--surface));border-color:var(--gold-soft);}
+  .debt-kpi-label{font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-faint);margin-bottom:8px;}
+  .debt-kpi-value{font-family:var(--font-mono);font-size:22px;font-weight:600;color:var(--text);}
+  .debt-kpi-card.hero .debt-kpi-value{color:var(--gold);font-size:26px;}
+  .debt-kpi-sub{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);margin-top:4px;}
+  .debt-kpi-target-row{font-size:11px;color:var(--text-faint);margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+  .debt-kpi-rebalance-btn{margin-top:10px;}
+
+  .debt-maturity-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+  .debt-maturity-card{
+    background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);
+    padding:12px 14px;text-align:left;cursor:pointer;font-family:var(--font-body);color:var(--text);
+  }
+  .debt-maturity-card:hover{border-color:var(--gold-soft);}
+  .debt-maturity-card.active{border-color:var(--gold);background:var(--gold-soft);}
+  .debt-maturity-label{font-size:10.5px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-faint);margin-bottom:6px;}
+  .debt-maturity-amount{font-family:var(--font-mono);font-size:16px;font-weight:600;}
+  .debt-maturity-count{font-size:10.5px;color:var(--text-muted);margin-top:3px;}
+
+  .debt-cal-controls{display:flex;justify-content:flex-end;gap:6px;margin-bottom:14px;}
+  .debt-cal-range-btn{background:transparent;border:1px solid var(--border);color:var(--text-muted);font-size:11px;border-radius:7px;padding:5px 10px;cursor:pointer;}
+  .debt-cal-range-btn.active{border-color:var(--gold);color:var(--text);background:var(--gold-soft);}
+  .debt-cal-bars{display:flex;align-items:flex-end;gap:6px;height:140px;overflow-x:auto;padding-bottom:2px;}
+  .debt-cal-bar-col{flex:1 1 0;min-width:28px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;background:transparent;border:none;cursor:pointer;padding:0;}
+  .debt-cal-bar-track{width:100%;max-width:26px;flex:1;display:flex;align-items:flex-end;}
+  .debt-cal-bar-fill{width:100%;background:var(--blue);border-radius:3px 3px 0 0;min-height:3px;}
+  .debt-cal-bar-fill.empty{background:var(--border);}
+  .debt-cal-bar-col.selected .debt-cal-bar-fill{background:var(--gold);}
+  .debt-cal-bar-label{font-size:10px;color:var(--text-faint);margin-top:6px;}
+  .debt-cal-detail{margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted);}
+  .debt-cal-detail b{color:var(--text);}
+
+  .debt-liquidity-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:12.5px;color:var(--text-muted);}
+  .debt-liquidity-row:last-child{border-bottom:none;}
+  .debt-liquidity-amt{font-family:var(--font-mono);color:var(--text);font-weight:600;}
+
+  .debt-health-placeholder{font-size:12.5px;color:var(--text-muted);line-height:1.6;}
+
+  .debt-filters-row{display:flex;flex-direction:column;gap:8px;margin-bottom:14px;}
+  .debt-chip-group{display:flex;flex-wrap:wrap;gap:6px;}
+  .debt-chip{background:transparent;border:1px solid var(--border);color:var(--text-muted);font-size:11.5px;border-radius:20px;padding:5px 12px;cursor:pointer;white-space:nowrap;}
+  .debt-chip:hover{border-color:var(--gold-soft);}
+  .debt-chip.active{background:var(--gold-soft);border-color:var(--gold);color:var(--text);}
+  .debt-sort-shortcuts{display:flex;flex-wrap:wrap;gap:6px;}
+  .debt-sort-shortcut{background:transparent;border:1px solid var(--border);color:var(--text-muted);font-size:11px;border-radius:7px;padding:5px 10px;cursor:pointer;}
+  .debt-sort-shortcut.active{border-color:var(--blue);color:var(--text);}
+  .debt-holdings-search{width:100%;max-width:360px;}
+  .debt-bucket-note{font-size:11.5px;color:var(--text-muted);margin-bottom:10px;}
+  .debt-bucket-note b{color:var(--text);}
+  .debt-chip-clear{background:transparent;border:none;color:var(--gold);font-size:11px;cursor:pointer;text-decoration:underline;padding:0;margin-left:6px;}
+
+  .debt-holding-row{
+    display:grid;grid-template-columns:1.4fr 0.9fr 0.7fr 1fr 1fr auto auto;
+    align-items:center;gap:10px;padding:12px 4px;border-bottom:1px solid var(--border);cursor:pointer;
+  }
+  .debt-holding-row:hover{background:var(--surface-2);}
+  .debt-holding-row:last-child{border-bottom:none;}
+  .debt-holding-main{min-width:0;}
+  .debt-holding-name{font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .debt-holding-sub{font-size:11px;color:var(--text-faint);margin-top:2px;}
+  .debt-holding-col{min-width:0;}
+  .debt-holding-label{font-size:10px;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-faint);margin-bottom:2px;}
+  .debt-holding-val{font-family:var(--font-mono);font-size:12.5px;color:var(--text);white-space:nowrap;}
+  .debt-status-badge{font-size:10.5px;border-radius:20px;padding:4px 10px;white-space:nowrap;font-weight:600;}
+  .debt-status-badge.active{background:var(--positive-soft);color:var(--positive);}
+  .debt-status-badge.soon{background:var(--warning-soft);color:var(--warning);}
+  .debt-status-badge.action{background:#e0863322;color:#e08633;}
+  .debt-status-badge.matured{background:var(--negative-soft);color:var(--negative);}
+  .debt-status-badge.unknown{background:var(--surface-2);color:var(--text-faint);}
+  .debt-holding-more{background:transparent;border:none;color:var(--text-faint);font-size:14px;cursor:pointer;padding:4px 8px;}
+  .debt-holding-more:hover{color:var(--text);}
+
+  .debt-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:6px;}
+  .debt-detail-val{font-family:var(--font-mono);font-size:14px;font-weight:600;color:var(--text);}
+  .debt-detail-divider{border-top:1px solid var(--border);margin:16px 0;}
+
+  .debt-reinvest-amount{font-family:var(--font-mono);font-size:17px;font-weight:600;color:var(--gold);margin-bottom:10px;}
+  .debt-reinvest-rate-row{font-size:12px;color:var(--text-muted);margin-bottom:12px;}
+  .debt-reinvest-rate-row b{font-family:var(--font-mono);color:var(--text);}
+  .debt-reinvest-row{display:grid;grid-template-columns:1.2fr 1fr auto;align-items:center;gap:8px;padding:6px 0;font-size:12px;color:var(--text-muted);}
+  .debt-reinvest-status{font-size:10px;font-weight:600;white-space:nowrap;}
+  .debt-reinvest-status.over{color:var(--negative);}
+  .debt-reinvest-status.under{color:var(--warning);}
+  .debt-reinvest-note{font-size:12px;color:var(--text-muted);margin:12px 0;line-height:1.6;}
+  .debt-reinvest-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}
+
+  .debt-classic-details{margin-top:6px;}
+  .debt-classic-summary{cursor:pointer;font-size:12.5px;color:var(--text-muted);padding:10px 0;user-select:none;}
+  .debt-classic-summary:hover{color:var(--text);}
+
+  @media (max-width:900px){
+    .debt-kpi-grid{grid-template-columns:1fr 1fr;}
+    .debt-kpi-card.hero{grid-column:1 / -1;}
+    .debt-maturity-grid{grid-template-columns:1fr 1fr;}
+  }
+  @media (max-width:700px){
+    .debt-header-actions{width:100%;}
+    .debt-header-actions .btn{flex:1 1 calc(50% - 4px);text-align:center;}
+    .debt-holding-row{grid-template-columns:1fr auto;grid-template-areas:"main badge" "principal principal" "rate rate" "maturity maturity" "value value";row-gap:6px;padding:14px 4px;}
+    .debt-holding-main{grid-area:main;}
+    .debt-status-badge{grid-area:badge;justify-self:end;}
+    .debt-holding-col:nth-of-type(2){grid-area:principal;}
+    .debt-holding-col:nth-of-type(3){grid-area:rate;}
+    .debt-holding-col:nth-of-type(4){grid-area:maturity;}
+    .debt-holding-col:nth-of-type(5){grid-area:value;}
+    .debt-holding-col{display:flex;justify-content:space-between;}
+    .debt-holding-more{display:none;}
+    .debt-detail-grid{grid-template-columns:1fr 1fr;}
+    .debt-reinvest-row{grid-template-columns:1fr;gap:2px;}
+  }
+
   /* Insights tab: Top/Worst Performers lists + Sector/Category donuts */
   .insights-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
   @media (max-width:900px){.insights-grid{grid-template-columns:1fr;}}
@@ -1344,95 +1465,203 @@
 
   <!-- ============ DEBT ============ -->
   <section class="panel" id="panel-debt">
-    <h2 class="section-title">Debt / Fixed Income</h2>
-    <p class="section-sub">Fixed deposits, bonds, PF and similar instruments.</p>
 
-    <div class="table-toolbar">
-      <div class="left-group">
-        <button class="btn btn-primary" id="btnAddDebt">+ Add entry</button>
-        <div class="toolbar-secondary" id="debtToolbarSecondary">
-          <label class="btn btn-ghost" for="importDebtFile" title="Overwrites all existing Debt entries with the contents of the file">Import from Excel</label>
-          <input type="file" id="importDebtFile" accept=".xlsx,.xls">
-          <button class="btn btn-ghost" id="btnImportDebtSheet" title="Overwrites all existing Debt entries with the Debt tab of your Google Sheet">Import from Google Sheet</button>
-        </div>
-        <button class="btn toolbar-overflow-toggle" id="debtOverflowToggle" title="More actions">⋯</button>
-        <div class="filter-clear-wrap">
-          <input type="text" class="filter-input" id="debtFilter" placeholder="Filter...">
-          <button type="button" class="filter-clear-btn" data-clear-target="debtFilter" title="Clear filter" aria-label="Clear filter">✕</button>
-        </div>
+    <div class="debt-header">
+      <div>
+        <h2 class="debt-header-title">Debt &amp; Fixed Income</h2>
+        <p class="debt-header-sub">Track your fixed-income investments, maturity schedule, interest income and reinvestment opportunities.</p>
+      </div>
+      <div class="debt-header-actions">
+        <button class="btn btn-primary" id="btnAddDebt">+ Add Investment</button>
+        <label class="btn btn-ghost" for="importDebtFile" title="Overwrites all existing Debt entries with the contents of the file">Import from Excel</label>
+        <input type="file" id="importDebtFile" accept=".xlsx,.xls">
+        <button class="btn btn-ghost" id="btnImportDebtSheet" title="Overwrites all existing Debt entries with the Debt tab of your Google Sheet">Import from Google Sheet</button>
         <span class="status-tag" id="debtImportStatus"></span>
+        <div class="debt-last-updated" id="debtLastUpdated">Last updated: —</div>
       </div>
-    </div>
-    <div class="mobile-totals" id="debtMobileTotals">
-      <div>
-        <div class="row"><span>Invested</span></div>
-        <div class="vals"><span id="debtMobTotalInvested">₹0</span></div>
-      </div>
-      <div>
-        <div class="row"><span>Maturity</span></div>
-        <div class="vals"><span id="debtMobTotalMaturity">₹0</span></div>
-      </div>
-      <div>
-        <div class="row"><span>Profit</span></div>
-        <div class="vals"><span id="debtMobTotalProfit">₹0</span></div>
-      </div>
-    </div>
-    <div class="mobile-sort-row">
-      <select id="debtMobileSort">
-        <option value="">Sort: default</option>
-        <option value="name">Name</option>
-        <option value="category">Category</option>
-        <option value="invested">Invested Amt</option>
-        <option value="roi">ROI %</option>
-        <option value="maturityAmount">Maturity Amt</option>
-        <option value="profit">Profit</option>
-        <option value="investedDate">Invested Date</option>
-        <option value="maturityDate" selected>Maturity Date</option>
-      </select>
-      <button class="mobile-sort-dir" id="debtMobileSortDir" title="Toggle ascending/descending">↑</button>
     </div>
 
-    <div class="table-scroll">
-      <table class="data-table">
-        <colgroup>
-          <col id="col-debt-name" style="width:160px">
-          <col style="width:110px"><col style="width:130px"><col style="width:120px">
-          <col style="width:110px"><col style="width:75px"><col style="width:115px">
-          <col style="width:100px"><col style="width:155px"><col style="width:155px">
-          <col style="width:95px"><col style="width:85px"><col style="width:160px"><col style="width:45px">
-        </colgroup>
-        <thead>
-          <tr>
-            <th class="left sortable resizable sticky-col" data-col="name">Name<span class="col-resizer"></span></th>
-            <th class="left sortable" data-col="category">Category</th>
-            <th class="left sortable" data-col="subcategory">Sub-category</th>
-            <th class="left sortable" data-col="account">Account No.</th>
-            <th class="sortable" data-col="invested">Invested Amt</th>
-            <th class="sortable" data-col="roi">ROI %</th>
-            <th class="sortable" data-col="maturityAmount">Maturity Amt</th>
-            <th class="sortable" data-col="profit">Profit</th>
-            <th class="sortable" data-col="investedDate">Invested Date</th>
-            <th class="sortable" data-col="maturityDate">Maturity Date</th>
-            <th class="sortable" data-col="tenureMonths">Tenure (Mo)</th>
-            <th class="sortable" data-col="tenureYears">Tenure (Yr)</th>
-            <th class="left sortable" data-col="notes">Notes</th>
-            <th class="row-actions">—</th>
-          </tr>
-        </thead>
-        <tbody id="debtTableBody"></tbody>
-        <tfoot>
-          <tr>
-            <td class="left sticky-col">Total</td>
-            <td></td><td></td><td></td>
-            <td id="debtTotalInvested">₹0</td>
-            <td></td>
-            <td id="debtTotalMaturity">₹0</td>
-            <td id="debtTotalProfit">₹0</td>
-            <td colspan="6"></td>
-          </tr>
-        </tfoot>
-      </table>
+    <div class="debt-kpi-grid">
+      <div class="debt-kpi-card hero">
+        <div class="debt-kpi-label">Debt Value</div>
+        <div class="debt-kpi-value" id="debtKpiValue">₹0</div>
+        <div class="debt-kpi-sub" id="debtKpiValuePct">0% of total portfolio</div>
+        <div class="debt-kpi-target-row" id="debtKpiTargetRow" style="display:none"></div>
+        <button class="btn btn-ghost btn-sm debt-kpi-rebalance-btn" id="debtKpiRebalanceBtn">Rebalance</button>
+      </div>
+      <div class="debt-kpi-card">
+        <div class="debt-kpi-label">Invested Amount</div>
+        <div class="debt-kpi-value" id="debtKpiInvested">₹0</div>
+      </div>
+      <div class="debt-kpi-card">
+        <div class="debt-kpi-label">Interest Rate <span class="hint">wtd. avg</span></div>
+        <div class="debt-kpi-value" id="debtKpiRate">0%</div>
+      </div>
+      <div class="debt-kpi-card">
+        <div class="debt-kpi-label">Expected Interest / Year</div>
+        <div class="debt-kpi-value" id="debtKpiExpectedInterest">₹0</div>
+      </div>
+      <div class="debt-kpi-card">
+        <div class="debt-kpi-label">Portfolio Allocation</div>
+        <div class="debt-kpi-value" id="debtKpiAllocPct">0%</div>
+      </div>
     </div>
+
+    <div class="dash-section card">
+      <h3>What needs your attention</h3>
+      <div id="debtAttentionList"></div>
+    </div>
+
+    <div class="dash-grid dash-section">
+      <div class="card">
+        <h3>Maturity overview</h3>
+        <div class="debt-maturity-grid" id="debtMaturityGrid"></div>
+      </div>
+      <div class="card">
+        <h3>Debt allocation <span class="hint">by category</span></h3>
+        <div id="debtAllocBars"></div>
+        <p class="settings-note" style="margin-bottom:0">Total: <span id="debtAllocTotal">₹0</span></p>
+      </div>
+    </div>
+
+    <div class="dash-section card" id="debtCalendarCard">
+      <h3>Maturity calendar</h3>
+      <div class="debt-cal-controls">
+        <button class="debt-cal-range-btn" data-months="6">6 Months</button>
+        <button class="debt-cal-range-btn active" data-months="12">12 Months</button>
+        <button class="debt-cal-range-btn" data-months="24">24 Months</button>
+      </div>
+      <div class="debt-cal-bars" id="debtCalendarBars"></div>
+      <div class="debt-cal-detail" id="debtCalendarDetail" style="display:none"></div>
+    </div>
+
+    <div class="dash-section card" id="debtHoldingsCard">
+      <h3>Debt holdings</h3>
+      <div class="debt-filters-row">
+        <input type="text" class="filter-input debt-holdings-search" id="debtHoldingsSearch" placeholder="Search institution or investment...">
+        <div class="debt-chip-group" id="debtCategoryChips"></div>
+        <div class="debt-chip-group" id="debtStatusChips"></div>
+        <div class="debt-sort-shortcuts">
+          <button class="debt-sort-shortcut" data-sort-col="maturityDate" data-sort-dir="1">Maturity Date</button>
+          <button class="debt-sort-shortcut" data-sort-col="roi" data-sort-dir="-1">Highest Rate</button>
+          <button class="debt-sort-shortcut" data-sort-col="roi" data-sort-dir="1">Lowest Rate</button>
+          <button class="debt-sort-shortcut" data-sort-col="invested" data-sort-dir="-1">Highest Amount</button>
+        </div>
+      </div>
+      <div class="debt-bucket-note" id="debtBucketFilterNote" style="display:none"></div>
+      <div id="debtHoldingsList"></div>
+      <p class="settings-note">Need account number, tenure, or notes columns? Use <button class="debt-chip-clear" id="btnDebtColumns" style="font-size:11.5px">Edit holdings (all fields) ↓</button> below for the full spreadsheet view.</p>
+    </div>
+
+    <div class="dash-grid dash-section">
+      <div class="card">
+        <h3>How much money becomes available?</h3>
+        <div id="debtLiquidityList"></div>
+      </div>
+      <div class="card" id="debtReinvestCard" style="display:none">
+        <h3>Upcoming reinvestment</h3>
+        <div class="debt-reinvest-amount" id="debtReinvestAmount"></div>
+        <div class="debt-reinvest-rate-row">Current rate on this investment: <b id="debtReinvestRate">0%</b></div>
+        <div id="debtReinvestRows"></div>
+        <p class="debt-reinvest-note">Consider redirecting some or all maturity proceeds toward underweight asset classes rather than automatically renewing — this is portfolio guidance, not financial advice.</p>
+        <div class="debt-reinvest-actions">
+          <button class="btn btn-ghost btn-sm" id="debtReinvestViewRebalance">View Rebalance Plan</button>
+          <button class="btn btn-ghost btn-sm" id="debtReinvestRenew">Renew FD</button>
+          <button class="btn btn-ghost btn-sm" id="debtReinvestDecideLater">Decide Later</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="dash-section card">
+      <h3>Debt health</h3>
+      <div class="debt-health-placeholder">Debt health scoring isn't implemented yet — once finalized, this will combine allocation, rate quality, diversification, liquidity spread and maturity concentration into a single score, the same way Portfolio Health works on the Dashboard.</div>
+    </div>
+
+    <details class="debt-classic-details" id="debtClassicTableDetails">
+      <summary class="debt-classic-summary">Edit holdings (all fields) — sub-category, account number, tenure, notes, and per-field editing</summary>
+
+      <div class="table-toolbar">
+        <div class="left-group">
+          <button class="btn toolbar-overflow-toggle" id="debtOverflowToggle" title="More actions" style="display:none">⋯</button>
+          <div class="toolbar-secondary" id="debtToolbarSecondary"></div>
+          <div class="filter-clear-wrap">
+            <input type="text" class="filter-input" id="debtFilter" placeholder="Filter...">
+            <button type="button" class="filter-clear-btn" data-clear-target="debtFilter" title="Clear filter" aria-label="Clear filter">✕</button>
+          </div>
+        </div>
+      </div>
+      <div class="mobile-totals" id="debtMobileTotals">
+        <div>
+          <div class="row"><span>Invested</span></div>
+          <div class="vals"><span id="debtMobTotalInvested">₹0</span></div>
+        </div>
+        <div>
+          <div class="row"><span>Maturity</span></div>
+          <div class="vals"><span id="debtMobTotalMaturity">₹0</span></div>
+        </div>
+        <div>
+          <div class="row"><span>Profit</span></div>
+          <div class="vals"><span id="debtMobTotalProfit">₹0</span></div>
+        </div>
+      </div>
+      <div class="mobile-sort-row">
+        <select id="debtMobileSort">
+          <option value="">Sort: default</option>
+          <option value="name">Name</option>
+          <option value="category">Category</option>
+          <option value="invested">Invested Amt</option>
+          <option value="roi">ROI %</option>
+          <option value="maturityAmount">Maturity Amt</option>
+          <option value="profit">Profit</option>
+          <option value="investedDate">Invested Date</option>
+          <option value="maturityDate" selected>Maturity Date</option>
+        </select>
+        <button class="mobile-sort-dir" id="debtMobileSortDir" title="Toggle ascending/descending">↑</button>
+      </div>
+
+      <div class="table-scroll">
+        <table class="data-table">
+          <colgroup>
+            <col id="col-debt-name" style="width:160px">
+            <col style="width:110px"><col style="width:130px"><col style="width:120px">
+            <col style="width:110px"><col style="width:75px"><col style="width:115px">
+            <col style="width:100px"><col style="width:155px"><col style="width:155px">
+            <col style="width:95px"><col style="width:85px"><col style="width:160px"><col style="width:45px">
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="left sortable resizable sticky-col" data-col="name">Name<span class="col-resizer"></span></th>
+              <th class="left sortable" data-col="category">Category</th>
+              <th class="left sortable" data-col="subcategory">Sub-category</th>
+              <th class="left sortable" data-col="account">Account No.</th>
+              <th class="sortable" data-col="invested">Invested Amt</th>
+              <th class="sortable" data-col="roi">ROI %</th>
+              <th class="sortable" data-col="maturityAmount">Maturity Amt</th>
+              <th class="sortable" data-col="profit">Profit</th>
+              <th class="sortable" data-col="investedDate">Invested Date</th>
+              <th class="sortable" data-col="maturityDate">Maturity Date</th>
+              <th class="sortable" data-col="tenureMonths">Tenure (Mo)</th>
+              <th class="sortable" data-col="tenureYears">Tenure (Yr)</th>
+              <th class="left sortable" data-col="notes">Notes</th>
+              <th class="row-actions">—</th>
+            </tr>
+          </thead>
+          <tbody id="debtTableBody"></tbody>
+          <tfoot>
+            <tr>
+              <td class="left sticky-col">Total</td>
+              <td></td><td></td><td></td>
+              <td id="debtTotalInvested">₹0</td>
+              <td></td>
+              <td id="debtTotalMaturity">₹0</td>
+              <td id="debtTotalProfit">₹0</td>
+              <td colspan="6"></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </details>
+
     <button class="fab-add" id="fabAddDebt" title="Add entry" aria-label="Add entry">+</button>
   </section>
 
@@ -1812,6 +2041,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-09-03-3"></script>
+<script src="app.js?v=2026-09-03-4"></script>
 </body>
 </html>

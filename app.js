@@ -1331,6 +1331,583 @@ function debtGetSortValue(row, col) {
   }
 }
 
+/* ============================================================
+   DEBT DASHBOARD (redesign)
+   Everything below reads state.debt / debtDerived() / debtTotals() /
+   maturityStatus() — no new calculation of invested amount, maturity
+   amount, or profit is introduced anywhere in this section. Only
+   maturity-bucket day-math, a finer 4-tier status label than the
+   existing 2-tier maturityStatus(), and simple grouping/summing are
+   new, and all of those are computed fresh from row.maturityDate /
+   row.invested / row.maturityAmount every time — never persisted,
+   never a second source of truth.
+   ============================================================ */
+
+// Whole-days-from-today for a YYYY-MM-DD string, or null if missing/
+// invalid. Shared by every maturity-bucket/status calculation below
+// so "today" and the rounding rule can never drift between them.
+function daysUntil(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr + "T00:00:00");
+  if (isNaN(d)) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((d - today) / (1000 * 60 * 60 * 24));
+}
+
+// Finer 4-tier status than the existing maturityStatus() (which only
+// distinguishes "soon"/"overdue" at a 30-day line, and is left
+// untouched since Dashboard's attention panel and the old table's row
+// highlighting both already depend on it). This is a Debt-page-only
+// display label layered on top, per the brief's own thresholds.
+function debtStatusBadge(dateStr) {
+  const days = daysUntil(dateStr);
+  if (days === null) return { label: "—", cls: "unknown", days: null };
+  if (days < 0) return { label: "Matured", cls: "matured", days };
+  if (days < 30) return { label: "Action Required", cls: "action", days };
+  if (days <= 90) return { label: "Maturing Soon", cls: "soon", days };
+  return { label: "Active", cls: "active", days };
+}
+
+// { key, label, min, max } — max is inclusive, null = no upper bound.
+// Used by both the four Maturity Overview cards and the click-filter
+// they drive.
+const DEBT_MATURITY_BUCKETS = [
+  { key: "30", label: "Next 30 Days", min: 0, max: 30 },
+  { key: "90", label: "Next 90 Days", min: 0, max: 90 },
+  { key: "180", label: "Next 6 Months", min: 0, max: 182 },
+  { key: "365", label: "Next 12 Months", min: 0, max: 365 }
+];
+
+function computeMaturityBucket(bucket) {
+  const rows = state.debt.filter(row => {
+    const days = daysUntil(row.maturityDate);
+    return days !== null && days >= bucket.min && days <= bucket.max;
+  });
+  const total = rows.reduce((s, r) => s + (Number(r.maturityAmount) || 0), 0);
+  return { rows, total, count: rows.length };
+}
+
+// View-only UI state for the Debt page — filters/sort-shortcuts/
+// selected calendar range/selected month/dismissed reinvestment card.
+// Never persisted, never affects any stored value.
+const debtUI = {
+  categoryFilter: "All",
+  statusFilter: "All",
+  maturityBucket: null,
+  calendarMonths: 12,
+  selectedMonthIdx: null,
+  reinvestDismissed: false
+};
+
+// Distinct category values actually present in the data (rather than
+// a hardcoded FD/Bonds/PPF/EPF/Other list) — since Category is free
+// text here, this can never show a filter chip for a type the person
+// hasn't actually entered.
+function getDebtCategories() {
+  const set = new Set();
+  state.debt.forEach(r => { if ((r.category || "").trim()) set.add(r.category.trim()); });
+  return [...set].sort();
+}
+
+// Applies the chip filters (category/status/maturity-bucket) ahead of
+// the existing search+sort pipeline (applySortFilter + debtGetSearchText/
+// debtGetSortValue) — so search and column-sort behave exactly as
+// they always have, just over a pre-narrowed row set.
+function getDebtDisplayRows() {
+  let rows = state.debt;
+  if (debtUI.categoryFilter !== "All") {
+    rows = rows.filter(r => (r.category || "").trim() === debtUI.categoryFilter);
+  }
+  if (debtUI.statusFilter !== "All") {
+    rows = rows.filter(r => debtStatusBadge(r.maturityDate).cls === debtUI.statusFilter);
+  }
+  if (debtUI.maturityBucket) {
+    const bucket = DEBT_MATURITY_BUCKETS.find(b => b.key === debtUI.maturityBucket);
+    if (bucket) {
+      rows = rows.filter(r => {
+        const days = daysUntil(r.maturityDate);
+        return days !== null && days >= bucket.min && days <= bucket.max;
+      });
+    }
+  }
+  return applySortFilter("debt", rows, debtGetSearchText, debtGetSortValue);
+}
+
+// Weighted-average ROI (weighted by invested amount) — the same
+// notion of "your average rate" a person means by "Interest Rate" on
+// a fixed-income summary; a simple mean would understate/overstate it
+// whenever position sizes differ.
+function computeWeightedDebtRoi() {
+  const totalInvested = state.debt.reduce((s, r) => s + (Number(r.invested) || 0), 0);
+  if (totalInvested <= 0) return 0;
+  const weighted = state.debt.reduce((s, r) => s + (Number(r.invested) || 0) * (Number(r.roi) || 0), 0);
+  return weighted / totalInvested;
+}
+
+function renderDebtHeaderBits() {
+  const el = document.getElementById("debtLastUpdated");
+  if (el) el.textContent = "Last updated: " + (state.lastSaved ? new Date(state.lastSaved).toLocaleTimeString() : "—");
+}
+
+function renderDebtKPIs() {
+  const totals = debtTotals();
+  const { netWorth, classes } = computeAssetClassesAndNetWorth();
+  const debtClass = classes.find(c => c.key === "debt");
+  const currentPct = netWorth > 0 ? (debtClass.current / netWorth) * 100 : 0;
+  const targetPct = Number(state.ideal.debt) || 0;
+  const diffPct = currentPct - targetPct;
+  const weightedRoi = computeWeightedDebtRoi();
+  // "Expected Interest / Year" — the same profit-at-maturity number
+  // debtDerived() already computes, simply annualised by dividing by
+  // each row's own tenure in years. Rows with no tenure entered are
+  // skipped (never divided by zero / never guessed).
+  const expectedInterestPerYear = state.debt.reduce((s, r) => {
+    const d = debtDerived(r);
+    if (!d.years || d.years <= 0) return s;
+    return s + (d.profit / d.years);
+  }, 0);
+
+  document.getElementById("debtKpiValue").textContent = fmtINR(totals.invested);
+  document.getElementById("debtKpiValuePct").textContent = `${fmtNum(currentPct, 1)}% of total portfolio`;
+  document.getElementById("debtKpiInvested").textContent = fmtINR(totals.invested);
+  document.getElementById("debtKpiRate").textContent = fmtNum(weightedRoi, 2) + "%";
+  document.getElementById("debtKpiExpectedInterest").textContent = fmtINR(expectedInterestPerYear);
+  document.getElementById("debtKpiAllocPct").textContent = fmtNum(currentPct, 1) + "%";
+
+  const targetRow = document.getElementById("debtKpiTargetRow");
+  if (Math.abs(diffPct) >= ATTENTION_DRIFT_THRESHOLD) {
+    targetRow.style.display = "";
+    targetRow.innerHTML = `Target: ${fmtNum(targetPct, 1)}% <span class="${diffPct > 0 ? "dash-alloc-pct over" : "dash-alloc-pct under"}">${diffPct > 0 ? "Overweight" : "Underweight"}: ${diffPct > 0 ? "+" : ""}${fmtNum(diffPct, 1)}%</span>`;
+  } else {
+    targetRow.style.display = "none";
+  }
+}
+
+function computeDebtAttentionItems() {
+  const items = [];
+  const b90 = computeMaturityBucket(DEBT_MATURITY_BUCKETS[1]);
+  if (b90.count > 0) {
+    items.push({
+      severity: "warn",
+      title: `${fmtINR(b90.total)} maturing in next 90 days`,
+      detail: `${b90.count} investment${b90.count === 1 ? "" : "s"}`,
+      actionLabel: "View maturities",
+      onAction: () => { debtUI.maturityBucket = "90"; renderDebtDashboard(); document.getElementById("debtHoldingsCard")?.scrollIntoView({ behavior: "smooth", block: "start" }); }
+    });
+  }
+  const b180 = computeMaturityBucket(DEBT_MATURITY_BUCKETS[2]);
+  const beyond90In180 = b180.count - b90.count;
+  if (beyond90In180 > 0) {
+    items.push({
+      severity: "info",
+      title: `${fmtINR(b180.total - b90.total)} maturing in next 6 months`,
+      detail: `${beyond90In180} investment${beyond90In180 === 1 ? "" : "s"}`,
+      actionLabel: "View calendar",
+      onAction: () => document.getElementById("debtCalendarCard")?.scrollIntoView({ behavior: "smooth", block: "start" })
+    });
+  }
+  const { netWorth, classes } = computeAssetClassesAndNetWorth();
+  const debtClass = classes.find(c => c.key === "debt");
+  const currentPct = netWorth > 0 ? (debtClass.current / netWorth) * 100 : 0;
+  const targetPct = Number(state.ideal.debt) || 0;
+  const diffPct = currentPct - targetPct;
+  if (diffPct >= ATTENTION_DRIFT_THRESHOLD) {
+    items.push({
+      severity: "bad",
+      title: "Debt allocation is above target",
+      detail: `Current: ${fmtNum(currentPct, 1)}% · Target: ${fmtNum(targetPct, 1)}% · Overweight: ${fmtINR((diffPct / 100) * netWorth)}`,
+      actionLabel: "View rebalance",
+      onAction: () => { goToTab("dashboard"); setTimeout(openIdealTargetsModal, 150); }
+    });
+  } else if (diffPct <= -ATTENTION_DRIFT_THRESHOLD) {
+    items.push({
+      severity: "warn",
+      title: "Debt allocation is below target",
+      detail: `Current: ${fmtNum(currentPct, 1)}% · Target: ${fmtNum(targetPct, 1)}% · Underweight: ${fmtINR(Math.abs(diffPct / 100) * netWorth)}`,
+      actionLabel: "View rebalance",
+      onAction: () => { goToTab("dashboard"); setTimeout(openIdealTargetsModal, 150); }
+    });
+  }
+  const expectedInterestPerYear = state.debt.reduce((s, r) => {
+    const d = debtDerived(r);
+    if (!d.years || d.years <= 0) return s;
+    return s + (d.profit / d.years);
+  }, 0);
+  if (expectedInterestPerYear > 0) {
+    items.push({
+      severity: "good",
+      title: `${fmtINR(expectedInterestPerYear)} interest income expected this year`,
+      detail: "Based on each investment's rate and tenure",
+      actionLabel: "View details",
+      onAction: () => document.getElementById("debtHoldingsCard")?.scrollIntoView({ behavior: "smooth", block: "start" })
+    });
+  }
+  return items;
+}
+
+function renderDebtAttention() {
+  const el = document.getElementById("debtAttentionList");
+  if (!el) return;
+  const items = computeDebtAttentionItems();
+  if (items.length === 0) {
+    el.innerHTML = `<div class="dash-attn-empty">You're clear for now — no upcoming maturities, allocation drift, or other action items.</div>`;
+    return;
+  }
+  el.innerHTML = "";
+  items.forEach(item => {
+    const row = document.createElement("div");
+    row.className = "dash-attn-item";
+    row.innerHTML = `
+      <div class="dash-attn-dot ${item.severity}"></div>
+      <div class="dash-attn-body">
+        <div class="dash-attn-title">${escapeAttr(item.title)}</div>
+        <div class="dash-attn-detail">${escapeAttr(item.detail)}</div>
+      </div>
+      <button class="dash-attn-action">${escapeAttr(item.actionLabel)}</button>
+    `;
+    row.querySelector(".dash-attn-action").addEventListener("click", item.onAction);
+    el.appendChild(row);
+  });
+}
+
+function renderDebtMaturityOverview() {
+  const el = document.getElementById("debtMaturityGrid");
+  if (!el) return;
+  el.innerHTML = DEBT_MATURITY_BUCKETS.map(b => {
+    const data = computeMaturityBucket(b);
+    const active = debtUI.maturityBucket === b.key;
+    return `
+      <button class="debt-maturity-card${active ? " active" : ""}" data-bucket="${b.key}">
+        <div class="debt-maturity-label">${escapeAttr(b.label)}</div>
+        <div class="debt-maturity-amount">${fmtINR(data.total)}</div>
+        <div class="debt-maturity-count">${data.count} investment${data.count === 1 ? "" : "s"}</div>
+      </button>
+    `;
+  }).join("");
+  el.querySelectorAll(".debt-maturity-card").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const key = btn.dataset.bucket;
+      debtUI.maturityBucket = debtUI.maturityBucket === key ? null : key;
+      renderDebtDashboard();
+      document.getElementById("debtHoldingsCard")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
+}
+
+const DEBT_CATEGORY_PALETTE = ["#6f93c9", "#c9a44c", "#4bbf9c", "#e0667a", "#d9a441", "#8b98b5", "#a78bfa"];
+
+function renderDebtAllocation() {
+  const el = document.getElementById("debtAllocBars");
+  const totalEl = document.getElementById("debtAllocTotal");
+  if (!el) return;
+  const map = new Map();
+  state.debt.forEach(r => {
+    const cat = (r.category || "").trim() || "Uncategorized";
+    map.set(cat, (map.get(cat) || 0) + (Number(r.invested) || 0));
+  });
+  const total = [...map.values()].reduce((a, b) => a + b, 0);
+  const entries = [...map.entries()].sort((a, b) => b[1] - a[1]);
+  if (entries.length === 0) {
+    el.innerHTML = `<div class="dash-attn-empty">No debt entries yet.</div>`;
+  } else {
+    el.innerHTML = entries.map(([label, value], i) => {
+      const pct = total > 0 ? (value / total) * 100 : 0;
+      const color = DEBT_CATEGORY_PALETTE[i % DEBT_CATEGORY_PALETTE.length];
+      return `
+        <div class="dash-alloc-row">
+          <div class="dash-alloc-top">
+            <span class="dash-alloc-name"><span class="swatch" style="background:${color}"></span>${escapeAttr(label)}</span>
+            <span class="dash-alloc-pct">${fmtNum(pct, 1)}%</span>
+          </div>
+          <div class="dash-alloc-amounts"><span>${fmtINR(value)}</span></div>
+          <div class="dash-alloc-track"><div class="dash-alloc-fill" style="width:${pct}%;background:${color}"></div></div>
+        </div>
+      `;
+    }).join("");
+  }
+  if (totalEl) totalEl.textContent = fmtINR(total);
+}
+
+function renderDebtCalendar() {
+  const wrap = document.getElementById("debtCalendarBars");
+  const detail = document.getElementById("debtCalendarDetail");
+  if (!wrap) return;
+  const months = debtUI.calendarMonths;
+  const buckets = [];
+  const today = new Date();
+  for (let i = 0; i < months; i++) {
+    const d = new Date(today.getFullYear(), today.getMonth() + i, 1);
+    buckets.push({ year: d.getFullYear(), month: d.getMonth(), label: d.toLocaleDateString("en-IN", { month: "short" }), rows: [], total: 0 });
+  }
+  state.debt.forEach(r => {
+    if (!r.maturityDate) return;
+    const md = new Date(r.maturityDate + "T00:00:00");
+    if (isNaN(md)) return;
+    const bucket = buckets.find(b => b.year === md.getFullYear() && b.month === md.getMonth());
+    if (bucket) { bucket.rows.push(r); bucket.total += Number(r.maturityAmount) || 0; }
+  });
+  const maxTotal = Math.max(1, ...buckets.map(b => b.total));
+
+  wrap.innerHTML = buckets.map((b, i) => {
+    const heightPct = b.total > 0 ? Math.max(6, (b.total / maxTotal) * 100) : 2;
+    const selected = debtUI.selectedMonthIdx === i;
+    return `
+      <button class="debt-cal-bar-col${selected ? " selected" : ""}" data-idx="${i}" title="${escapeAttr(b.label)} ${b.year} — ${b.rows.length} investment(s), ${fmtINR(b.total)}">
+        <div class="debt-cal-bar-track"><div class="debt-cal-bar-fill${b.total > 0 ? "" : " empty"}" style="height:${heightPct}%"></div></div>
+        <div class="debt-cal-bar-label">${escapeAttr(b.label)}</div>
+      </button>
+    `;
+  }).join("");
+
+  wrap.querySelectorAll(".debt-cal-bar-col").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const idx = Number(btn.dataset.idx);
+      debtUI.selectedMonthIdx = debtUI.selectedMonthIdx === idx ? null : idx;
+      renderDebtCalendar();
+    });
+  });
+
+  if (debtUI.selectedMonthIdx !== null && buckets[debtUI.selectedMonthIdx]) {
+    const b = buckets[debtUI.selectedMonthIdx];
+    detail.style.display = "";
+    detail.innerHTML = b.rows.length > 0
+      ? `<b>${escapeAttr(b.label)} ${b.year}</b> · ${b.rows.length} investment${b.rows.length === 1 ? "" : "s"} · ${fmtINR(b.total)}`
+      : `<b>${escapeAttr(b.label)} ${b.year}</b> · Nothing maturing this month`;
+  } else {
+    detail.style.display = "none";
+    detail.innerHTML = "";
+  }
+}
+
+function renderDebtLiquidity() {
+  const el = document.getElementById("debtLiquidityList");
+  if (!el) return;
+  const buckets = [
+    { label: "Next 30 days", min: 0, max: 30 },
+    { label: "31–90 days", min: 31, max: 90 },
+    { label: "3–6 months", min: 91, max: 182 },
+    { label: "6–12 months", min: 183, max: 365 },
+    { label: "1–2 years", min: 366, max: 730 },
+    { label: "2+ years", min: 731, max: Infinity }
+  ];
+  el.innerHTML = buckets.map(b => {
+    const total = state.debt.reduce((s, r) => {
+      const days = daysUntil(r.maturityDate);
+      if (days === null || days < b.min || days > b.max) return s;
+      return s + (Number(r.maturityAmount) || 0);
+    }, 0);
+    return `<div class="debt-liquidity-row"><span>${escapeAttr(b.label)}</span><span class="debt-liquidity-amt">${fmtINR(total)}</span></div>`;
+  }).join("");
+}
+
+function renderDebtReinvestmentPlanner() {
+  const card = document.getElementById("debtReinvestCard");
+  if (!card) return;
+  if (debtUI.reinvestDismissed) { card.style.display = "none"; return; }
+
+  const upcoming = state.debt
+    .map(r => ({ row: r, days: daysUntil(r.maturityDate) }))
+    .filter(x => x.days !== null && x.days >= 0 && x.days <= 90)
+    .sort((a, b) => a.days - b.days)[0];
+
+  if (!upcoming) { card.style.display = "none"; return; }
+  card.style.display = "";
+
+  const { netWorth, classes } = computeAssetClassesAndNetWorth();
+  const rows3 = ["debt", "equity", "gold"].map(key => {
+    const c = classes.find(cc => cc.key === key);
+    const currentPct = netWorth > 0 ? (c.current / netWorth) * 100 : 0;
+    const targetPct = Number(state.ideal[key]) || 0;
+    const diff = currentPct - targetPct;
+    const status = diff > ATTENTION_DRIFT_THRESHOLD ? "OVERWEIGHT" : diff < -ATTENTION_DRIFT_THRESHOLD ? "UNDERWEIGHT" : "ON TARGET";
+    const cls = diff > ATTENTION_DRIFT_THRESHOLD ? "over" : diff < -ATTENTION_DRIFT_THRESHOLD ? "under" : "";
+    return { label: c.label, currentPct, targetPct, status, cls };
+  });
+
+  document.getElementById("debtReinvestAmount").textContent = `${fmtINR(Number(upcoming.row.maturityAmount) || 0)} available in ${upcoming.days} day${upcoming.days === 1 ? "" : "s"}`;
+  document.getElementById("debtReinvestRate").textContent = fmtNum(Number(upcoming.row.roi) || 0, 2) + "%";
+  document.getElementById("debtReinvestRows").innerHTML = rows3.map(r => `
+    <div class="debt-reinvest-row">
+      <span>${escapeAttr(r.label)}</span>
+      <span class="dash-alloc-pct ${r.cls}">${fmtNum(r.currentPct, 1)}% / ${fmtNum(r.targetPct, 1)}%</span>
+      <span class="debt-reinvest-status ${r.cls}">${r.status}</span>
+    </div>
+  `).join("");
+}
+
+// Status colors match the doc's badge language: green (Active), amber
+// (Maturing Soon), orange (Action Required), red (Matured).
+const DEBT_STATUS_META = {
+  active: { label: "Active", cls: "active" },
+  soon: { label: "Maturing Soon", cls: "soon" },
+  action: { label: "Action Required", cls: "action" },
+  matured: { label: "Matured", cls: "matured" },
+  unknown: { label: "—", cls: "unknown" }
+};
+
+function maskAccount(acc) {
+  const s = (acc || "").trim();
+  if (s.length <= 4) return s ? "••••" : "";
+  return "••••" + s.slice(-4);
+}
+
+function renderDebtFilterChips() {
+  const catEl = document.getElementById("debtCategoryChips");
+  const statusEl = document.getElementById("debtStatusChips");
+  if (!catEl || !statusEl) return;
+  const categories = ["All", ...getDebtCategories()];
+  catEl.innerHTML = categories.map(cat => `<button class="debt-chip${debtUI.categoryFilter === cat ? " active" : ""}" data-cat="${escapeAttr(cat)}">${escapeAttr(cat)}</button>`).join("");
+  catEl.querySelectorAll(".debt-chip").forEach(btn => {
+    btn.addEventListener("click", () => { debtUI.categoryFilter = btn.dataset.cat; renderDebtHoldingsList(); renderDebtFilterChips(); });
+  });
+
+  const statuses = [
+    { key: "All", label: "All" },
+    { key: "active", label: "Active" },
+    { key: "soon", label: "Maturing Soon" },
+    { key: "action", label: "Action Required" },
+    { key: "matured", label: "Matured" }
+  ];
+  statusEl.innerHTML = statuses.map(s => `<button class="debt-chip${debtUI.statusFilter === s.key ? " active" : ""}" data-status="${s.key}">${escapeAttr(s.label)}</button>`).join("");
+  statusEl.querySelectorAll(".debt-chip").forEach(btn => {
+    btn.addEventListener("click", () => { debtUI.statusFilter = btn.dataset.status; renderDebtHoldingsList(); renderDebtFilterChips(); });
+  });
+}
+
+function renderDebtHoldingsList() {
+  const el = document.getElementById("debtHoldingsList");
+  const bucketNote = document.getElementById("debtBucketFilterNote");
+  if (!el) return;
+
+  if (bucketNote) {
+    const bucket = DEBT_MATURITY_BUCKETS.find(b => b.key === debtUI.maturityBucket);
+    if (bucket) {
+      bucketNote.style.display = "";
+      bucketNote.innerHTML = `Filtered to <b>${escapeAttr(bucket.label)}</b> <button class="debt-chip-clear" id="debtClearBucket">Clear</button>`;
+      document.getElementById("debtClearBucket").addEventListener("click", () => { debtUI.maturityBucket = null; renderDebtHoldingsList(); });
+    } else {
+      bucketNote.style.display = "none";
+      bucketNote.innerHTML = "";
+    }
+  }
+
+  const rows = getDebtDisplayRows();
+  if (state.debt.length === 0) {
+    el.innerHTML = `<div class="dash-attn-empty">No debt / fixed-income entries yet. Click "+ Add Investment" to begin.</div>`;
+    return;
+  }
+  if (rows.length === 0) {
+    el.innerHTML = `<div class="dash-attn-empty">No entries match the current filters.</div>`;
+    return;
+  }
+
+  el.innerHTML = rows.map(row => {
+    const d = debtDerived(row);
+    const badge = debtStatusBadge(row.maturityDate);
+    const meta = DEBT_STATUS_META[badge.cls] || DEBT_STATUS_META.unknown;
+    return `
+      <div class="debt-holding-row" data-id="${row.id}">
+        <div class="debt-holding-main">
+          <div class="debt-holding-name">${escapeAttr(row.name || "(unnamed)")}</div>
+          <div class="debt-holding-sub">${escapeAttr(row.category || "Uncategorized")}</div>
+        </div>
+        <div class="debt-holding-col"><div class="debt-holding-label">Principal</div><div class="debt-holding-val">${fmtINR(row.invested)}</div></div>
+        <div class="debt-holding-col"><div class="debt-holding-label">Rate</div><div class="debt-holding-val">${fmtNum(row.roi, 2)}%</div></div>
+        <div class="debt-holding-col"><div class="debt-holding-label">Maturity</div><div class="debt-holding-val">${row.maturityDate || "—"}</div></div>
+        <div class="debt-holding-col"><div class="debt-holding-label">Maturity Value</div><div class="debt-holding-val">${fmtINR(row.maturityAmount)}</div></div>
+        <div class="debt-status-badge ${meta.cls}">${escapeAttr(meta.label)}</div>
+        <button class="debt-holding-more" data-id="${row.id}" aria-label="More actions">•••</button>
+      </div>
+    `;
+  }).join("");
+
+  el.querySelectorAll(".debt-holding-row").forEach(rowEl => {
+    rowEl.addEventListener("click", (e) => {
+      if (e.target.closest(".debt-holding-more")) return;
+      openDebtDetailModal(rowEl.dataset.id);
+    });
+  });
+  el.querySelectorAll(".debt-holding-more").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openDebtDetailModal(btn.dataset.id);
+    });
+  });
+}
+
+function openDebtDetailModal(id) {
+  const row = state.debt.find(r => r.id === id);
+  if (!row) return;
+  const d = debtDerived(row);
+  const days = daysUntil(row.maturityDate);
+  const { netWorth, classes } = computeAssetClassesAndNetWorth();
+  const debtClass = classes.find(c => c.key === "debt");
+  const currentPct = netWorth > 0 ? (debtClass.current / netWorth) * 100 : 0;
+  const targetPct = Number(state.ideal.debt) || 0;
+  const overweight = currentPct > targetPct + ATTENTION_DRIFT_THRESHOLD;
+
+  const html = `
+    <div class="debt-detail-grid">
+      <div><div class="debt-holding-label">Principal</div><div class="debt-detail-val">${fmtINR(row.invested)}</div></div>
+      <div><div class="debt-holding-label">Interest Rate</div><div class="debt-detail-val">${fmtNum(row.roi, 2)}%</div></div>
+      <div><div class="debt-holding-label">Start Date</div><div class="debt-detail-val">${row.investedDate || "—"}</div></div>
+      <div><div class="debt-holding-label">Maturity Date</div><div class="debt-detail-val">${row.maturityDate || "—"}</div></div>
+      <div><div class="debt-holding-label">Estimated Maturity Value</div><div class="debt-detail-val">${fmtINR(row.maturityAmount)}</div></div>
+      <div><div class="debt-holding-label">Interest (at maturity)</div><div class="debt-detail-val ${plClass(d.profit)}">${fmtINR(d.profit)}</div></div>
+      <div><div class="debt-holding-label">Remaining</div><div class="debt-detail-val">${days === null ? "—" : days < 0 ? `${Math.abs(days)} days overdue` : `${days} days`}</div></div>
+      <div><div class="debt-holding-label">Account</div><div class="debt-detail-val">${escapeAttr(maskAccount(row.account) || "—")}</div></div>
+    </div>
+    ${row.notes ? `<p class="settings-note">${escapeAttr(row.notes)}</p>` : ""}
+    <div class="debt-detail-divider"></div>
+    <div class="debt-holding-label" style="margin-bottom:8px;">What should I do?</div>
+    <div class="debt-reinvest-row">
+      <span>Current Debt Allocation</span><span></span><span class="debt-detail-val">${fmtNum(currentPct, 1)}%</span>
+    </div>
+    <div class="debt-reinvest-row">
+      <span>Target</span><span></span><span class="debt-detail-val">${fmtNum(targetPct, 1)}%</span>
+    </div>
+    ${overweight
+      ? `<div class="dash-attn-item" style="border-bottom:none;padding-top:12px;">
+           <div class="dash-attn-dot warn"></div>
+           <div class="dash-attn-body">
+             <div class="dash-attn-title">Debt is already overweight.</div>
+             <div class="dash-attn-detail">Consider redirecting maturity proceeds to underweight asset classes instead of renewing this investment as-is.</div>
+           </div>
+         </div>`
+      : `<p class="settings-note">Debt allocation is within range — renewing or reinvesting either way is a reasonable option based on allocation alone.</p>`}
+  `;
+
+  openModal(escapeAttr(row.name || "Debt investment"), html, [
+    { label: "View rebalance", onClick: () => { closeModal(); goToTab("dashboard"); setTimeout(openIdealTargetsModal, 150); } },
+    { label: "Close", primary: true, onClick: closeModal }
+  ]);
+}
+
+function openDebtColumnsModal() {
+  // Placeholder entry point — the redesigned holdings list already
+  // shows Name/Category/Principal/Rate/Maturity Date/Maturity Value/
+  // Status by default. Extra fields (Sub-category, Account, Invested
+  // Date, Tenure, Notes) stay reachable via "Edit holdings (all
+  // fields)" below rather than a separate column-visibility system,
+  // since that classic table already exposes every field.
+  document.getElementById("debtClassicTableDetails")?.setAttribute("open", "");
+  document.getElementById("debtClassicTableDetails")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function renderDebtDashboard() {
+  renderDebtHeaderBits();
+  renderDebtKPIs();
+  renderDebtAttention();
+  renderDebtMaturityOverview();
+  renderDebtAllocation();
+  renderDebtCalendar();
+  renderDebtLiquidity();
+  renderDebtReinvestmentPlanner();
+  renderDebtFilterChips();
+  renderDebtHoldingsList();
+}
+
 function renderDebt() {
   const tbody = document.getElementById("debtTableBody");
   tbody.innerHTML = "";
@@ -1395,6 +1972,7 @@ function renderDebt() {
   const mobProfitCell = document.getElementById("debtMobTotalProfit");
   mobProfitCell.textContent = fmtINR(totals.profit);
   mobProfitCell.className = plClass(totals.profit);
+  renderDebtDashboard();
 }
 
 function updateDebtComputed() {
@@ -1424,6 +2002,7 @@ function updateDebtComputed() {
   const mobProfitCell = document.getElementById("debtMobTotalProfit");
   mobProfitCell.textContent = fmtINR(totals.profit);
   mobProfitCell.className = plClass(totals.profit);
+  renderDebtDashboard();
 }
 
 document.getElementById("btnAddDebt").addEventListener("click", () => {
@@ -6617,6 +7196,68 @@ setupMobileSort("gold", "goldMobileSort", "goldMobileSortDir", "#panel-gold thea
 setupMobileSort("stockanalysis", "stockAnalysisMobileSort", "stockAnalysisMobileSortDir", "#panel-stockanalysis thead", () => { tableUI.stockanalysis.page = 1; renderStockAnalysis(); });
 
 setupOverflowToggle("debtOverflowToggle", "debtToolbarSecondary");
+
+// New Debt Dashboard wiring — the holdings-list search box shares the
+// exact same tableUI.debt.filter state as the classic table's own
+// #debtFilter box (kept in sync both ways) so search behaves
+// identically whichever view is on screen.
+document.getElementById("debtHoldingsSearch")?.addEventListener("input", (e) => {
+  tableUI.debt.filter = e.target.value;
+  const classicFilter = document.getElementById("debtFilter");
+  if (classicFilter) classicFilter.value = e.target.value;
+  renderDebtHoldingsList();
+});
+document.getElementById("debtFilter")?.addEventListener("input", (e) => {
+  const searchBox = document.getElementById("debtHoldingsSearch");
+  if (searchBox) searchBox.value = e.target.value;
+});
+
+// Sort shortcuts — set the same tableUI.debt sort state the column
+// headers already use, so "Highest Rate" etc. is just a one-click
+// alias for clicking that header, not a separate sort implementation.
+document.querySelectorAll(".debt-sort-shortcut").forEach(btn => {
+  btn.addEventListener("click", () => {
+    tableUI.debt.sortCol = btn.dataset.sortCol;
+    tableUI.debt.sortDir = Number(btn.dataset.sortDir);
+    document.querySelectorAll(".debt-sort-shortcut").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    renderDebtHoldingsList();
+  });
+});
+
+document.querySelectorAll(".debt-cal-range-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    debtUI.calendarMonths = Number(btn.dataset.months);
+    debtUI.selectedMonthIdx = null;
+    document.querySelectorAll(".debt-cal-range-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    renderDebtCalendar();
+  });
+});
+
+document.getElementById("debtKpiRebalanceBtn")?.addEventListener("click", () => {
+  goToTab("dashboard");
+  setTimeout(openIdealTargetsModal, 150);
+});
+
+document.getElementById("btnDebtColumns")?.addEventListener("click", openDebtColumnsModal);
+
+document.getElementById("debtReinvestViewRebalance")?.addEventListener("click", () => {
+  goToTab("dashboard");
+  setTimeout(openIdealTargetsModal, 150);
+});
+document.getElementById("debtReinvestRenew")?.addEventListener("click", () => {
+  openModal(
+    "Renew FD",
+    `<p class="settings-note" style="margin-top:0">Automatic renewal isn't wired up yet — for now, add a new entry via "+ Add Investment" for the renewed term, then remove or update this one once the old FD actually matures.</p>`,
+    [{ label: "Got it", primary: true, onClick: closeModal }]
+  );
+});
+document.getElementById("debtReinvestDecideLater")?.addEventListener("click", () => {
+  debtUI.reinvestDismissed = true;
+  renderDebtReinvestmentPlanner();
+});
+
 setupIntelligentInsightsControls();
 setupFilterClearButtons();
 
