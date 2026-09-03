@@ -4351,10 +4351,12 @@ function showScreenerImportPreview(newRows, statusEl) {
       <div class="import-stat ${existingCount ? "warn" : ""}"><div class="n">${existingCount}</div><div class="l">Will Be Replaced</div></div>
     </div>
     <p>This <strong>replaces all ${existingCount} existing Screener ${existingCount === 1 ? "row" : "rows"}</strong> with the ${newRows.length} row${newRows.length === 1 ? "" : "s"} from this file — nothing is merged.</p>
-    <table>
-      <thead><tr><th class="left">Symbol</th><th class="left">EPS</th><th class="left">Book Value</th><th class="left">Industry PE</th></tr></thead>
-      <tbody>${previewRows}</tbody>
-    </table>
+    <div class="table-scroll-wrap">
+      <table>
+        <thead><tr><th class="left">Symbol</th><th class="left">EPS</th><th class="left">Book Value</th><th class="left">Industry PE</th></tr></thead>
+        <tbody>${previewRows}</tbody>
+      </table>
+    </div>
     ${newRows.length > 10 ? `<p class="settings-note">…and ${newRows.length - 10} more.</p>` : ""}
   `;
   openModal(
@@ -4601,10 +4603,12 @@ function showDebtImportPreview(newRows, sourceLabel, statusEl) {
       <div class="import-stat ${existingCount ? "warn" : ""}"><div class="n">${existingCount}</div><div class="l">Will Be Replaced</div></div>
     </div>
     <p>This <strong>replaces all ${existingCount} existing Debt ${existingCount === 1 ? "entry" : "entries"}</strong> with the ${newRows.length} entr${newRows.length === 1 ? "y" : "ies"} from ${escapeAttr(sourceLabel)} — nothing is merged. This can't be undone from within the app; export a backup first if you're not sure.</p>
-    <table>
-      <thead><tr><th class="left">Name</th><th class="left">Category</th><th class="left">Invested</th><th class="left">Maturity Date</th></tr></thead>
-      <tbody>${previewRows}</tbody>
-    </table>
+    <div class="table-scroll-wrap">
+      <table>
+        <thead><tr><th class="left">Name</th><th class="left">Category</th><th class="left">Invested</th><th class="left">Maturity Date</th></tr></thead>
+        <tbody>${previewRows}</tbody>
+      </table>
+    </div>
     ${newRows.length > 10 ? `<p class="settings-note">…and ${newRows.length - 10} more.</p>` : ""}
   `;
   openModal(
@@ -5065,7 +5069,7 @@ function showNewInvestmentsReminder(newInvestments) {
   openModal(
     "New Investments Added — Live Price Pending",
     `<p>These were imported successfully but don't have a Google Finance symbol configured yet in your Apps Script sheet, so their live price will show as "Pending" until you add them.</p>
-     <table><thead><tr><th class="left">Investment Name</th><th class="left">Asset Type</th></tr></thead><tbody>${rows}</tbody></table>
+     <div class="table-scroll-wrap"><table><thead><tr><th class="left">Investment Name</th><th class="left">Asset Type</th></tr></thead><tbody>${rows}</tbody></table></div>
      <p>Once you add the mapping in Apps Script, the existing automatic refresh will start picking up prices for these with no further changes needed here.</p>`,
     [{ label: "Got it", primary: true, onClick: closeModal }]
   );
