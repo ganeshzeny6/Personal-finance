@@ -2935,6 +2935,7 @@ function renderDashAllocation() {
     return `
       <tr>
         <td data-label="Asset Class"><span class="dash-alloc-dot" style="background:${ASSET_COLORS[c.key]}"></span>${escapeAttr(c.label)}</td>
+        <td data-label="Invested">${fmtINR(c.current)}</td>
         <td data-label="Current">${fmtNum(currentPct, 1)}%</td>
         <td data-label="Target">${fmtNum(idealPct, 1)}%</td>
         <td data-label="Variance" class="dash-alloc-var ${varCls}">${diffPct >= 0 ? "+" : ""}${fmtNum(diffPct, 1)}%</td>
