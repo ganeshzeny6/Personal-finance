@@ -17,6 +17,76 @@
 
 const STORAGE_KEY = "ledger_data_v1";
 
+// Declared early (rather than next to renderDashAllocDonut() further
+// down) because applyTheme() below reads it on initial load, before
+// the rest of the file has executed — a `let` declared later would
+// still be in its temporal dead zone at that point.
+let dashAllocDonutChart = null;
+
+// ============================================================
+// Theme (Light / Dark / Auto)
+// "auto" follows the OS/browser color-scheme preference and keeps
+// tracking it live; "light"/"dark" pin an explicit choice. The
+// choice is persisted so it survives a reload, and applied via a
+// data-theme attribute on <html> (see the light-palette CSS block
+// and the FOUC-prevention inline script in index.html's <head>,
+// which already sets this before first paint — this just keeps it
+// in sync afterwards and wires up the toggle buttons).
+// ============================================================
+const THEME_STORAGE_KEY = "themePreference";
+
+function getStoredThemePreference() {
+  try { return localStorage.getItem(THEME_STORAGE_KEY) || "auto"; }
+  catch (e) { return "auto"; }
+}
+
+function effectiveTheme(pref) {
+  if (pref === "light" || pref === "dark") return pref;
+  return (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark";
+}
+
+function applyTheme(pref) {
+  const effective = effectiveTheme(pref);
+  document.documentElement.setAttribute("data-theme", effective);
+  document.documentElement.style.colorScheme = effective;
+  document.querySelectorAll(".theme-toggle-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.themeChoice === pref);
+  });
+  // The allocation donut's ring border is painted to match the card
+  // surface color, which flips with the theme — repaint it in place
+  // rather than waiting for the next full dashboard render.
+  if (dashAllocDonutChart) {
+    const ringBorder = getComputedStyle(document.documentElement).getPropertyValue("--surface").trim();
+    if (ringBorder) {
+      dashAllocDonutChart.data.datasets[0].borderColor = ringBorder;
+      dashAllocDonutChart.update();
+    }
+  }
+}
+
+function setThemePreference(pref) {
+  try { localStorage.setItem(THEME_STORAGE_KEY, pref); } catch (e) {}
+  applyTheme(pref);
+}
+
+document.querySelectorAll(".theme-toggle-btn").forEach(btn => {
+  btn.addEventListener("click", () => setThemePreference(btn.dataset.themeChoice));
+});
+
+if (window.matchMedia) {
+  const lightMedia = window.matchMedia("(prefers-color-scheme: light)");
+  const onSystemThemeChange = () => {
+    if (getStoredThemePreference() === "auto") applyTheme("auto");
+  };
+  if (lightMedia.addEventListener) lightMedia.addEventListener("change", onSystemThemeChange);
+  else if (lightMedia.addListener) lightMedia.addListener(onSystemThemeChange); // older Safari
+}
+
+// Re-apply on load so the toggle buttons reflect the stored choice
+// (the inline <head> script already set the attribute pre-paint —
+// this call is what lights up the correct button as "active").
+applyTheme(getStoredThemePreference());
+
 // Apps Script Web App endpoint. doGet() on the Sheet's script
 // returns { stocks: [...], mf: [...], gold: [...] }, each row
 // keyed by that tab's actual header text (e.g. "Stock Name",
@@ -644,6 +714,107 @@ document.getElementById("dashAttnFilter")?.addEventListener("change", (e) => {
   renderDashAttention();
 });
 document.getElementById("btnViewAllOpportunities")?.addEventListener("click", () => goToTab("stockanalysis"));
+
+/* ============================================================
+   APP SHELL — sidebar drawer (mobile), bottom nav mirroring the
+   sidebar's tabs, header quick-actions (Rebalance/Opportunities/
+   search/notifications). Everything here is additive: it reuses
+   the existing tab-btn / goToTab / openIdealTargetsModal wiring
+   above rather than duplicating any panel-switching logic.
+   ============================================================ */
+
+function setSidebarOpen(open) {
+  document.getElementById("sidebar")?.classList.toggle("open", open);
+  document.getElementById("sidebarBackdrop")?.classList.toggle("open", open);
+}
+document.getElementById("hamburgerBtn")?.addEventListener("click", () => setSidebarOpen(true));
+document.getElementById("sidebarBackdrop")?.addEventListener("click", () => setSidebarOpen(false));
+
+// Keep the mobile bottom bar's active icon in sync with whichever
+// sidebar tab is active, and close the drawer once a destination is
+// picked — the actual panel switch still happens entirely through
+// the existing .tab-btn click handler above.
+function syncMobileNavActive(tabKey) {
+  document.querySelectorAll(".mobile-bottom-nav-item[data-tab]").forEach(b => {
+    b.classList.toggle("active", b.dataset.tab === tabKey);
+  });
+}
+document.querySelectorAll(".tab-btn[data-tab]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    syncMobileNavActive(btn.dataset.tab);
+    setSidebarOpen(false);
+  });
+});
+document.querySelectorAll(".mobile-bottom-nav-item[data-tab]").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelector(`.tab-btn[data-tab="${btn.dataset.tab}"]`)?.click();
+  });
+});
+document.getElementById("mobileMoreBtn")?.addEventListener("click", () => setSidebarOpen(true));
+
+// Rebalance / Opportunities sidebar entries — real, existing features
+// (the ideal-% editor and Intelligent Insights) surfaced as top-level
+// nav items instead of being buried in Dashboard-only buttons.
+document.getElementById("navRebalance")?.addEventListener("click", () => {
+  setSidebarOpen(false);
+  openIdealTargetsModal();
+});
+document.getElementById("navOpportunities")?.addEventListener("click", () => {
+  setSidebarOpen(false);
+  goToTab("stockanalysis");
+  setTimeout(() => document.getElementById("intelligentInsightsCard")?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
+});
+
+// Notification bell — jumps to Dashboard's "What needs your
+// attention" card. The badge count itself is kept current by
+// renderDashAttention() (see updateNotifBadge() below), so it always
+// reflects the same computeAttentionItems() list that card shows.
+document.getElementById("notifBtn")?.addEventListener("click", () => {
+  goToTab("dashboard");
+  setTimeout(() => document.getElementById("dashAttentionList")?.closest(".card")?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
+});
+
+function updateNotifBadge(count) {
+  const badge = document.getElementById("notifBadge");
+  if (!badge) return;
+  if (count > 0) {
+    badge.textContent = count > 9 ? "9+" : String(count);
+    badge.style.display = "";
+  } else {
+    badge.style.display = "none";
+  }
+}
+
+// Global header search — quick-jump to a holding by name/symbol
+// across Equity, Mutual Funds, Gold and Debt. Reuses each tab's own
+// existing filter input/logic (setupSortAndFilter already wires
+// input->render for each) rather than reimplementing search: this
+// just opens the right tab, fills that tab's filter box, and fires
+// the same "input" event the user typing there would.
+function runGlobalSearch(query) {
+  const q = query.trim();
+  if (!q) return;
+  const qLower = q.toLowerCase();
+  const matchers = [
+    { key: "equity", rows: state.equity, fields: ["name", "symbol"], filterId: "equityFilter" },
+    { key: "mf", rows: state.mf, fields: ["name"], filterId: "mfFilter" },
+    { key: "gold", rows: state.gold, fields: ["name", "symbol"], filterId: "goldFilter" },
+    { key: "debt", rows: state.debt, fields: ["name", "category", "subcategory"], filterId: "debtFilter" }
+  ];
+  const hit = matchers.find(m => (m.rows || []).some(r => m.fields.some(f => (r[f] || "").toLowerCase().includes(qLower))));
+  if (!hit) return;
+  goToTab(hit.key);
+  setTimeout(() => {
+    const input = document.getElementById(hit.filterId);
+    if (!input) return;
+    input.value = q;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.focus();
+  }, 150);
+}
+document.getElementById("globalSearch")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") runGlobalSearch(e.target.value);
+});
 
 /* ============================================================
    PORTFOLIO LOCK
@@ -1498,11 +1669,17 @@ function renderDebtKPIs() {
     return s + (d.profit / d.years);
   }, 0);
 
-  document.getElementById("debtKpiValue").textContent = fmtINR(totals.invested);
+  const debtKpiValueEl = document.getElementById("debtKpiValue");
+  debtKpiValueEl.textContent = fmtINRCompact(totals.invested, 2);
+  debtKpiValueEl.title = fmtINR(totals.invested);
   document.getElementById("debtKpiValuePct").textContent = `${fmtNum(currentPct, 1)}% of total portfolio`;
-  document.getElementById("debtKpiInvested").textContent = fmtINR(totals.invested);
+  const debtKpiInvestedEl = document.getElementById("debtKpiInvested");
+  debtKpiInvestedEl.textContent = fmtINRCompact(totals.invested, 2);
+  debtKpiInvestedEl.title = fmtINR(totals.invested);
   document.getElementById("debtKpiRate").textContent = fmtNum(weightedRoi, 2) + "%";
-  document.getElementById("debtKpiExpectedInterest").textContent = fmtINR(expectedInterestPerYear);
+  const debtKpiExpectedInterestEl = document.getElementById("debtKpiExpectedInterest");
+  debtKpiExpectedInterestEl.textContent = fmtINRCompact(expectedInterestPerYear, 2);
+  debtKpiExpectedInterestEl.title = fmtINR(expectedInterestPerYear);
   document.getElementById("debtKpiAllocPct").textContent = fmtNum(currentPct, 1) + "%";
 
   const targetRow = document.getElementById("debtKpiTargetRow");
@@ -1600,10 +1777,12 @@ function renderDebtAttention() {
     const row = document.createElement("div");
     row.className = "dash-attn-item";
     row.innerHTML = `
-      <div class="dash-attn-dot ${item.severity}"></div>
-      <div class="dash-attn-body">
-        <div class="dash-attn-title">${escapeAttr(item.title)}</div>
-        <div class="dash-attn-detail">${escapeAttr(item.detail)}</div>
+      <div class="dash-attn-top">
+        <div class="dash-attn-dot ${item.severity}"></div>
+        <div class="dash-attn-body">
+          <div class="dash-attn-title">${escapeAttr(item.title)}</div>
+          <div class="dash-attn-detail">${escapeAttr(item.detail)}</div>
+        </div>
       </div>
       <button class="dash-attn-action">${escapeAttr(item.actionLabel)}</button>
     `;
@@ -2765,6 +2944,7 @@ function renderDashAttention() {
   const el = document.getElementById("dashAttentionList");
   if (!el) return;
   const allItems = computeAttentionItems();
+  updateNotifBadge(allItems.length);
   const items = dashAttnFilter === "all" ? allItems : allItems.filter(i => i.kind === dashAttnFilter);
 
   if (allItems.length === 0) {
@@ -2780,10 +2960,12 @@ function renderDashAttention() {
     const row = document.createElement("div");
     row.className = "dash-attn-item";
     row.innerHTML = `
-      <div class="dash-attn-dot ${item.severity}"></div>
-      <div class="dash-attn-body">
-        <div class="dash-attn-title">${escapeAttr(item.title)}</div>
-        <div class="dash-attn-detail">${escapeAttr(item.detail)}</div>
+      <div class="dash-attn-top">
+        <div class="dash-attn-dot ${item.severity}"></div>
+        <div class="dash-attn-body">
+          <div class="dash-attn-title">${escapeAttr(item.title)}</div>
+          <div class="dash-attn-detail">${escapeAttr(item.detail)}</div>
+        </div>
       </div>
       <button class="dash-attn-action">${escapeAttr(item.actionLabel)}</button>
     `;
@@ -2903,26 +3085,29 @@ function renderDashHealth() {
 // rebalance shortcut. Reads the exact same classes/netWorth/
 // state.ideal as everything else on the Dashboard; only the
 // presentation is new.
-let dashAllocDonutChart = null;
-
 function renderDashAllocDonut(classes, netWorth) {
   const ctx = document.getElementById("dashAllocDonut");
   if (!ctx || typeof Chart === "undefined") return; // fails quietly if the Chart.js CDN hiccups — table/alert still work
   const labels = classes.map(c => c.label);
   const data = classes.map(c => c.current);
   const colors = classes.map(c => ASSET_COLORS[c.key]);
+  // Ring border must match the card surface (not a hardcoded dark navy
+  // left over from when dark was the only theme), so re-read it live —
+  // this keeps the donut correct across light/dark and the theme toggle.
+  const ringBorder = getComputedStyle(document.documentElement).getPropertyValue("--surface").trim() || "#ffffff";
 
   try {
     if (dashAllocDonutChart) {
       dashAllocDonutChart.data.labels = labels;
       dashAllocDonutChart.data.datasets[0].data = data;
       dashAllocDonutChart.data.datasets[0].backgroundColor = colors;
+      dashAllocDonutChart.data.datasets[0].borderColor = ringBorder;
       dashAllocDonutChart.update();
       return;
     }
     dashAllocDonutChart = new Chart(ctx, {
       type: "doughnut",
-      data: { labels, datasets: [{ data, backgroundColor: colors, borderColor: "#0c1220", borderWidth: 2 }] },
+      data: { labels, datasets: [{ data, backgroundColor: colors, borderColor: ringBorder, borderWidth: 2 }] },
       options: {
         responsive: true,
         maintainAspectRatio: false,
@@ -3148,14 +3333,44 @@ function renderDashBreakdown() {
   totalEl.textContent = fmtINR(netWorth);
 }
 
+// Time-of-day greeting for the Dashboard header — "Good morning/
+// afternoon/evening, Ganesh" based on the viewer's local clock, plus
+// a fixed one-line sub. Purely cosmetic; replaces the static
+// "Dashboard" / "Your portfolio at a glance" text these two elements
+// used to hold.
+function renderDashGreeting() {
+  const titleEl = document.getElementById("dashGreetingTitle");
+  const subEl = document.getElementById("dashGreetingSub");
+  if (!titleEl || !subEl) return;
+  const hour = new Date().getHours();
+  const period = hour < 12 ? "morning" : hour < 17 ? "afternoon" : "evening";
+  titleEl.textContent = `Good ${period}, Ganesh \u{1F44B}`;
+  subEl.textContent = "Here's what's happening with your investments today.";
+}
+
+// Market open/closed — shown both on the Dashboard header (dashMarketLabel/
+// dashMarketDot) and, so it's visible from every tab, as a small pill in
+// the app header (headerMarketLabel/headerMarketDot). Same isIndianMarketOpenNow()
+// call feeds both; only the two DOM targets differ.
+function renderMarketStatusInto(labelId, dotId) {
+  const labelEl = document.getElementById(labelId);
+  const dotEl = document.getElementById(dotId);
+  const open = isIndianMarketOpenNow();
+  if (labelEl) labelEl.textContent = open ? "Market open" : "Market closed";
+  if (dotEl) dotEl.className = dotEl.className.replace(/\bdash-market-dot\b.*/, "").trim();
+  if (dotEl) dotEl.classList.add("dash-market-dot", open ? "open" : "closed");
+}
+
 function renderDashHeaderBits() {
+  renderDashGreeting();
   const lastEl = document.getElementById("dashLastUpdated");
-  const labelEl = document.getElementById("dashMarketLabel");
-  const dotEl = document.getElementById("dashMarketDot");
   if (lastEl) lastEl.textContent = "Last updated: " + (state.lastSaved ? new Date(state.lastSaved).toLocaleTimeString() : "—");
   const open = isIndianMarketOpenNow();
+  const labelEl = document.getElementById("dashMarketLabel");
+  const dotEl = document.getElementById("dashMarketDot");
   if (labelEl) labelEl.textContent = open ? "Open" : "Closed";
   if (dotEl) dotEl.className = "dash-market-dot " + (open ? "open" : "closed");
+  renderMarketStatusInto("headerMarketLabel", "headerMarketDot");
 }
 
 // Switches to another tab exactly the way clicking its button would —
@@ -3208,16 +3423,26 @@ function renderDashboard() {
   const overallPLBase = eq.invested + mf.invested + gold.invested;
   const overallPLPct = overallPLBase > 0 ? (overallPL / overallPLBase) * 100 : 0;
 
-  document.getElementById("statNetWorth").textContent = fmtINR(netWorth);
-  document.getElementById("statTotalInvested").textContent = fmtINR(totalInvested);
+  // Hero KPI values use the compact Indian format (₹1.21 Cr / ₹18.24 L)
+  // so they read at a glance — the exact digit-grouped figure is still
+  // one hover away via the title tooltip, and every underlying number
+  // (netWorth, totalInvested, overallPL, today.pl) is unchanged.
+  const statNetWorthEl = document.getElementById("statNetWorth");
+  statNetWorthEl.textContent = fmtINRCompact(netWorth, 2);
+  statNetWorthEl.title = fmtINR(netWorth);
+  const statTotalInvestedEl = document.getElementById("statTotalInvested");
+  statTotalInvestedEl.textContent = fmtINRCompact(totalInvested, 2);
+  statTotalInvestedEl.title = fmtINR(totalInvested);
   const plEl = document.getElementById("statOverallPL");
-  plEl.textContent = fmtINR(overallPL);
+  plEl.textContent = fmtINRCompactSigned(overallPL, 2);
+  plEl.title = fmtINR(overallPL);
   plEl.className = "dash-kpi-value " + plClass(overallPL);
   document.getElementById("statOverallPLPct").textContent = fmtPct(overallPLPct) + " (Equity + MF + Gold)";
 
   const today = computeTodaysEquityPL();
   const todayPLEl = document.getElementById("statTodayPL");
-  todayPLEl.textContent = fmtINR(today.pl);
+  todayPLEl.textContent = fmtINRCompactSigned(today.pl, 2);
+  todayPLEl.title = fmtINR(today.pl);
   todayPLEl.className = "dash-kpi-value " + plClass(today.pl);
   document.getElementById("statTodayPLPct").textContent = fmtPct(today.pct) + (today.missing > 0 ? ` · ${today.missing} stock(s) missing live data` : "");
 

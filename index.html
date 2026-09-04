@@ -4,8 +4,23 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Ganesh's Net Worth &amp; Allocation Tracker</title>
+<script>
+  // Applies the saved theme choice (or system preference, for "auto")
+  // before first paint, so the page never flashes the wrong theme.
+  (function(){
+    try{
+      var pref = localStorage.getItem("themePreference") || "light";
+      var effective = pref === "auto"
+        ? ((window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark")
+        : pref;
+      document.documentElement.setAttribute("data-theme", effective);
+      document.documentElement.style.colorScheme = effective;
+    }catch(e){}
+  })();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -13,27 +28,73 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <style>
+  /* ============================================================
+     DESIGN TOKENS
+     Light is the primary, default palette — a soft off-white
+     wealth-management look (white cards, subtle borders, very soft
+     shadows). Dark is an explicit opt-in via the theme toggle
+     ([data-theme="dark"], set by the FOUC-prevention script in
+     <head> and kept in sync by app.js) rather than the default, but
+     gets the same treatment (elevated surfaces + soft shadows) so
+     it never feels like an afterthought.
+     ============================================================ */
   :root{
-    --bg:#0c1220;
-    --surface:#121b2c;
-    --surface-2:#182338;
-    --border:#243250;
-    --text:#e8edf6;
-    --text-muted:#8b98b5;
-    --text-faint:#5c6a89;
-    --gold:#c9a44c;
-    --gold-soft:#c9a44c22;
-    --positive:#4bbf9c;
-    --positive-soft:#4bbf9c1a;
-    --negative:#e0667a;
-    --negative-soft:#e0667a1a;
-    --warning:#d9a441;
-    --warning-soft:#d9a44122;
-    --blue:#6f93c9;
-    --radius:10px;
-    --font-display:'Space Grotesk',sans-serif;
-    --font-body:'Inter',sans-serif;
-    --font-mono:'JetBrains Mono',monospace;
+    --bg:#f6f5f2;
+    --surface:#ffffff;
+    --surface-2:#f4f2ed;
+    --border:#e6e3da;
+    --text:#1c1b18;
+    --text-muted:#6b6862;
+    --text-faint:#9b978c;
+    --gold:#a3742f;
+    --gold-soft:#a3742f1f;
+    --positive:#1a8a5f;
+    --positive-soft:#1a8a5f16;
+    --negative:#c23c4e;
+    --negative-soft:#c23c4e16;
+    --warning:#b07a1c;
+    --warning-soft:#b07a1c1c;
+    --blue:#3f6ea5;
+    --blue-soft:#3f6ea516;
+    --radius:14px;
+    --radius-sm:10px;
+    --radius-lg:18px;
+    --shadow-xs:0 1px 2px rgba(30,26,14,.04);
+    --shadow-sm:0 1px 2px rgba(30,26,14,.04), 0 2px 8px rgba(30,26,14,.05);
+    --shadow-md:0 4px 16px rgba(30,26,14,.07), 0 1px 3px rgba(30,26,14,.05);
+    --shadow-lg:0 12px 32px rgba(30,26,14,.10), 0 2px 6px rgba(30,26,14,.05);
+    --font-display:'Inter',-apple-system,sans-serif;
+    --font-body:'Inter',-apple-system,sans-serif;
+    --font-mono:'Inter',-apple-system,sans-serif;
+    --sidebar-w:232px;
+    --sidebar-w-collapsed:76px;
+    --header-h:64px;
+  }
+
+  /* Dark theme — opt-in via the toggle, same structure/shadows,
+     deeper neutral surfaces instead of white. */
+  :root[data-theme="dark"]{
+    --bg:#0e1116;
+    --surface:#171a21;
+    --surface-2:#1e222b;
+    --border:#2b303b;
+    --text:#eceef2;
+    --text-muted:#9aa0ac;
+    --text-faint:#666d7a;
+    --gold:#d4a24e;
+    --gold-soft:#d4a24e26;
+    --positive:#4cbf8f;
+    --positive-soft:#4cbf8f20;
+    --negative:#e2707f;
+    --negative-soft:#e2707f20;
+    --warning:#e0ac4c;
+    --warning-soft:#e0ac4c24;
+    --blue:#7099cf;
+    --blue-soft:#7099cf20;
+    --shadow-xs:0 1px 2px rgba(0,0,0,.18);
+    --shadow-sm:0 1px 2px rgba(0,0,0,.2), 0 2px 8px rgba(0,0,0,.22);
+    --shadow-md:0 4px 16px rgba(0,0,0,.28), 0 1px 3px rgba(0,0,0,.22);
+    --shadow-lg:0 12px 32px rgba(0,0,0,.36), 0 2px 6px rgba(0,0,0,.24);
   }
 
   *{box-sizing:border-box;}
@@ -45,34 +106,158 @@
     font-size:14px;
     line-height:1.5;
     min-height:100vh;
+    font-variant-numeric:tabular-nums;
+    -webkit-font-smoothing:antialiased;
   }
 
   ::selection{background:var(--gold-soft);}
   a{color:var(--blue);}
 
-  .topbar{
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    padding:18px 28px;
-    border-bottom:1px solid var(--border);
-    background:linear-gradient(180deg, var(--surface) 0%, var(--bg) 100%);
-    position:sticky;
-    top:0;
-    z-index:50;
+  /* ============================================================
+     APP SHELL — left sidebar (desktop) + top header + main column.
+     Desktop: sidebar is a sticky flex column beside the content.
+     <=900px: sidebar becomes an off-canvas drawer (hamburger-
+     triggered) and a bottom tab bar takes over primary navigation —
+     the same pattern most premium mobile finance apps use.
+     ============================================================ */
+  .app-shell{display:flex;align-items:flex-start;min-height:100vh;}
+
+  .sidebar{
+    width:var(--sidebar-w);flex:none;
+    background:var(--surface);border-right:1px solid var(--border);
+    display:flex;flex-direction:column;
+    position:sticky;top:0;height:100vh;overflow-y:auto;
+    z-index:70;
+  }
+  .sidebar-brand{display:flex;align-items:center;gap:10px;padding:22px 18px 16px;}
+  .sidebar-logo{
+    width:34px;height:34px;border-radius:10px;flex:none;
+    background:linear-gradient(135deg, var(--gold), #7d5a26);color:#fff;
+    display:flex;align-items:center;justify-content:center;
+    font-family:var(--font-display);font-weight:700;font-size:15px;
+  }
+  .sidebar-brand-text{min-width:0;}
+  .sidebar-brand-name{font-family:var(--font-display);font-weight:700;font-size:14.5px;color:var(--text);letter-spacing:-0.01em;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .sidebar-brand-sub{font-size:11px;color:var(--text-faint);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+  .sidebar-nav{display:flex;flex-direction:column;gap:2px;padding:8px 12px;flex:1;}
+  .sidebar-section-label{font-size:10.5px;font-weight:600;color:var(--text-faint);text-transform:uppercase;letter-spacing:.06em;padding:16px 10px 6px;}
+  .sidebar-divider{height:1px;background:var(--border);margin:10px 2px;flex:none;}
+  .sidebar-footer{padding:12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px;}
+  .sidebar-footer .status-tag{padding:0 2px;}
+
+  .tab-btn, .sidebar-nav-item{
+    display:flex;align-items:center;gap:11px;
+    font-family:var(--font-body);font-size:13.5px;font-weight:500;
+    color:var(--text-muted);background:none;border:none;border-radius:9px;
+    padding:10px 12px;cursor:pointer;white-space:nowrap;text-align:left;width:100%;
+    transition:background .15s ease, color .15s ease;
+  }
+  .tab-btn:hover, .sidebar-nav-item:hover{background:var(--surface-2);color:var(--text);}
+  .tab-btn.active{background:var(--gold-soft);color:var(--gold);font-weight:600;}
+  .sidebar-nav-item.active{background:var(--gold-soft);color:var(--gold);font-weight:600;}
+  .nav-icon{width:18px;height:18px;flex:none;display:flex;align-items:center;justify-content:center;font-size:15px;line-height:1;}
+  .nav-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+
+  .sidebar-backdrop{display:none;position:fixed;inset:0;background:rgba(20,17,10,.45);z-index:65;}
+
+  /* ---------- Top header ---------- */
+  .main-col{flex:1;min-width:0;display:flex;flex-direction:column;}
+  .app-header{
+    position:sticky;top:0;z-index:50;
+    display:flex;align-items:center;gap:12px;
+    min-height:var(--header-h);padding:12px 24px;
+    background:var(--surface);border-bottom:1px solid var(--border);
     flex-wrap:wrap;
-    gap:12px;
   }
-  .brand{display:flex;align-items:baseline;gap:10px;}
-  .brand .mark{
-    font-family:var(--font-display);
-    font-weight:700;
-    font-size:20px;
-    letter-spacing:0.01em;
-    color:var(--text);
+  .hamburger-btn{
+    display:none;background:none;border:1px solid var(--border);border-radius:9px;
+    width:36px;height:36px;align-items:center;justify-content:center;cursor:pointer;
+    color:var(--text);font-size:16px;flex:none;
   }
-  .brand .mark span{color:var(--gold);font-weight:500;}
-  .topbar-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .header-search{flex:1 1 220px;min-width:120px;max-width:360px;position:relative;}
+  .header-search input{
+    width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;
+    padding:9px 12px 9px 34px;font-family:var(--font-body);font-size:13px;color:var(--text);
+  }
+  .header-search input::placeholder{color:var(--text-faint);}
+  .header-search input:focus{border-color:var(--gold);outline:none;background:var(--surface);}
+  .header-search::before{
+    content:"";position:absolute;left:11px;top:50%;width:14px;height:14px;transform:translateY(-50%);
+    background:var(--text-faint);pointer-events:none;
+    -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E") center/contain no-repeat;
+    mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E") center/contain no-repeat;
+  }
+  .header-spacer{flex:1 1 auto;}
+  .header-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap;justify-content:flex-end;}
+  .header-market-pill{
+    display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);
+    background:var(--surface-2);border:1px solid var(--border);border-radius:20px;
+    padding:7px 12px;white-space:nowrap;
+  }
+  .header-icon-btn{
+    width:36px;height:36px;border-radius:9px;background:var(--surface-2);border:1px solid var(--border);
+    display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-muted);
+    font-size:14px;position:relative;flex:none;padding:0;
+  }
+  .header-icon-btn:hover{border-color:var(--gold);color:var(--text);}
+  /* Same visual family as .header-icon-btn but for the two buttons
+     whose label text changes at runtime (Lock/Unlock, Cloud Sync) —
+     auto width instead of a fixed 36px square so the text is never
+     clipped or pushed into the next control. */
+  .header-pill-btn{
+    height:36px;border-radius:9px;background:var(--surface-2);border:1px solid var(--border);
+    display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--text-muted);
+    font-family:var(--font-body);font-size:12px;font-weight:500;padding:0 12px;flex:none;white-space:nowrap;
+  }
+  .header-pill-btn:hover{border-color:var(--gold);color:var(--text);}
+  .header-pill-btn.locked{background:var(--negative-soft);border-color:var(--negative);color:var(--negative);}
+  .header-pill-btn.synced{background:var(--positive-soft);border-color:var(--positive);color:var(--positive);}
+  .notif-badge{
+    position:absolute;top:-4px;right:-4px;min-width:16px;height:16px;padding:0 3px;border-radius:8px;
+    background:var(--negative);color:#fff;font-size:9.5px;font-weight:700;line-height:16px;text-align:center;
+  }
+  .header-profile{
+    width:36px;height:36px;border-radius:50%;flex:none;cursor:default;
+    background:linear-gradient(135deg, var(--gold), #7d5a26);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:600;font-size:13px;
+  }
+
+  @media (max-width:900px){
+    .sidebar{
+      position:fixed;left:0;top:0;bottom:0;height:100vh;
+      transform:translateX(-100%);transition:transform .22s ease;box-shadow:var(--shadow-lg);
+    }
+    .sidebar.open{transform:translateX(0);}
+    .sidebar-backdrop.open{display:block;}
+    .hamburger-btn{display:flex;}
+    .header-market-pill{display:none;}
+  }
+  @media (max-width:560px){
+    .app-header{padding:10px 14px;gap:8px;}
+    .header-search{flex:1 1 auto;max-width:none;}
+  }
+
+  /* ---------- Mobile bottom navigation ---------- */
+  .mobile-bottom-nav{
+    display:none;position:fixed;left:0;right:0;bottom:0;z-index:55;
+    background:var(--surface);border-top:1px solid var(--border);
+    padding:6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+    align-items:center;justify-content:space-around;
+    box-shadow:0 -4px 16px rgba(30,26,14,.06);
+  }
+  .mobile-bottom-nav-item{
+    display:flex;flex-direction:column;align-items:center;gap:2px;flex:1;min-width:0;
+    background:none;border:none;color:var(--text-faint);font-family:var(--font-body);
+    font-size:10px;font-weight:500;padding:6px 4px;border-radius:9px;cursor:pointer;
+  }
+  .mobile-bottom-nav-item .nav-icon{font-size:19px;}
+  .mobile-bottom-nav-item.active{color:var(--gold);}
+  @media (max-width:900px){
+    .mobile-bottom-nav{display:flex;}
+    main{padding-bottom:88px !important;}
+    .fab-add{bottom:88px;}
+  }
 
   .btn{
     font-family:var(--font-body);
@@ -100,52 +285,23 @@
 
   input[type=file]{display:none;}
 
-  .tabs{
-    display:flex;
-    gap:2px;
-    padding:0 28px;
-    background:var(--surface);
-    border-bottom:1px solid var(--border);
-    overflow-x:auto;
-    position:relative;
+  /* ---------- Theme toggle (Light / Dark / Auto) ---------- */
+  .theme-toggle{
+    display:inline-flex;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:9px;padding:3px;gap:2px;flex:none;
   }
-  /* Pure-CSS "more tabs to the right" hint for narrow screens — a
-     fixed fade strip pinned to the tab bar's own edge, so it never
-     needs JS to know whether the bar is actually scrolled/scrollable.
-     Harmless on wide screens where the tabs already all fit (fade
-     just sits over empty background). */
-  @media (max-width:700px){
-    .tabs::after{
-      content:"";
-      position:sticky;
-      right:0;
-      top:0;
-      height:100%;
-      width:24px;
-      margin-left:-24px;
-      flex:0 0 0;
-      background:linear-gradient(90deg, transparent, var(--surface) 85%);
-      pointer-events:none;
-    }
+  .theme-toggle-btn{
+    background:transparent;border:none;color:var(--text-muted);font-size:13px;
+    padding:6px 9px;border-radius:6px;cursor:pointer;line-height:1;
+    font-family:var(--font-body);transition:background .15s ease, color .15s ease;
   }
-  .tab-btn{
-    font-family:var(--font-display);
-    font-size:13px;
-    font-weight:600;
-    letter-spacing:0.01em;
-    color:var(--text-muted);
-    background:none;
-    border:none;
-    border-bottom:2px solid transparent;
-    padding:13px 16px;
-    cursor:pointer;
-    white-space:nowrap;
-    transition:color .15s ease;
-  }
-  .tab-btn:hover{color:var(--text);}
-  .tab-btn.active{color:var(--gold);border-bottom-color:var(--gold);}
+  .theme-toggle-btn:hover{color:var(--text);}
+  .theme-toggle-btn.active{background:var(--gold);color:#1b1408;}
 
-  main{padding:26px 28px 60px;max-width:1400px;margin:0 auto;}
+  main{padding:26px 32px 60px;max-width:1320px;margin:0 auto;width:100%;}
+  @media (max-width:900px){
+    main{padding:20px 18px 40px;}
+  }
   .panel{display:none;}
   .panel.active{display:block;animation:fade .25s ease;}
   .portfolio-subpanel{display:none;}
@@ -166,11 +322,11 @@
     gap:12px;
     margin-bottom:22px;
   }
-  .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;}
-  .stat-card .label{font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-faint);margin-bottom:8px;}
-  .stat-card .value{font-family:var(--font-mono);font-size:22px;font-weight:600;color:var(--text);}
+  .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow-sm);}
+  .stat-card .label{font-size:12.5px;font-weight:500;color:var(--text-muted);margin-bottom:8px;}
+  .stat-card .value{font-family:var(--font-display);font-size:26px;font-weight:600;color:var(--text);letter-spacing:-0.01em;}
   .stat-card.hero{background:linear-gradient(135deg, var(--surface-2), var(--surface));border-color:var(--gold-soft);}
-  .stat-card.hero .value{color:var(--gold);font-size:26px;}
+  .stat-card.hero .value{color:var(--gold);font-size:32px;}
   .stat-card .subvalue{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);margin-top:4px;}
   .cash-edit{display:flex;align-items:center;gap:6px;}
   .cash-edit input{
@@ -204,14 +360,14 @@
 
   /* ---------- Dashboard header ---------- */
   .dash-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:18px;}
-  .dash-header-title{font-family:var(--font-display);font-size:20px;font-weight:600;color:var(--text);margin:0;}
+  .dash-header-title{font-family:var(--font-display);font-size:28px;font-weight:600;color:var(--text);margin:0;letter-spacing:-0.015em;}
   .dash-header-sub{font-size:12.5px;color:var(--text-faint);margin:2px 0 0;}
   .dash-header-right{text-align:right;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);white-space:nowrap;}
   .dash-market-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-left:5px;}
 
   /* ---------- Portfolio tab: header + category selector ---------- */
   .portfolio-header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:22px;}
-  .portfolio-header-title{font-family:var(--font-display);font-size:20px;font-weight:600;color:var(--text);margin:0;}
+  .portfolio-header-title{font-family:var(--font-display);font-size:26px;font-weight:600;color:var(--text);margin:0;letter-spacing:-0.01em;}
   .portfolio-header-sub{font-size:12.5px;color:var(--text-faint);margin:4px 0 0;}
   .portfolio-selector{
     display:inline-flex;background:var(--surface-2);border:1px solid var(--border);
@@ -237,11 +393,12 @@
 
   /* ---------- KPI cards ---------- */
   .dash-kpi-grid{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr;gap:12px;margin-bottom:16px;}
-  .dash-kpi-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;}
+  .dash-kpi-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow-sm);transition:box-shadow .15s ease, transform .15s ease;}
+  .dash-kpi-card:hover{box-shadow:var(--shadow-md);}
   .dash-kpi-card.hero{background:linear-gradient(135deg, var(--surface-2), var(--surface));border-color:var(--gold-soft);}
-  .dash-kpi-label{font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-faint);margin-bottom:8px;}
-  .dash-kpi-value{font-family:var(--font-mono);font-size:22px;font-weight:600;color:var(--text);}
-  .dash-kpi-card.hero .dash-kpi-value{color:var(--gold);font-size:26px;}
+  .dash-kpi-label{font-size:12.5px;font-weight:500;color:var(--text-muted);margin-bottom:10px;}
+  .dash-kpi-value{font-family:var(--font-display);font-size:26px;font-weight:600;color:var(--text);letter-spacing:-0.01em;}
+  .dash-kpi-card.hero .dash-kpi-value{color:var(--gold);font-size:32px;}
   .dash-kpi-sub{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);margin-top:4px;}
   .dash-cash-row{display:flex;align-items:center;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);}
   .dash-cash-row label{font-size:11px;color:var(--text-faint);white-space:nowrap;}
@@ -254,21 +411,29 @@
   .dash-cash-row input:focus{border-color:var(--gold);outline:none;background:var(--surface-2);}
   .dash-cash-row input:disabled{opacity:1;-webkit-text-fill-color:var(--text);color:var(--text);background:transparent;border-color:transparent;}
 
-  /* ---------- What needs your attention ---------- */
-  .dash-attn-item{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border);}
-  .dash-attn-item:last-child{border-bottom:none;}
+  /* ---------- What needs your attention: compact card grid ---------- */
+  #dashAttentionList, #debtAttentionList{
+    display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));gap:10px;
+  }
+  .dash-attn-item{
+    display:flex;flex-direction:column;gap:10px;
+    padding:14px 15px;border:1px solid var(--border);border-radius:12px;
+    background:var(--surface-2);
+  }
+  .dash-attn-top{display:flex;gap:9px;align-items:flex-start;}
   .dash-attn-dot{width:8px;height:8px;border-radius:50%;margin-top:5px;flex:none;}
   .dash-attn-dot.warn{background:var(--warning);}
   .dash-attn-dot.good{background:var(--positive);}
   .dash-attn-dot.bad{background:var(--negative);}
   .dash-attn-body{flex:1;min-width:0;}
-  .dash-attn-title{font-size:13px;color:var(--text);}
-  .dash-attn-detail{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);margin-top:2px;}
+  .dash-attn-title{font-size:13px;font-weight:600;color:var(--text);line-height:1.4;}
+  .dash-attn-detail{font-size:11.5px;color:var(--text-muted);margin-top:3px;}
   .dash-attn-action{
-    flex:none;background:transparent;border:1px solid var(--border);color:var(--text-muted);
-    font-size:11px;border-radius:7px;padding:5px 10px;cursor:pointer;white-space:nowrap;font-family:var(--font-body);
+    align-self:flex-start;flex:none;background:var(--surface);border:1px solid var(--border);color:var(--text-muted);
+    font-size:11.5px;font-weight:500;border-radius:7px;padding:6px 12px;cursor:pointer;white-space:nowrap;font-family:var(--font-body);
+    transition:border-color .15s ease, color .15s ease;
   }
-  .dash-attn-action:hover{border-color:var(--gold);color:var(--text);}
+  .dash-attn-action:hover{border-color:var(--gold);color:var(--gold);}
   .dash-attn-empty{font-size:12.5px;color:var(--text-muted);padding:6px 0;}
 
   /* "What needs your attention" header row + filter dropdown */
@@ -327,7 +492,7 @@
 
   /* ---------- Asset Allocation card (Dashboard): donut + table + alert ---------- */
   .dash-alloc-card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;}
-  .dash-alloc-card-header h3{margin:0;}
+  .dash-alloc-card-header h3{margin:0;flex:1;min-width:0;}
   .dash-alloc-info{
     display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;
     border-radius:50%;border:1px solid var(--text-faint);color:var(--text-faint);
@@ -361,6 +526,31 @@
   }
   .dash-alloc-alert span{font-size:12.5px;color:var(--negative);}
   .dash-alloc-alert .btn{flex:none;}
+
+  /* ---------- Portfolio performance (coming soon) ---------- */
+  /* The header can hold a title+hint AND a 6-button period group —
+     let it wrap onto two rows instead of overlapping when the card
+     is too narrow for both (small tablets, mobile). */
+  .dash-perf-chart-card .dash-alloc-card-header{flex-wrap:wrap;row-gap:10px;}
+  .dash-perf-chart-card .dash-alloc-card-header h3{flex-basis:200px;}
+  .dash-perf-period-group{display:flex;gap:2px;background:var(--surface-2);border-radius:8px;padding:2px;flex:none;overflow-x:auto;max-width:100%;}
+  .dash-perf-period-group button{
+    border:none;background:transparent;color:var(--text-faint);font-size:12px;font-weight:500;
+    padding:5px 11px;border-radius:6px;cursor:not-allowed;
+  }
+  .dash-perf-period-group button.active{background:var(--surface);color:var(--text-muted);box-shadow:0 1px 2px rgba(0,0,0,.06);}
+  .dash-perf-chart-placeholder{
+    display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+    gap:8px;padding:44px 24px;border:1.5px dashed var(--border);border-radius:12px;color:var(--text-faint);
+  }
+  .dash-perf-chart-placeholder svg{color:var(--text-faint);opacity:.7;}
+  .dash-perf-chart-placeholder-title{font-size:14px;font-weight:600;color:var(--text-muted);}
+  .dash-perf-chart-placeholder p{margin:0;max-width:460px;font-size:12.5px;line-height:1.55;color:var(--text-faint);}
+  @media (max-width:700px){
+    .dash-perf-chart-card .dash-alloc-card-header h3{flex-basis:100%;}
+    .dash-perf-period-group{width:100%;justify-content:space-between;}
+    .dash-perf-chart-placeholder{padding:32px 16px;}
+  }
 
   /* This card responds to its OWN width, not just the viewport —
      it sits in a 1.6fr grid column next to Portfolio Health on
@@ -447,17 +637,17 @@
   /* ============ DEBT DASHBOARD (redesign) ============ */
 
   .debt-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:16px;}
-  .debt-header-title{font-family:var(--font-display);font-size:20px;font-weight:600;color:var(--text);margin:0;}
+  .debt-header-title{font-family:var(--font-display);font-size:22px;font-weight:600;color:var(--text);margin:0;letter-spacing:-0.01em;}
   .debt-header-sub{font-size:12.5px;color:var(--text-faint);margin:4px 0 0;max-width:520px;}
   .debt-header-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start;}
   .debt-last-updated{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);width:100%;text-align:right;margin-top:4px;}
 
   .debt-kpi-grid{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr 1fr;gap:12px;margin-bottom:16px;}
-  .debt-kpi-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;}
+  .debt-kpi-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow-sm);}
   .debt-kpi-card.hero{background:linear-gradient(135deg, var(--surface-2), var(--surface));border-color:var(--gold-soft);}
-  .debt-kpi-label{font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-faint);margin-bottom:8px;}
-  .debt-kpi-value{font-family:var(--font-mono);font-size:22px;font-weight:600;color:var(--text);}
-  .debt-kpi-card.hero .debt-kpi-value{color:var(--gold);font-size:26px;}
+  .debt-kpi-label{font-size:12.5px;font-weight:500;color:var(--text-muted);margin-bottom:8px;}
+  .debt-kpi-value{font-family:var(--font-display);font-size:24px;font-weight:600;color:var(--text);letter-spacing:-0.01em;}
+  .debt-kpi-card.hero .debt-kpi-value{color:var(--gold);font-size:28px;}
   .debt-kpi-sub{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);margin-top:4px;}
   .debt-kpi-target-row{font-size:11px;color:var(--text-faint);margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
   .debt-kpi-rebalance-btn{margin-top:10px;}
@@ -593,14 +783,14 @@
   .ii-card-badge{font-size:10.5px;color:var(--text-faint);background:var(--surface-2);border:1px solid var(--border);border-radius:20px;padding:5px 11px;white-space:nowrap;}
 
   .ii-alloc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:14px 0 16px;}
-  .ii-alloc-card{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:15px 17px;}
+  .ii-alloc-card{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:15px 17px;box-shadow:var(--shadow-xs);}
   .ii-alloc-top{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
   .ii-alloc-icon{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:15px;flex:0 0 auto;}
   .ii-alloc-icon.large{background:#4bbf9c22;color:var(--positive);}
   .ii-alloc-icon.mid{background:#d9a44122;color:var(--warning);}
   .ii-alloc-icon.small{background:#6f93c922;color:var(--blue);}
   .ii-alloc-icon.unclassified{background:#a78bfa22;color:#a78bfa;}
-  .ii-alloc-label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);margin-bottom:3px;}
+  .ii-alloc-label{font-size:11.5px;font-weight:500;color:var(--text-muted);margin-bottom:3px;}
   .ii-alloc-value{font-family:var(--font-mono);font-size:20px;font-weight:600;color:var(--text);line-height:1.1;}
   .ii-alloc-sub{font-size:10.5px;color:var(--text-faint);margin-top:1px;}
   .ii-alloc-bar-track{height:6px;border-radius:4px;background:var(--bg);overflow:hidden;margin:10px 0 7px;}
@@ -700,9 +890,9 @@
     .ii-filter-controls select{flex:1;min-width:0;}
   }
 
-  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;}
-  .card h3{font-family:var(--font-display);font-size:14px;font-weight:600;margin:0 0 14px;display:flex;align-items:center;justify-content:space-between;}
-  .card h3 .hint{font-family:var(--font-body);font-weight:400;font-size:11px;color:var(--text-faint);}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px 22px;box-shadow:var(--shadow-sm);}
+  .card h3{font-family:var(--font-display);font-size:16px;font-weight:600;margin:0 0 14px;display:flex;align-items:center;justify-content:space-between;letter-spacing:-0.01em;}
+  .card h3 .hint{font-family:var(--font-body);font-weight:400;font-size:12px;color:var(--text-faint);}
 
   .chart-wrap{position:relative;height:260px;}
   @media (max-width:700px){
@@ -730,7 +920,7 @@
   td.left input, td.left select{text-align:left;font-family:var(--font-body);}
   td input:hover, td select:hover{border-color:var(--border);}
   td input:focus, td select:focus{border-color:var(--gold);outline:none;background:var(--surface-2);}
-  td input[type=date]{color-scheme:dark;padding:5px 3px;font-size:11.8px;}
+  td input[type=date]{padding:5px 3px;font-size:11.8px;}
 
   .pos{color:var(--positive);}
   .neg{color:var(--negative);}
@@ -792,7 +982,7 @@
   /* ---- Market Snapshot (Dashboard) ---- */
   .ms-snapshot-card{margin-bottom:16px;}
   .ms-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;}
-  .ms-card{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:14px 16px;}
+  .ms-card{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow-xs);}
   .ms-card.ms-stale{border-color:var(--warning);}
   .ms-card-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;}
   .ms-name{font-family:var(--font-display);font-size:12.5px;font-weight:600;color:var(--text);}
@@ -930,9 +1120,9 @@
     .sa-summary-grid > :nth-child(5){grid-column:1 / -1;}
   }
   .sa-stat-card{
-    background:linear-gradient(160deg, var(--surface-2), var(--surface));
+    background:var(--surface);
     border:1px solid var(--border);border-radius:var(--radius);
-    padding:14px 16px;position:relative;overflow:hidden;
+    padding:14px 16px;position:relative;overflow:hidden;box-shadow:var(--shadow-xs);
   }
   .sa-stat-card::before{
     content:"";position:absolute;top:0;left:0;right:0;height:2px;
@@ -942,7 +1132,7 @@
   .sa-stat-card.accent-pos::before{background:var(--positive);}
   .sa-stat-card.accent-blue::before{background:var(--blue);}
   .sa-stat-card.accent-warn::before{background:var(--warning);}
-  .sa-stat-card .sa-stat-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);margin-bottom:8px;display:flex;align-items:center;gap:5px;}
+  .sa-stat-card .sa-stat-label{font-size:12px;font-weight:500;color:var(--text-muted);margin-bottom:8px;display:flex;align-items:center;gap:5px;}
   .sa-stat-card .sa-stat-value{font-family:var(--font-mono);font-size:21px;font-weight:600;color:var(--text);}
   .sa-stat-card .sa-stat-sub{font-family:var(--font-mono);font-size:11px;color:var(--text-faint);margin-left:5px;font-weight:500;}
 
@@ -1218,10 +1408,7 @@
   .empty-row td{text-align:center;color:var(--text-faint);font-family:var(--font-body);padding:22px;}
 
   @media (max-width:600px){
-    .topbar{padding:14px 16px;}
-    main{padding:18px 14px 50px;}
-    .tabs{padding:0 14px;}
-    .brand .mark{font-size:16px;line-height:1.3;}
+    main{padding:16px 14px 40px;}
   }
 
   /* Readability floor for the smallest sub-10px labels, scoped to
@@ -1276,7 +1463,7 @@
     .data-table tbody tr{
       display:block;position:relative;
       background:var(--surface);border:1px solid var(--border);border-radius:12px;
-      padding:12px 14px;margin-bottom:10px;
+      padding:12px 14px;margin-bottom:10px;box-shadow:var(--shadow-xs);
     }
     .data-table tbody tr.empty-row{background:none;border:none;padding:22px 0;text-align:center;}
     .data-table tbody tr.maturity-overdue{border-left:3px solid var(--negative);}
@@ -1409,39 +1596,79 @@
 </head>
 <body>
 
-<div class="topbar">
-  <div class="brand">
-    <div class="mark">Ganesh<span>'s</span> Net Worth &amp; Allocation Tracker</div>
-  </div>
-  <div class="topbar-actions">
-    <span class="status-tag" id="lastUpdatedTag">Not saved yet</span>
-    <span class="status-tag" id="offlineTag" style="display:none;color:var(--warning)">⚠️ Offline — read-only until reconnected</span>
-    <button class="btn" id="btnLockPortfolio" title="When locked, Quantity and Average Price can only change via Import Holdings">🔓 Unlocked</button>
-    <button class="btn" id="btnCloudSync" title="Sign in to sync your data across devices">☁️ Sign in with Google</button>
-    <button class="btn btn-ghost" id="btnLoadDemo" title="Preview the app with sample data (replaces your current data — your data is saved locally first so you can restore it)">🧪 Demo Data</button>
-    <button class="btn btn-ghost" id="btnExitDemo" style="display:none" title="Exit demo mode and restore your real data">🚪 Exit Demo Data</button>
-    <button class="btn btn-ghost" id="btnSettings" title="Settings">⚙️ Settings</button>
-    <input type="file" id="importFile" accept="application/json">
-    <input type="file" id="importInvestmentsFile" accept=".xlsx,.xls" multiple>
-  </div>
-</div>
+<div class="app-shell">
+  <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
 
-<div class="tabs" role="tablist">
-  <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
-  <button class="tab-btn" data-tab="portfolio">Portfolio</button>
-  <button class="tab-btn" data-tab="insights">Insights</button>
-  <button class="tab-btn" data-tab="stockanalysis">Stock Analysis</button>
-</div>
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="sidebar-logo">₹</div>
+      <div class="sidebar-brand-text">
+        <div class="sidebar-brand-name">InvestTrack</div>
+        <div class="sidebar-brand-sub">Ganesh's portfolio</div>
+      </div>
+    </div>
 
-<main>
+    <nav class="sidebar-nav" role="tablist">
+      <button class="tab-btn active" data-tab="dashboard"><span class="nav-icon">⌂</span><span class="nav-label">Dashboard</span></button>
+      <button class="tab-btn" data-tab="portfolio"><span class="nav-icon">◧</span><span class="nav-label">Portfolio</span></button>
+      <button class="tab-btn" data-tab="insights"><span class="nav-icon">✦</span><span class="nav-label">Insights</span></button>
+      <button class="tab-btn" data-tab="stockanalysis"><span class="nav-icon">▤</span><span class="nav-label">Stock Analysis</span></button>
+
+      <div class="sidebar-divider"></div>
+      <div class="sidebar-section-label">Decide</div>
+      <button class="sidebar-nav-item" id="navRebalance"><span class="nav-icon">⇄</span><span class="nav-label">Rebalance</span></button>
+      <button class="sidebar-nav-item" id="navOpportunities"><span class="nav-icon">◎</span><span class="nav-label">Opportunities</span></button>
+
+      <div class="sidebar-divider"></div>
+      <button class="sidebar-nav-item" id="btnSettings"><span class="nav-icon">⚙</span><span class="nav-label">Settings</span></button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <span class="status-tag" id="lastUpdatedTag">Not saved yet</span>
+      <span class="status-tag" id="offlineTag" style="display:none;color:var(--warning)">⚠️ Offline — read-only until reconnected</span>
+    </div>
+  </aside>
+
+  <div class="main-col">
+    <header class="app-header">
+      <button class="hamburger-btn" id="hamburgerBtn" aria-label="Open menu" title="Menu">☰</button>
+      <div class="header-search">
+        <input type="text" id="globalSearch" placeholder="Search stocks, funds, FDs…" autocomplete="off">
+      </div>
+      <div class="header-spacer"></div>
+      <div class="header-actions">
+        <div class="header-market-pill">
+          <span class="dash-market-dot" id="headerMarketDot"></span>
+          <span id="headerMarketLabel">Market closed</span>
+        </div>
+        <button class="header-icon-btn" id="btnLoadDemo" title="Preview the app with sample data (your data is saved locally first so you can restore it)">🧪</button>
+        <button class="header-pill-btn" id="btnExitDemo" style="display:none" title="Exit demo mode and restore your real data">🚪 Exit demo</button>
+        <button class="header-pill-btn" id="btnCloudSync" title="Sign in to sync your data across devices">☁️ Sign in</button>
+        <button class="header-pill-btn" id="btnLockPortfolio" title="When locked, Quantity and Average Price can only change via Import Holdings">🔓 Unlocked</button>
+        <button class="header-icon-btn" id="notifBtn" title="What needs your attention">
+          🔔<span class="notif-badge" id="notifBadge" style="display:none">0</span>
+        </button>
+        <div class="theme-toggle" id="themeToggle" role="group" aria-label="Theme">
+          <button type="button" class="theme-toggle-btn" data-theme-choice="light" title="Light mode" aria-label="Light mode">☀️</button>
+          <button type="button" class="theme-toggle-btn" data-theme-choice="dark" title="Dark mode" aria-label="Dark mode">🌙</button>
+          <button type="button" class="theme-toggle-btn" data-theme-choice="auto" title="Match system" aria-label="Match system">🖥️</button>
+        </div>
+        <div class="header-profile" title="Ganesh">G</div>
+      </div>
+    </header>
+
+    <input type="file" id="importFile" accept="application/json" style="display:none">
+    <input type="file" id="importInvestmentsFile" accept=".xlsx,.xls" multiple style="display:none">
+
+    <main>
 
   <!-- ============ DASHBOARD ============ -->
   <section class="panel active" id="panel-dashboard">
 
     <div class="dash-header">
       <div>
-        <h2 class="dash-header-title">Dashboard</h2>
-        <p class="dash-header-sub">Your portfolio at a glance</p>
+        <h2 class="dash-header-title" id="dashGreetingTitle">Dashboard</h2>
+        <p class="dash-header-sub" id="dashGreetingSub">Your portfolio at a glance</p>
       </div>
       <div class="dash-header-right">
         <div id="dashLastUpdated">Last updated: —</div>
@@ -1451,7 +1678,7 @@
 
     <div class="dash-kpi-grid">
       <div class="dash-kpi-card hero">
-        <div class="dash-kpi-label">Portfolio Value</div>
+        <div class="dash-kpi-label">Portfolio value</div>
         <div class="dash-kpi-value" id="statNetWorth">₹0</div>
         <div class="dash-cash-row">
           <label for="cashInput">Cash on hand</label>
@@ -1459,7 +1686,7 @@
         </div>
       </div>
       <div class="dash-kpi-card">
-        <div class="dash-kpi-label">Invested Amount</div>
+        <div class="dash-kpi-label">Invested amount</div>
         <div class="dash-kpi-value" id="statTotalInvested">₹0</div>
       </div>
       <div class="dash-kpi-card">
@@ -1521,6 +1748,25 @@
       <div class="card">
         <h3>Portfolio health</h3>
         <div id="dashHealthBody"></div>
+      </div>
+    </div>
+
+    <div class="dash-section card dash-perf-chart-card">
+      <div class="dash-alloc-card-header">
+        <h3>Portfolio performance <span class="hint">your portfolio vs NIFTY 50 TRI</span></h3>
+        <div class="dash-perf-period-group" aria-disabled="true">
+          <button type="button" disabled>1M</button>
+          <button type="button" disabled>6M</button>
+          <button type="button" class="active" disabled>1Y</button>
+          <button type="button" disabled>3Y</button>
+          <button type="button" disabled>5Y</button>
+          <button type="button" disabled>All</button>
+        </div>
+      </div>
+      <div class="dash-perf-chart-placeholder">
+        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
+        <div class="dash-perf-chart-placeholder-title">Coming soon</div>
+        <p>We'll chart your portfolio's value over time against the NIFTY 50 TRI once daily snapshots start being recorded — full P&amp;L and allocation numbers above are unaffected.</p>
       </div>
     </div>
 
@@ -1699,26 +1945,26 @@
 
     <div class="debt-kpi-grid">
       <div class="debt-kpi-card hero">
-        <div class="debt-kpi-label">Debt Value</div>
+        <div class="debt-kpi-label">Debt value</div>
         <div class="debt-kpi-value" id="debtKpiValue">₹0</div>
         <div class="debt-kpi-sub" id="debtKpiValuePct">0% of total portfolio</div>
         <div class="debt-kpi-target-row" id="debtKpiTargetRow" style="display:none"></div>
         <button class="btn btn-ghost btn-sm debt-kpi-rebalance-btn" id="debtKpiRebalanceBtn">Rebalance</button>
       </div>
       <div class="debt-kpi-card">
-        <div class="debt-kpi-label">Invested Amount</div>
+        <div class="debt-kpi-label">Invested amount</div>
         <div class="debt-kpi-value" id="debtKpiInvested">₹0</div>
       </div>
       <div class="debt-kpi-card">
-        <div class="debt-kpi-label">Interest Rate <span class="hint">wtd. avg</span></div>
+        <div class="debt-kpi-label">Interest rate <span class="hint">wtd. avg</span></div>
         <div class="debt-kpi-value" id="debtKpiRate">0%</div>
       </div>
       <div class="debt-kpi-card">
-        <div class="debt-kpi-label">Expected Interest / Year</div>
+        <div class="debt-kpi-label">Expected interest / year</div>
         <div class="debt-kpi-value" id="debtKpiExpectedInterest">₹0</div>
       </div>
       <div class="debt-kpi-card">
-        <div class="debt-kpi-label">Portfolio Allocation</div>
+        <div class="debt-kpi-label">Portfolio allocation</div>
         <div class="debt-kpi-value" id="debtKpiAllocPct">0%</div>
       </div>
     </div>
@@ -2256,9 +2502,19 @@
     <p class="settings-note">"Import Screener Data" reads an .xlsx with a header row (symbol, book_value, eps, industry_pe, roe, roce, etc. — same column names your Screener export uses) and matches each row to an Equity holding by Symbol. Re-importing replaces the whole Screener dataset. Click any row in the table above to see its full breakdown here.</p>
   </section>
 
-</main>
+    </main>
 
-<footer class="app-footer">All data stays in this browser (localStorage) unless you export it or sign in to sync via Google. Nothing is sent to any server except live price lookups and, if signed in, your own Firestore document.</footer>
+    <footer class="app-footer">All data stays in this browser (localStorage) unless you export it or sign in to sync via Google. Nothing is sent to any server except live price lookups and, if signed in, your own Firestore document.</footer>
+  </div>
+</div>
+
+<nav class="mobile-bottom-nav" id="mobileBottomNav">
+  <button class="mobile-bottom-nav-item active" data-tab="dashboard"><span class="nav-icon">⌂</span>Dashboard</button>
+  <button class="mobile-bottom-nav-item" data-tab="portfolio"><span class="nav-icon">◧</span>Portfolio</button>
+  <button class="mobile-bottom-nav-item" data-tab="insights"><span class="nav-icon">✦</span>Insights</button>
+  <button class="mobile-bottom-nav-item" data-tab="stockanalysis"><span class="nav-icon">▤</span>Stocks</button>
+  <button class="mobile-bottom-nav-item" id="mobileMoreBtn"><span class="nav-icon">☰</span>More</button>
+</nav>
 
 <div class="modal-overlay" id="modalOverlay">
   <div class="modal-card">
@@ -2268,6 +2524,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-09-03-11"></script>
+<script src="app.js?v=2026-09-04-redesign1"></script>
 </body>
 </html>
