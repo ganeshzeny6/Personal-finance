@@ -639,6 +639,10 @@ document.getElementById("btnDashRebalance")?.addEventListener("click", openIdeal
 document.getElementById("dashAllocAlertBtn")?.addEventListener("click", openIdealTargetsModal);
 document.getElementById("btnDashAddMoney")?.addEventListener("click", openAddMoneyModal);
 document.getElementById("btnDashViewOpportunities")?.addEventListener("click", () => goToTab("stockanalysis"));
+document.getElementById("dashAttnFilter")?.addEventListener("change", (e) => {
+  dashAttnFilter = e.target.value;
+  renderDashAttention();
+});
 document.getElementById("btnViewAllOpportunities")?.addEventListener("click", () => goToTab("stockanalysis"));
 
 /* ============================================================
@@ -1422,7 +1426,8 @@ const debtUI = {
   maturityBucket: null,
   calendarMonths: 12,
   selectedMonthIdx: null,
-  reinvestDismissed: false
+  reinvestDismissed: false,
+  attnFilter: "all"
 };
 
 // Distinct category values actually present in the data (rather than
@@ -1514,6 +1519,7 @@ function computeDebtAttentionItems() {
   const b90 = computeMaturityBucket(DEBT_MATURITY_BUCKETS[1]);
   if (b90.count > 0) {
     items.push({
+      kind: "maturity",
       severity: "warn",
       title: `${fmtINR(b90.total)} maturing in next 90 days`,
       detail: `${b90.count} investment${b90.count === 1 ? "" : "s"}`,
@@ -1525,6 +1531,7 @@ function computeDebtAttentionItems() {
   const beyond90In180 = b180.count - b90.count;
   if (beyond90In180 > 0) {
     items.push({
+      kind: "maturity",
       severity: "info",
       title: `${fmtINR(b180.total - b90.total)} maturing in next 6 months`,
       detail: `${beyond90In180} investment${beyond90In180 === 1 ? "" : "s"}`,
@@ -1539,6 +1546,7 @@ function computeDebtAttentionItems() {
   const diffPct = currentPct - targetPct;
   if (diffPct >= ATTENTION_DRIFT_THRESHOLD) {
     items.push({
+      kind: "allocation",
       severity: "bad",
       title: "Debt allocation is above target",
       detail: `Current: ${fmtNum(currentPct, 1)}% · Target: ${fmtNum(targetPct, 1)}% · Overweight: ${fmtINR((diffPct / 100) * netWorth)}`,
@@ -1547,6 +1555,7 @@ function computeDebtAttentionItems() {
     });
   } else if (diffPct <= -ATTENTION_DRIFT_THRESHOLD) {
     items.push({
+      kind: "allocation",
       severity: "warn",
       title: "Debt allocation is below target",
       detail: `Current: ${fmtNum(currentPct, 1)}% · Target: ${fmtNum(targetPct, 1)}% · Underweight: ${fmtINR(Math.abs(diffPct / 100) * netWorth)}`,
@@ -1561,6 +1570,7 @@ function computeDebtAttentionItems() {
   }, 0);
   if (expectedInterestPerYear > 0) {
     items.push({
+      kind: "income",
       severity: "good",
       title: `${fmtINR(expectedInterestPerYear)} interest income expected this year`,
       detail: "Based on each investment's rate and tenure",
@@ -1574,9 +1584,15 @@ function computeDebtAttentionItems() {
 function renderDebtAttention() {
   const el = document.getElementById("debtAttentionList");
   if (!el) return;
-  const items = computeDebtAttentionItems();
-  if (items.length === 0) {
+  const allItems = computeDebtAttentionItems();
+  const items = debtUI.attnFilter === "all" ? allItems : allItems.filter(i => i.kind === debtUI.attnFilter);
+
+  if (allItems.length === 0) {
     el.innerHTML = `<div class="dash-attn-empty">You're clear for now — no upcoming maturities, allocation drift, or other action items.</div>`;
+    return;
+  }
+  if (items.length === 0) {
+    el.innerHTML = `<div class="dash-attn-empty">No items match this filter right now.</div>`;
     return;
   }
   el.innerHTML = "";
@@ -2695,6 +2711,7 @@ function computeAttentionItems() {
     const diffAmount = (diffPct / 100) * netWorth;
     const over = diffPct > 0;
     items.push({
+      kind: "allocation",
       severity: "warn",
       title: `${c.label} allocation is ${fmtNum(Math.abs(diffPct), 1)}% ${over ? "above" : "below"} target`,
       detail: `Current ${fmtNum(currentPct, 1)}% · Target ${fmtNum(idealPct, 1)}% · ${over ? "Overweight" : "Underweight"} ${fmtINR(Math.abs(diffAmount))}`,
@@ -2708,6 +2725,7 @@ function computeAttentionItems() {
   if (maturingSoon.length > 0) {
     const nearest = [...maturingSoon].sort((a, b) => (a.maturityDate || "").localeCompare(b.maturityDate || ""))[0];
     items.push({
+      kind: "maturity",
       severity: "warn",
       title: `${maturingSoon.length} ${maturingSoon.length === 1 ? "investment is" : "investments are"} maturing in the next 30 days`,
       detail: `Next maturity: ${fmtINR(Number(nearest.maturityAmount) || 0)} on ${nearest.maturityDate || "—"}`,
@@ -2724,6 +2742,7 @@ function computeAttentionItems() {
     const attractive = insights.filter(ins => !ins.insufficientData && ins.category === "Consider Adding");
     if (attractive.length > 0) {
       items.push({
+        kind: "opportunity",
         severity: "good",
         title: `${attractive.length} stock${attractive.length === 1 ? "" : "s"} look${attractive.length === 1 ? "s" : ""} attractive`,
         detail: "Based on valuation, fundamentals and current portfolio allocation",
@@ -2738,12 +2757,22 @@ function computeAttentionItems() {
   return items.slice(0, 5);
 }
 
+// View-only filter state for "What needs your attention" on the
+// Dashboard — never persisted, purely which items are shown.
+let dashAttnFilter = "all";
+
 function renderDashAttention() {
   const el = document.getElementById("dashAttentionList");
   if (!el) return;
-  const items = computeAttentionItems();
-  if (items.length === 0) {
+  const allItems = computeAttentionItems();
+  const items = dashAttnFilter === "all" ? allItems : allItems.filter(i => i.kind === dashAttnFilter);
+
+  if (allItems.length === 0) {
     el.innerHTML = `<div class="dash-attn-empty">Nothing urgent right now — allocation, opportunities and upcoming maturities all look within range.</div>`;
+    return;
+  }
+  if (items.length === 0) {
+    el.innerHTML = `<div class="dash-attn-empty">No items match this filter right now.</div>`;
     return;
   }
   el.innerHTML = "";
@@ -7381,6 +7410,10 @@ document.getElementById("debtReinvestRenew")?.addEventListener("click", () => {
 document.getElementById("debtReinvestDecideLater")?.addEventListener("click", () => {
   debtUI.reinvestDismissed = true;
   renderDebtReinvestmentPlanner();
+});
+document.getElementById("debtAttnFilter")?.addEventListener("change", (e) => {
+  debtUI.attnFilter = e.target.value;
+  renderDebtAttention();
 });
 
 setupIntelligentInsightsControls();

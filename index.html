@@ -271,6 +271,28 @@
   .dash-attn-action:hover{border-color:var(--gold);color:var(--text);}
   .dash-attn-empty{font-size:12.5px;color:var(--text-muted);padding:6px 0;}
 
+  /* "What needs your attention" header row + filter dropdown */
+  .attn-card-header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:2px;flex-wrap:wrap;}
+  .attn-card-header h3{margin:0;}
+  .attn-filter-wrap{position:relative;display:inline-flex;flex:none;}
+  .attn-filter-select{
+    appearance:none;-webkit-appearance:none;-moz-appearance:none;
+    font-family:var(--font-body);font-size:12px;font-weight:500;color:var(--text-muted);
+    background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
+    padding:6px 28px 6px 12px;cursor:pointer;
+  }
+  .attn-filter-select:hover{border-color:var(--gold-soft);color:var(--text);}
+  .attn-filter-select:focus{border-color:var(--gold);outline:none;color:var(--text);}
+  .attn-filter-wrap::after{
+    content:"▼";position:absolute;right:11px;top:50%;transform:translateY(-50%);
+    font-size:8px;color:var(--text-faint);pointer-events:none;
+  }
+  @media (max-width:700px){
+    .attn-filter-select{width:100%;}
+    .attn-filter-wrap{width:100%;}
+    .attn-card-header{align-items:stretch;}
+  }
+
   /* ---------- Portfolio health ---------- */
   .dash-health-score-row{display:flex;align-items:baseline;gap:8px;margin-bottom:14px;}
   .dash-health-score{font-family:var(--font-mono);font-size:28px;font-weight:600;color:var(--text);}
@@ -1453,7 +1475,17 @@
     </div>
 
     <div class="dash-section card">
-      <h3>What needs your attention</h3>
+      <div class="attn-card-header">
+        <h3>What needs your attention</h3>
+        <span class="attn-filter-wrap">
+          <select class="attn-filter-select" id="dashAttnFilter">
+            <option value="all">All</option>
+            <option value="allocation">Allocation</option>
+            <option value="maturity">Maturity</option>
+            <option value="opportunity">Opportunities</option>
+          </select>
+        </span>
+      </div>
       <div id="dashAttentionList"></div>
     </div>
 
@@ -1692,7 +1724,17 @@
     </div>
 
     <div class="dash-section card">
-      <h3>What needs your attention</h3>
+      <div class="attn-card-header">
+        <h3>What needs your attention</h3>
+        <span class="attn-filter-wrap">
+          <select class="attn-filter-select" id="debtAttnFilter">
+            <option value="all">All</option>
+            <option value="maturity">Maturity</option>
+            <option value="allocation">Allocation</option>
+            <option value="income">Income</option>
+          </select>
+        </span>
+      </div>
       <div id="debtAttentionList"></div>
     </div>
 
@@ -2226,6 +2268,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-09-03-10"></script>
+<script src="app.js?v=2026-09-03-11"></script>
 </body>
 </html>
