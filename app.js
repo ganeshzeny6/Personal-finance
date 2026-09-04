@@ -115,6 +115,14 @@ const DEFAULT_HOLDINGS_API_URL = "https://script.google.com/macros/s/AKfycbxVhXB
 const DEFAULT_GOOGLE_DRIVE_CLIENT_ID = "638244383857-oe1ea4pb1l64a79d34d7j64uclmpmqv9.apps.googleusercontent.com";
 const DEFAULT_GOOGLE_DRIVE_API_KEY = "AIzaSyB0waRuXkp9Bh1k0CcmSea-BXcM6yY8WQs";
 
+// Yet another separate, standalone Apps Script Web App (see
+// nifty_daily_capture.gs's doGet()), bound to the "Nifty Live
+// (helper)" sheet, returning { niftyHistory: [{date, close}, ...] }.
+// No sensible hardcoded default here (unlike the two above) — it's
+// only created once Settings -> "Portfolio Performance Chart" ->
+// "Nifty History API URL" is filled in after deploying that script.
+const DEFAULT_NIFTY_HISTORY_API_URL = "";
+
 const DEFAULT_IDEAL = { cash: 5, debt: 30, mf: 30, equity: 25, gold: 10 };
 
 // Equity tab: maximum recommended allocation % (of total Equity Invested
@@ -265,6 +273,10 @@ function blankState() {
     // can be updated without touching code.
     priceApiUrl: DEFAULT_PRICE_API_URL,
     holdingsApiUrl: DEFAULT_HOLDINGS_API_URL,
+    // Portfolio performance chart (Dashboard): Apps Script Web App URL
+    // that returns Nifty History as JSON — see DEFAULT_NIFTY_HISTORY_API_URL
+    // above and fetchNiftyHistoryData(). Empty until deployed/set.
+    niftyHistoryApiUrl: DEFAULT_NIFTY_HISTORY_API_URL,
     // One-time Google Cloud credentials for the "Import from Google
     // Drive" file picker (see Settings for setup steps). Defaulted to
     // Ganesh's own values (see DEFAULT_GOOGLE_DRIVE_CLIENT_ID/API_KEY
@@ -1228,6 +1240,55 @@ async function fetchHoldingsData() {
     throw e;
   }
   return json;
+}
+
+// Fetches the Nifty History JSON from state.niftyHistoryApiUrl — a
+// separate, small Apps Script Web App (see nifty_daily_capture.gs's
+// doGet()) bound to the "Nifty Live (helper)" sheet, deployed
+// separately from the main Price/Holdings scripts above. Mirrors
+// their error handling exactly. Returns { date: 'YYYY-MM-DD', close:
+// number }[] sorted ascending by date (de-duplicated by date, keeping
+// the last row for any repeat — defensive against the capture script
+// ever writing a day twice).
+async function fetchNiftyHistoryData() {
+  if (!state.niftyHistoryApiUrl) {
+    const e = new Error('No Nifty History API URL set — add one in Settings under "Portfolio Performance Chart".');
+    e.kind = "unset";
+    throw e;
+  }
+  let res;
+  try {
+    res = await fetch(state.niftyHistoryApiUrl, { cache: "no-store" });
+  } catch (networkErr) {
+    const e = new Error("Network/CORS: the browser blocked or couldn't complete this request.");
+    e.kind = "network";
+    throw e;
+  }
+  if (!res.ok) {
+    const e = new Error(`Nifty History API returned HTTP ${res.status}. Check the Apps Script Web App deployment is still active and set to "Anyone" access.`);
+    e.kind = "http";
+    throw e;
+  }
+  let json;
+  try {
+    json = await res.json();
+  } catch (parseErr) {
+    const e = new Error("The Nifty History API didn't return valid JSON — check the doGet() script for errors (try opening the /exec URL directly in a browser tab).");
+    e.kind = "parse";
+    throw e;
+  }
+  if (!json || !Array.isArray(json.niftyHistory)) {
+    const e = new Error('The Nifty History API response is missing a "niftyHistory" array — check the doGet() script matches nifty_daily_capture.gs.');
+    e.kind = "parse";
+    throw e;
+  }
+  const byDate = new Map();
+  json.niftyHistory.forEach(r => {
+    const d = String(r.date || "").slice(0, 10);
+    const close = Number(r.close);
+    if (d && !isNaN(close)) byDate.set(d, close); // later row for the same date wins
+  });
+  return [...byDate.entries()].map(([date, close]) => ({ date, close })).sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
 }
 
 // Header spellings accepted for each new live market-data column added to
@@ -3387,6 +3448,267 @@ function renderDashBreakdown() {
 // a fixed one-line sub. Purely cosmetic; replaces the static
 // "Dashboard" / "Your portfolio at a glance" text these two elements
 // used to hold.
+/* ============================================================
+   PORTFOLIO PERFORMANCE CHART (Dashboard)
+   "Your invested capital vs a Nifty 50 equivalent" — a money-weighted
+   comparison built from `tradeBook.trades` (see the TRADE BOOK block
+   near saveState()) and Nifty History (fetchNiftyHistoryData()).
+
+   Why not a real "your portfolio's value over time" line: that would
+   need a daily historical price for every stock/fund ever held, which
+   this app has no source for (only live current prices). What IS
+   fully computable from data already on hand: for every trade,
+   simulate that the same rupee amount, on the same date, had instead
+   bought/sold Nifty 50 at that date's close — sum that up over time
+   for a "Nifty-equivalent" value series, and separately track
+   cumulative net invested capital (cost basis) on the same axis.
+   Today's actual current value (from equityTotals()/mfTotals()/
+   goldTotals(), which DO have live prices) is shown as a callout next
+   to the chart rather than faked as a historical line.
+   ============================================================ */
+
+let portfolioPerfChart = null;
+let niftyHistoryCache = null; // null = not loaded yet; [] = loaded but empty
+let niftyHistoryLoadPromise = null;
+let portfolioPerfSelectedPeriod = "1Y";
+const PORTFOLIO_PERF_PERIOD_DAYS = { "1M": 30, "6M": 182, "1Y": 365, "3Y": 365 * 3, "5Y": 365 * 5 }; // "All" handled separately
+
+// Fetches Nifty History once per page load and caches it — this data
+// only changes once a day (the Apps Script trigger writes one new row
+// per trading day), so there's no need to re-fetch on every 30-second
+// dashboard refresh. Returns null on failure (network/CORS/parse/not
+// configured) rather than throwing, since callers just want to know
+// "usable or not" for rendering the placeholder vs. the chart.
+function ensureNiftyHistoryLoaded() {
+  if (niftyHistoryCache !== null) return Promise.resolve(niftyHistoryCache);
+  if (niftyHistoryLoadPromise) return niftyHistoryLoadPromise;
+  niftyHistoryLoadPromise = fetchNiftyHistoryData()
+    .then(rows => { niftyHistoryCache = rows; return rows; })
+    .catch(err => { console.error("Nifty History fetch failed:", err); niftyHistoryLoadPromise = null; return null; });
+  return niftyHistoryLoadPromise;
+}
+
+// Composite index-and-invested series, one point per Nifty trading day
+// from the first trade's date through the latest date Nifty History
+// has. niftyRows must be sorted ascending by date (fetchNiftyHistoryData()
+// already guarantees this).
+function computeNiftyEquivalentSeries(trades, niftyRows) {
+  if (!niftyRows || niftyRows.length === 0 || !trades || trades.length === 0) return null;
+
+  const dates = niftyRows.map(r => r.date);
+  const closeByDate = new Map(niftyRows.map(r => [r.date, r.close]));
+
+  // Nearest available Nifty close ON OR BEFORE a given date (binary
+  // search over the sorted date list) — handles trade dates that fall
+  // on a weekend/holiday, or before the History sheet's own start.
+  function closeOnOrBefore(dateStr) {
+    let lo = 0, hi = dates.length - 1, ans = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (dates[mid] <= dateStr) { ans = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    return ans === -1 ? null : closeByDate.get(dates[ans]);
+  }
+
+  // Only equity/mf/gold trades are relevant here (that's everything
+  // the trade book covers) — signed by trade type so sells reduce both
+  // invested capital and the hypothetical Nifty position.
+  const flows = trades
+    .filter(t => t.tradeDate && !isNaN(Number(t.quantity)) && !isNaN(Number(t.price)))
+    .map(t => ({
+      date: String(t.tradeDate).slice(0, 10),
+      amount: Number(t.quantity) * Number(t.price) * (String(t.tradeType).toLowerCase() === "sell" ? -1 : 1)
+    }))
+    .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  if (flows.length === 0) return null;
+
+  const firstDate = flows[0].date;
+  const relevantDates = dates.filter(d => d >= firstDate);
+  if (relevantDates.length === 0) return null;
+
+  let flowIdx = 0, cumUnits = 0, cumInvested = 0;
+  const series = [];
+  relevantDates.forEach(d => {
+    while (flowIdx < flows.length && flows[flowIdx].date <= d) {
+      const f = flows[flowIdx];
+      const priceOnFlowDate = closeOnOrBefore(f.date);
+      if (priceOnFlowDate) cumUnits += f.amount / priceOnFlowDate;
+      cumInvested += f.amount;
+      flowIdx++;
+    }
+    series.push({ date: d, niftyEquivalent: cumUnits * closeByDate.get(d), invested: cumInvested });
+  });
+  return series;
+}
+
+// Slices a full series down to the trailing N days of its own date
+// range (not wall-clock "today", so the chart still shows something
+// sensible even if Nifty History hasn't captured today's row yet).
+// Falls back to the full series if the whole trade history is younger
+// than the requested period.
+function filterSeriesByPeriod(series, periodKey) {
+  if (!series || series.length === 0 || periodKey === "All") return series;
+  const days = PORTFOLIO_PERF_PERIOD_DAYS[periodKey];
+  if (!days) return series;
+  const lastDate = new Date(series[series.length - 1].date + "T00:00:00");
+  const cutoff = new Date(lastDate);
+  cutoff.setDate(cutoff.getDate() - days);
+  const cutoffStr = cutoff.toISOString().slice(0, 10);
+  const filtered = series.filter(s => s.date >= cutoffStr);
+  return filtered.length > 1 ? filtered : series;
+}
+
+function drawPortfolioPerfChart(series) {
+  const canvas = document.getElementById("dashPerfChart");
+  if (!canvas) return;
+  const labels = series.map(s => s.date);
+  const niftyData = series.map(s => Math.round(s.niftyEquivalent));
+  const investedData = series.map(s => Math.round(s.invested));
+  const textMuted = getComputedStyle(document.documentElement).getPropertyValue("--text-muted").trim() || "#6b6862";
+  const border = getComputedStyle(document.documentElement).getPropertyValue("--border").trim() || "#e6e3da";
+  const gold = getComputedStyle(document.documentElement).getPropertyValue("--gold").trim() || "#a3742f";
+
+  if (portfolioPerfChart) {
+    portfolioPerfChart.data.labels = labels;
+    portfolioPerfChart.data.datasets[0].data = niftyData;
+    portfolioPerfChart.data.datasets[1].data = investedData;
+    portfolioPerfChart.update();
+    return;
+  }
+
+  portfolioPerfChart = new Chart(canvas, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        { label: "Nifty 50 equivalent (your money, same dates)", data: niftyData, borderColor: gold, backgroundColor: gold, pointRadius: 0, borderWidth: 2, tension: 0.15 },
+        { label: "Your net invested capital", data: investedData, borderColor: textMuted, backgroundColor: textMuted, pointRadius: 0, borderWidth: 1.5, borderDash: [4, 3], tension: 0 }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { position: "bottom", labels: { color: textMuted, font: { family: "Inter", size: 11 }, boxWidth: 10, padding: 12 } },
+        datalabels: { display: false }, // this app registers ChartDataLabels globally — a multi-hundred-point line needs it off
+        tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${fmtINR(ctx.parsed.y)}` } }
+      },
+      scales: {
+        x: { ticks: { color: textMuted, maxTicksLimit: 7, font: { size: 10.5 } }, grid: { display: false } },
+        y: { ticks: { color: textMuted, font: { size: 10.5 }, callback: (v) => fmtINRCompact(v, 1) }, grid: { color: border } }
+      }
+    }
+  });
+}
+
+function renderPortfolioPerfSummary(fullSeries) {
+  const el = document.getElementById("dashPerfSummary");
+  if (!el || !fullSeries || fullSeries.length === 0) return;
+  const last = fullSeries[fullSeries.length - 1];
+  const actualCurrent = equityTotals().current + mfTotals().current + goldTotals().current;
+  const diff = actualCurrent - last.niftyEquivalent;
+  const diffPct = last.niftyEquivalent > 0 ? (diff / last.niftyEquivalent) * 100 : 0;
+  el.innerHTML = `
+    <span>Your actual value today <b>${fmtINR(actualCurrent)}</b> <span class="hint">(Equity + MF + Gold, live prices)</span></span>
+    <span>Net invested capital <b>${fmtINR(last.invested)}</b></span>
+    <span>If invested in Nifty on the same dates <b>${fmtINR(Math.round(last.niftyEquivalent))}</b></span>
+    <span class="${plClass(diff)}">${diff >= 0 ? "Outperforming" : "Underperforming"} Nifty by <b>${fmtINRCompactSigned(diff, 2)}</b> (${diff >= 0 ? "+" : ""}${diffPct.toFixed(1)}%)</span>
+  `;
+}
+
+// Cached so period-button clicks don't need to recompute the whole
+// series (only re-slice + redraw) — invalidated whenever trades or
+// Nifty History actually change.
+let portfolioPerfFullSeries = null;
+let portfolioPerfFullSeriesKey = "";
+
+function renderPortfolioPerformanceChart() {
+  const placeholder = document.getElementById("dashPerfPlaceholder");
+  const chartWrap = document.getElementById("dashPerfChartWrap");
+  const periodGroup = document.getElementById("dashPerfPeriodGroup");
+  const titleEl = document.getElementById("dashPerfPlaceholderTitle");
+  const textEl = document.getElementById("dashPerfPlaceholderText");
+  if (!placeholder || !chartWrap || !periodGroup) return;
+
+  const showPlaceholder = (title, text, enablePeriods) => {
+    placeholder.style.display = "";
+    chartWrap.style.display = "none";
+    titleEl.textContent = title;
+    textEl.textContent = text;
+    periodGroup.toggleAttribute("aria-disabled", !enablePeriods);
+    periodGroup.querySelectorAll("button").forEach(b => { b.disabled = !enablePeriods; });
+  };
+
+  const hasTrades = tradeBook.trades.length > 0;
+  const hasNiftyUrl = !!state.niftyHistoryApiUrl;
+
+  if (!hasTrades) {
+    showPlaceholder(
+      "No trade book imported yet",
+      "Import your trade book (Settings → Import Trade Book) to enable this chart — it compares your actual invested capital against a Nifty 50 equivalent using your real trade dates.",
+      false
+    );
+    return;
+  }
+  if (!hasNiftyUrl) {
+    showPlaceholder(
+      "Nifty History not connected yet",
+      'Add a "Nifty History API URL" in Settings (under Portfolio Performance Chart) to enable this chart — see the plan doc for the one-time Apps Script setup.',
+      false
+    );
+    return;
+  }
+
+  ensureNiftyHistoryLoaded().then(niftyRows => {
+    // Bail if the card isn't even on screen anymore by the time this
+    // resolves (e.g. the person navigated away) — nothing to update.
+    if (!document.getElementById("dashPerfChartWrap")) return;
+
+    if (!niftyRows || niftyRows.length === 0) {
+      showPlaceholder(
+        "Couldn't load Nifty History",
+        'Check the "Nifty History API URL" in Settings, and that the Apps Script Web App is deployed with "Anyone" access.',
+        false
+      );
+      return;
+    }
+
+    const cacheKey = tradeBook.trades.length + ":" + niftyRows.length + ":" + (niftyRows[niftyRows.length - 1]?.date || "");
+    if (portfolioPerfFullSeriesKey !== cacheKey) {
+      portfolioPerfFullSeries = computeNiftyEquivalentSeries(tradeBook.trades, niftyRows);
+      portfolioPerfFullSeriesKey = cacheKey;
+    }
+
+    if (!portfolioPerfFullSeries || portfolioPerfFullSeries.length < 2) {
+      showPlaceholder(
+        "Not enough data yet",
+        "None of your trade dates overlap with the Nifty History range yet — the chart needs at least a couple of days of data to draw a line.",
+        false
+      );
+      return;
+    }
+
+    placeholder.style.display = "none";
+    chartWrap.style.display = "";
+    periodGroup.removeAttribute("aria-disabled");
+    periodGroup.querySelectorAll("button").forEach(b => { b.disabled = false; });
+
+    drawPortfolioPerfChart(filterSeriesByPeriod(portfolioPerfFullSeries, portfolioPerfSelectedPeriod));
+    renderPortfolioPerfSummary(portfolioPerfFullSeries);
+  });
+}
+
+document.getElementById("dashPerfPeriodGroup")?.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-period]");
+  if (!btn || btn.disabled) return;
+  portfolioPerfSelectedPeriod = btn.dataset.period;
+  document.querySelectorAll("#dashPerfPeriodGroup button").forEach(b => b.classList.toggle("active", b === btn));
+  if (portfolioPerfFullSeries) {
+    drawPortfolioPerfChart(filterSeriesByPeriod(portfolioPerfFullSeries, portfolioPerfSelectedPeriod));
+  }
+});
+
 function renderDashGreeting() {
   const titleEl = document.getElementById("dashGreetingTitle");
   const subEl = document.getElementById("dashGreetingSub");
@@ -3503,6 +3825,7 @@ function renderDashboard() {
   renderDashPerformers();
   renderDashBreakdown();
   renderMarketSnapshot();
+  renderPortfolioPerformanceChart();
   // Keeps Insights live whenever it's the visible tab (e.g. during the
   // 30-second auto price refresh); renderInsights() itself no-ops if
   // that tab isn't currently open.
@@ -7008,7 +7331,7 @@ function showTradeBookImportPreview(newTrades, sourceLabel, statusEl) {
       <div class="import-stat"><div class="n">${plan.unchanged.length}</div><div class="l">Already Imported</div></div>
       <div class="import-stat ${plan.conflicts.length ? "warn" : ""}"><div class="n">${plan.conflicts.length}</div><div class="l">Conflicting Duplicates</div></div>
     </div>
-    <p>Trade book data is stored only in this browser (never synced to the cloud) and is used for the upcoming Portfolio performance chart — it doesn't change your Equity, Mutual Funds or Gold holdings above.</p>
+    <p>Trade book data is stored only in this browser (never synced to the cloud) and is used by the Dashboard's Portfolio performance chart — it doesn't change your Equity, Mutual Funds or Gold holdings above.</p>
     ${plan.batchDuplicates.length ? `<p class="settings-note">${plan.batchDuplicates.length} repeated trade_id${plan.batchDuplicates.length === 1 ? "" : "s"} within the selected file(s) themselves — the later row won for each.</p>` : ""}
     ${plan.conflicts.length ? `
       <h4>Conflicting duplicates <span class="hint">same account + exchange + segment + trade ID, different data</span></h4>
@@ -7050,6 +7373,7 @@ function showTradeBookImportPreview(newTrades, sourceLabel, statusEl) {
             conflicts: plan.conflicts.length, overwritten: overwrite ? plan.conflicts.length : 0
           });
           saveTradeBook();
+          renderDashboard(); // picks up the new/changed trade count for the Portfolio performance chart
           closeModal();
           if (statusEl) {
             statusEl.textContent = `Added ${plan.toAdd.length} new trade${plan.toAdd.length === 1 ? "" : "s"}` +
@@ -7126,7 +7450,7 @@ async function processTradeBookFiles(files, labels) {
 function openTradeBookImportChooser() {
   openModal(
     "Import Trade Book",
-    `<p>Import Zerodha Console Tradebook CSV exports — trade-level history (every buy/sell) used for the upcoming Portfolio performance chart. Equity, Mutual Fund and Gold ETF trades (e.g. GOLDBEES) are all detected automatically; you can select several files at once.</p>
+    `<p>Import Zerodha Console Tradebook CSV exports — trade-level history (every buy/sell) used by the Dashboard's Portfolio performance chart. Equity, Mutual Fund and Gold ETF trades (e.g. GOLDBEES) are all detected automatically; you can select several files at once.</p>
      <p class="settings-note">This is stored only in this browser (not synced to the cloud) and is separate from your Equity/Mutual Funds/Gold holdings — importing it never changes those tabs.</p>`,
     [
       { label: "Cancel", onClick: closeModal },
@@ -7821,13 +8145,20 @@ function openSettingsModal() {
     </div>
 
     <h4>Import Trade Book</h4>
-    <p class="settings-note" style="margin-top:0">Import Zerodha Console Tradebook CSV exports (per demat account) to build trade-level history for the upcoming "Portfolio performance vs Nifty 50" chart. Stored only in this browser — never synced to the cloud — and separate from your Equity/Mutual Funds/Gold holdings above; importing it never changes those tabs.</p>
+    <p class="settings-note" style="margin-top:0">Import Zerodha Console Tradebook CSV exports (per demat account) to build trade-level history for the Dashboard's "Portfolio performance" chart below. Stored only in this browser — never synced to the cloud — and separate from your Equity/Mutual Funds/Gold holdings above; importing it never changes those tabs.</p>
     <div class="settings-actions">
       <button class="btn" id="settingsBtnImportTradeBook">Import Trade Book</button>
       <span class="status-tag" id="tradeBookImportStatus"></span>
       ${tradeBook.trades.length ? `<button class="btn btn-ghost" id="settingsBtnClearTradeBook">Clear Trade Book Data</button>` : ""}
     </div>
     <p class="settings-note">${escapeAttr(tbSummaryText)}</p>
+
+    <h4>Portfolio Performance Chart</h4>
+    <p class="settings-note" style="margin-top:0">The Dashboard's "Portfolio performance" card compares your net invested capital (from the Trade Book above) against a Nifty 50 equivalent, using a small Apps Script Web App that serves your "Nifty History" sheet as JSON — same pattern as the Price/Holdings API URLs above, deployed separately. One-time setup: open the "Nifty Live (helper)" sheet → Extensions → Apps Script → make sure it has the <code>doGet()</code> function from the latest <code>nifty_daily_capture.gs</code> → Deploy → New deployment → Web app (Execute as: Me, Who has access: Anyone) → paste the resulting URL below.</p>
+    <div class="settings-field">
+      <label for="settingsNiftyHistoryApiUrl">Nifty History API URL</label>
+      <input type="text" id="settingsNiftyHistoryApiUrl" placeholder="https://script.google.com/macros/s/.../exec" value="${escapeAttr(state.niftyHistoryApiUrl || "")}">
+    </div>
 
     <h4>Backup &amp; Restore</h4>
     <div class="settings-actions">
@@ -7847,6 +8178,17 @@ function openSettingsModal() {
         state.holdingsApiUrl = document.getElementById("settingsHoldingsApiUrl").value.trim() || DEFAULT_HOLDINGS_API_URL;
         state.googleDriveClientId = document.getElementById("settingsGoogleDriveClientId").value.trim() || DEFAULT_GOOGLE_DRIVE_CLIENT_ID;
         state.googleDriveApiKey = document.getElementById("settingsGoogleDriveApiKey").value.trim() || DEFAULT_GOOGLE_DRIVE_API_KEY;
+        const newNiftyHistoryApiUrl = document.getElementById("settingsNiftyHistoryApiUrl").value.trim();
+        if (newNiftyHistoryApiUrl !== state.niftyHistoryApiUrl) {
+          // URL actually changed — drop the cached fetch/series so the
+          // Portfolio performance chart re-fetches from the new source
+          // instead of silently continuing to show the old one's data.
+          niftyHistoryCache = null;
+          niftyHistoryLoadPromise = null;
+          portfolioPerfFullSeries = null;
+          portfolioPerfFullSeriesKey = "";
+        }
+        state.niftyHistoryApiUrl = newNiftyHistoryApiUrl;
         const parseLimit = (id, fallback) => {
           const v = parseFloat(document.getElementById(id).value);
           return (isNaN(v) || v < 0) ? fallback : v;
@@ -7865,6 +8207,7 @@ function openSettingsModal() {
         renderBrand();
         renderEquity();
         renderStockAnalysis();
+        renderDashboard();
         closeModal();
       }
     }
@@ -7884,10 +8227,11 @@ function openSettingsModal() {
   const clearTradeBookBtn = document.getElementById("settingsBtnClearTradeBook");
   if (clearTradeBookBtn) {
     clearTradeBookBtn.addEventListener("click", () => {
-      const ok = confirm(`Delete all ${tradeBook.trades.length} stored trade book records? This can't be undone. (Your Equity/Mutual Funds/Gold holdings are unaffected — this only clears trade-book data used for the upcoming Portfolio performance chart.)`);
+      const ok = confirm(`Delete all ${tradeBook.trades.length} stored trade book records? This can't be undone. (Your Equity/Mutual Funds/Gold holdings are unaffected — this only clears trade-book data used by the Portfolio performance chart.)`);
       if (!ok) return;
       tradeBook = blankTradeBook();
       saveTradeBook();
+      renderDashboard();
       closeModal();
     });
   }

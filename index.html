@@ -527,7 +527,7 @@
   .dash-alloc-alert span{font-size:12.5px;color:var(--negative);}
   .dash-alloc-alert .btn{flex:none;}
 
-  /* ---------- Portfolio performance (coming soon) ---------- */
+  /* ---------- Portfolio performance ---------- */
   /* The header can hold a title+hint AND a 6-button period group —
      let it wrap onto two rows instead of overlapping when the card
      is too narrow for both (small tablets, mobile). */
@@ -538,7 +538,10 @@
     border:none;background:transparent;color:var(--text-faint);font-size:12px;font-weight:500;
     padding:5px 11px;border-radius:6px;cursor:not-allowed;
   }
+  .dash-perf-period-group button:not(:disabled){cursor:pointer;color:var(--text-muted);}
+  .dash-perf-period-group button:not(:disabled):hover{color:var(--text);}
   .dash-perf-period-group button.active{background:var(--surface);color:var(--text-muted);box-shadow:0 1px 2px rgba(0,0,0,.06);}
+  .dash-perf-period-group button.active:not(:disabled){color:var(--gold);font-weight:600;}
   .dash-perf-chart-placeholder{
     display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
     gap:8px;padding:44px 24px;border:1.5px dashed var(--border);border-radius:12px;color:var(--text-faint);
@@ -546,6 +549,11 @@
   .dash-perf-chart-placeholder svg{color:var(--text-faint);opacity:.7;}
   .dash-perf-chart-placeholder-title{font-size:14px;font-weight:600;color:var(--text-muted);}
   .dash-perf-chart-placeholder p{margin:0;max-width:460px;font-size:12.5px;line-height:1.55;color:var(--text-faint);}
+  .dash-perf-summary{
+    display:flex;flex-wrap:wrap;gap:16px;row-gap:8px;margin-top:14px;padding-top:14px;
+    border-top:1px solid var(--border);font-size:12px;color:var(--text-muted);
+  }
+  .dash-perf-summary b{font-family:var(--font-mono);color:var(--text);font-weight:600;}
   @media (max-width:700px){
     .dash-perf-chart-card .dash-alloc-card-header h3{flex-basis:100%;}
     .dash-perf-period-group{width:100%;justify-content:space-between;}
@@ -1754,20 +1762,24 @@
 
     <div class="dash-section card dash-perf-chart-card">
       <div class="dash-alloc-card-header">
-        <h3>Portfolio performance <span class="hint">your portfolio vs NIFTY 50 TRI</span></h3>
-        <div class="dash-perf-period-group" aria-disabled="true">
-          <button type="button" disabled>1M</button>
-          <button type="button" disabled>6M</button>
-          <button type="button" class="active" disabled>1Y</button>
-          <button type="button" disabled>3Y</button>
-          <button type="button" disabled>5Y</button>
-          <button type="button" disabled>All</button>
+        <h3>Portfolio performance <span class="hint">invested capital vs a Nifty 50 equivalent, using your real trade dates</span></h3>
+        <div class="dash-perf-period-group" id="dashPerfPeriodGroup" aria-disabled="true">
+          <button type="button" data-period="1M" disabled>1M</button>
+          <button type="button" data-period="6M" disabled>6M</button>
+          <button type="button" class="active" data-period="1Y" disabled>1Y</button>
+          <button type="button" data-period="3Y" disabled>3Y</button>
+          <button type="button" data-period="5Y" disabled>5Y</button>
+          <button type="button" data-period="All" disabled>All</button>
         </div>
       </div>
-      <div class="dash-perf-chart-placeholder">
+      <div class="dash-perf-chart-placeholder" id="dashPerfPlaceholder">
         <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
-        <div class="dash-perf-chart-placeholder-title">Coming soon</div>
-        <p>We'll chart your portfolio's value over time against the NIFTY 50 TRI once daily snapshots start being recorded — full P&amp;L and allocation numbers above are unaffected.</p>
+        <div class="dash-perf-chart-placeholder-title" id="dashPerfPlaceholderTitle">No trade book imported yet</div>
+        <p id="dashPerfPlaceholderText">Import your trade book (Settings → Import Trade Book) and add a Nifty History API URL (Settings) to enable this chart — it compares your actual invested capital against a Nifty 50 equivalent computed from your real trade dates. Full P&amp;L and allocation numbers above are unaffected either way.</p>
+      </div>
+      <div class="dash-perf-chart-wrap" id="dashPerfChartWrap" style="display:none">
+        <div class="chart-wrap" style="height:260px;"><canvas id="dashPerfChart"></canvas></div>
+        <div class="dash-perf-summary" id="dashPerfSummary"></div>
       </div>
     </div>
 
