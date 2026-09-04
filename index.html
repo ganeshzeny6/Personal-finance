@@ -152,6 +152,11 @@
 
   h2.section-title{font-family:var(--font-display);font-size:17px;font-weight:600;margin:0 0 4px;}
   p.section-sub{color:var(--text-faint);font-size:12.5px;margin:0 0 18px;}
+  @media (max-width:700px){
+    #panel-insights .section-sub, #panel-stockanalysis .section-sub{
+      display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;
+    }
+  }
 
   .stat-row{
     display:grid;
@@ -584,6 +589,9 @@
   .card h3 .hint{font-family:var(--font-body);font-weight:400;font-size:11px;color:var(--text-faint);}
 
   .chart-wrap{position:relative;height:260px;}
+  @media (max-width:700px){
+    .chart-wrap{height:300px;}
+  }
 
   .table-scroll{overflow-x:auto;border:1px solid var(--border);border-radius:var(--radius);}
   table{width:100%;border-collapse:collapse;font-size:12.8px;min-width:720px;}
@@ -801,6 +809,10 @@
     gap:12px;
     margin-bottom:18px;
   }
+  @media (max-width:700px){
+    .sa-summary-grid{grid-template-columns:1fr 1fr;}
+    .sa-summary-grid > :nth-child(5){grid-column:1 / -1;}
+  }
   .sa-stat-card{
     background:linear-gradient(160deg, var(--surface-2), var(--surface));
     border:1px solid var(--border);border-radius:var(--radius);
@@ -881,6 +893,26 @@
   @media (max-width:700px){
     .sa-detail-sections{grid-template-columns:1fr;}
     .sa-detail-panel{padding:16px 16px;}
+  }
+
+  /* Full fundamentals toggle — desktop always shows the sections
+     (no collapse UI at all, exactly as before); mobile gets a real
+     collapsed-by-default accordion so swiping between stocks doesn't
+     mean scrolling past six full sections per card. */
+  .sa-detail-toggle > summary{list-style:none;cursor:default;}
+  .sa-detail-toggle > summary::-webkit-details-marker{display:none;}
+  @media (min-width:701px){
+    .sa-detail-toggle > summary{display:none;}
+    .sa-detail-toggle:not([open]) > *:not(summary){display:block !important;}
+  }
+  @media (max-width:700px){
+    .sa-detail-toggle > summary{
+      cursor:pointer;padding:12px 2px;font-size:12.5px;font-weight:600;color:var(--gold);
+      display:flex;align-items:center;justify-content:space-between;
+    }
+    .sa-detail-toggle > summary::after{content:"▾";font-size:11px;color:var(--text-faint);}
+    .sa-detail-toggle[open] > summary::after{content:"▴";}
+    .sa-detail-toggle > summary:hover{color:var(--text);}
   }
 
   /* ============================================================
@@ -2055,6 +2087,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-09-03-5"></script>
+<script src="app.js?v=2026-09-03-6"></script>
 </body>
 </html>

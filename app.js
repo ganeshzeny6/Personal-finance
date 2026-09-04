@@ -3249,19 +3249,26 @@ function computeMFCategoryAllocation() {
 function renderInsightsDonut(existingChart, canvasId, entries, totalValue) {
   const ctx = document.getElementById(canvasId);
   if (!ctx) return existingChart;
+  // Chart.js loads from a CDN — if that ever fails (outage, ad-blocker,
+  // offline), throwing here would otherwise abort the rest of
+  // renderInsights() including code that has nothing to do with
+  // charts (the Mutual Fund Category table). Fail this one chart
+  // quietly instead of taking the whole tab down with it.
+  if (typeof Chart === "undefined") return existingChart;
   const labels = entries.map(e => e.label);
   const data = entries.map(e => totalValue > 0 ? +(e.value / totalValue * 100).toFixed(2) : 0);
   const colors = entries.map((_, i) => INSIGHTS_PALETTE[i % INSIGHTS_PALETTE.length]);
 
-  if (existingChart) {
-    existingChart.data.labels = labels;
-    existingChart.data.datasets[0].data = data;
-    existingChart.data.datasets[0].backgroundColor = colors;
-    existingChart.update();
-    return existingChart;
-  }
+  try {
+    if (existingChart) {
+      existingChart.data.labels = labels;
+      existingChart.data.datasets[0].data = data;
+      existingChart.data.datasets[0].backgroundColor = colors;
+      existingChart.update();
+      return existingChart;
+    }
 
-  return new Chart(ctx, {
+    return new Chart(ctx, {
     type: "doughnut",
     data: {
       labels,
@@ -3291,6 +3298,10 @@ function renderInsightsDonut(existingChart, canvasId, entries, totalValue) {
       cutout: "62%"
     }
   });
+  } catch (e) {
+    console.error("Chart render failed for", canvasId, e);
+    return existingChart;
+  }
 }
 
 /* ============================================================
@@ -4581,6 +4592,13 @@ function renderStockAnalysisSummary(joinedRows) {
 // here is read straight from the same `d` (stockAnalysisDerived()
 // output) the table row already used — nothing recalculated
 // differently, per the "no duplicate calculations" requirement.
+// Preserves the detail panel's expand/collapse state across
+// re-renders — the 30-second auto price refresh and every stock
+// switch rebuild this panel's innerHTML, which would otherwise
+// silently re-collapse an open <details> each time. Mobile-only UI
+// state; desktop always shows the sections regardless (see CSS).
+let saDetailPanelOpen = false;
+
 function renderStockAnalysisDetailPanel(joinedRows) {
   const panel = document.getElementById("saDetailPanel");
   if (!panel) return;
@@ -4618,52 +4636,60 @@ function renderStockAnalysisDetailPanel(joinedRows) {
         <div class="sa-detail-meta">${buyHTML}</div>
       </div>
     </div>
-    <div class="sa-detail-sections">
-      <div class="sa-detail-section">
-        <div class="sa-detail-section-title">Live Market Data${d.marketDataStale ? ' <span class="sa-stale-tag" title="Some fields could not refresh this cycle — showing last known values">stale</span>' : ""}</div>
-        <div class="sa-detail-row"><span class="k">Previous Close</span><span class="v">${fmtOrDash(d.prevClose)}</span></div>
-        <div class="sa-detail-row"><span class="k">Open</span><span class="v">${fmtOrDash(d.openPrice)}</span></div>
-        <div class="sa-detail-row"><span class="k">Day High / Low</span><span class="v">${fmtOrDash(d.dayHigh)} / ${fmtOrDash(d.dayLow)}</span></div>
-        <div class="sa-detail-row"><span class="k">52W High / Low</span><span class="v">${fmtOrDash(d.high52)} / ${fmtOrDash(d.low52)}</span></div>
+    <details class="sa-detail-toggle" id="saDetailToggle"${saDetailPanelOpen ? " open" : ""}>
+      <summary>Full fundamentals</summary>
+      <div class="sa-detail-sections">
+        <div class="sa-detail-section">
+          <div class="sa-detail-section-title">Live Market Data${d.marketDataStale ? ' <span class="sa-stale-tag" title="Some fields could not refresh this cycle — showing last known values">stale</span>' : ""}</div>
+          <div class="sa-detail-row"><span class="k">Previous Close</span><span class="v">${fmtOrDash(d.prevClose)}</span></div>
+          <div class="sa-detail-row"><span class="k">Open</span><span class="v">${fmtOrDash(d.openPrice)}</span></div>
+          <div class="sa-detail-row"><span class="k">Day High / Low</span><span class="v">${fmtOrDash(d.dayHigh)} / ${fmtOrDash(d.dayLow)}</span></div>
+          <div class="sa-detail-row"><span class="k">52W High / Low</span><span class="v">${fmtOrDash(d.high52)} / ${fmtOrDash(d.low52)}</span></div>
+        </div>
+        <div class="sa-detail-section">
+          <div class="sa-detail-section-title">Valuation</div>
+          <div class="sa-detail-row"><span class="k">PE / Industry PE</span><span class="v">${fmtOrDash(d.pe)} / ${fmtOrDash(d.industryPe)}</span></div>
+          <div class="sa-detail-row"><span class="k">PE vs Industry</span><span class="v">${peVsIndustryHTML}</span></div>
+          <div class="sa-detail-row"><span class="k">P/B / Industry P/B</span><span class="v ${d.pbClass}">${fmtOrDash(d.pb)} / ${fmtOrDash(d.industryPbv)}</span></div>
+          <div class="sa-detail-row"><span class="k">P/B vs Industry</span><span class="v">${pbVsIndustryHTML}</span></div>
+          <div class="sa-detail-row"><span class="k">Free Cash Flow (Prev FY)</span><span class="v">${fmtOrDash(d.fcfPrevAnn, 0)}</span></div>
+          <div class="sa-detail-row"><span class="k">Market Cap</span><span class="v">${fmtOrDash(d.marketCap, 0)}</span></div>
+        </div>
+        <div class="sa-detail-section">
+          <div class="sa-detail-section-title">Financial Health</div>
+          <div class="sa-detail-row"><span class="k">ROE</span><span class="v">${fmtOrDash(d.roe, 1, "%")}</span></div>
+          <div class="sa-detail-row"><span class="k">ROCE</span><span class="v">${fmtOrDash(d.roce, 1, "%")}</span></div>
+          ${roaRow}
+          <div class="sa-detail-row"><span class="k">Debt to Equity</span><span class="v">${fmtOrDash(d.debtToEquity)}</span></div>
+          <div class="sa-detail-row"><span class="k">Interest Coverage</span><span class="v">${fmtOrDash(d.intCoverage)}</span></div>
+          <div class="sa-detail-row"><span class="k">Promoter Holding</span><span class="v">${fmtOrDash(d.promoterHolding, 1, "%")}</span></div>
+        </div>
+        <div class="sa-detail-section">
+          <div class="sa-detail-section-title">Growth</div>
+          <div class="sa-detail-row"><span class="k">EPS Growth (3Y / 5Y)</span><span class="v">${fmtOrDash(d.epsGrowth3y, 1, "%")} / ${fmtOrDash(d.epsGrowth5y, 1, "%")}</span></div>
+          <div class="sa-detail-row"><span class="k">Profit Growth (3Y / 5Y)</span><span class="v">${fmtOrDash(d.profitVar3y, 1, "%")} / ${fmtOrDash(d.profitVar5y, 1, "%")}</span></div>
+          <div class="sa-detail-row"><span class="k">Sales Growth (5Y)</span><span class="v">${fmtOrDash(d.salesGrowth5y, 1, "%")}</span></div>
+          <div class="sa-detail-row"><span class="k">Quarterly Profit Growth</span><span class="v">${fmtOrDash(d.qtrProfitVar, 1, "%")}</span></div>
+          <div class="sa-detail-row"><span class="k">Quarterly Sales Growth</span><span class="v">${fmtOrDash(d.qtrSalesVar, 1, "%")}</span></div>
+        </div>
+        <div class="sa-detail-section">
+          <div class="sa-detail-section-title">Dividend &amp; Recommendation</div>
+          <div class="sa-detail-row"><span class="k">Yield % (calculated)</span><span class="v">${fmtOrDash(d.yieldPct, 2, "%")}</span></div>
+          <div class="sa-detail-row"><span class="k">Dividend Yield</span><span class="v">${fmtOrDash(d.dividendYield, 2, "%")}</span></div>
+          <div class="sa-detail-row"><span class="k">Book Value / Face Value</span><span class="v">${fmtOrDash(d.bookValue)} / ${fmtOrDash(d.faceValue)}</span></div>
+          <div class="sa-detail-row"><span class="k">52W Low / High</span><span class="v">${fmtOrDash(d.low52)} / ${fmtOrDash(d.high52)}</span></div>
+          <div class="sa-detail-row"><span class="k">Recommendation</span><span class="v">${buyHTML}</span></div>
+        </div>
+        ${renderFundamentalViewSectionHTML(d)}
+        ${renderBankingMetricsSectionHTML(row, d)}
       </div>
-      <div class="sa-detail-section">
-        <div class="sa-detail-section-title">Valuation</div>
-        <div class="sa-detail-row"><span class="k">PE / Industry PE</span><span class="v">${fmtOrDash(d.pe)} / ${fmtOrDash(d.industryPe)}</span></div>
-        <div class="sa-detail-row"><span class="k">PE vs Industry</span><span class="v">${peVsIndustryHTML}</span></div>
-        <div class="sa-detail-row"><span class="k">P/B / Industry P/B</span><span class="v ${d.pbClass}">${fmtOrDash(d.pb)} / ${fmtOrDash(d.industryPbv)}</span></div>
-        <div class="sa-detail-row"><span class="k">P/B vs Industry</span><span class="v">${pbVsIndustryHTML}</span></div>
-        <div class="sa-detail-row"><span class="k">Free Cash Flow (Prev FY)</span><span class="v">${fmtOrDash(d.fcfPrevAnn, 0)}</span></div>
-        <div class="sa-detail-row"><span class="k">Market Cap</span><span class="v">${fmtOrDash(d.marketCap, 0)}</span></div>
-      </div>
-      <div class="sa-detail-section">
-        <div class="sa-detail-section-title">Financial Health</div>
-        <div class="sa-detail-row"><span class="k">ROE</span><span class="v">${fmtOrDash(d.roe, 1, "%")}</span></div>
-        <div class="sa-detail-row"><span class="k">ROCE</span><span class="v">${fmtOrDash(d.roce, 1, "%")}</span></div>
-        ${roaRow}
-        <div class="sa-detail-row"><span class="k">Debt to Equity</span><span class="v">${fmtOrDash(d.debtToEquity)}</span></div>
-        <div class="sa-detail-row"><span class="k">Interest Coverage</span><span class="v">${fmtOrDash(d.intCoverage)}</span></div>
-        <div class="sa-detail-row"><span class="k">Promoter Holding</span><span class="v">${fmtOrDash(d.promoterHolding, 1, "%")}</span></div>
-      </div>
-      <div class="sa-detail-section">
-        <div class="sa-detail-section-title">Growth</div>
-        <div class="sa-detail-row"><span class="k">EPS Growth (3Y / 5Y)</span><span class="v">${fmtOrDash(d.epsGrowth3y, 1, "%")} / ${fmtOrDash(d.epsGrowth5y, 1, "%")}</span></div>
-        <div class="sa-detail-row"><span class="k">Profit Growth (3Y / 5Y)</span><span class="v">${fmtOrDash(d.profitVar3y, 1, "%")} / ${fmtOrDash(d.profitVar5y, 1, "%")}</span></div>
-        <div class="sa-detail-row"><span class="k">Sales Growth (5Y)</span><span class="v">${fmtOrDash(d.salesGrowth5y, 1, "%")}</span></div>
-        <div class="sa-detail-row"><span class="k">Quarterly Profit Growth</span><span class="v">${fmtOrDash(d.qtrProfitVar, 1, "%")}</span></div>
-        <div class="sa-detail-row"><span class="k">Quarterly Sales Growth</span><span class="v">${fmtOrDash(d.qtrSalesVar, 1, "%")}</span></div>
-      </div>
-      <div class="sa-detail-section">
-        <div class="sa-detail-section-title">Dividend &amp; Recommendation</div>
-        <div class="sa-detail-row"><span class="k">Yield % (calculated)</span><span class="v">${fmtOrDash(d.yieldPct, 2, "%")}</span></div>
-        <div class="sa-detail-row"><span class="k">Dividend Yield</span><span class="v">${fmtOrDash(d.dividendYield, 2, "%")}</span></div>
-        <div class="sa-detail-row"><span class="k">Book Value / Face Value</span><span class="v">${fmtOrDash(d.bookValue)} / ${fmtOrDash(d.faceValue)}</span></div>
-        <div class="sa-detail-row"><span class="k">52W Low / High</span><span class="v">${fmtOrDash(d.low52)} / ${fmtOrDash(d.high52)}</span></div>
-        <div class="sa-detail-row"><span class="k">Recommendation</span><span class="v">${buyHTML}</span></div>
-      </div>
-      ${renderFundamentalViewSectionHTML(d)}
-      ${renderBankingMetricsSectionHTML(row, d)}
-    </div>
+    </details>
   `;
+
+  const detailsEl = document.getElementById("saDetailToggle");
+  if (detailsEl) {
+    detailsEl.addEventListener("toggle", () => { saDetailPanelOpen = detailsEl.open; });
+  }
 }
 
 // Full-width detail-panel section for the sector-aware Fundamental
