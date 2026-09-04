@@ -148,6 +148,8 @@
   main{padding:26px 28px 60px;max-width:1400px;margin:0 auto;}
   .panel{display:none;}
   .panel.active{display:block;animation:fade .25s ease;}
+  .portfolio-subpanel{display:none;}
+  .portfolio-subpanel.active{display:block;animation:fade .25s ease;}
   @keyframes fade{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:translateY(0);}}
 
   h2.section-title{font-family:var(--font-display);font-size:17px;font-weight:600;margin:0 0 4px;}
@@ -206,6 +208,30 @@
   .dash-header-sub{font-size:12.5px;color:var(--text-faint);margin:2px 0 0;}
   .dash-header-right{text-align:right;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);white-space:nowrap;}
   .dash-market-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-left:5px;}
+
+  /* ---------- Portfolio tab: header + category selector ---------- */
+  .portfolio-header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:22px;}
+  .portfolio-header-title{font-family:var(--font-display);font-size:20px;font-weight:600;color:var(--text);margin:0;}
+  .portfolio-header-sub{font-size:12.5px;color:var(--text-faint);margin:4px 0 0;}
+  .portfolio-selector{
+    display:inline-flex;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:10px;padding:4px;gap:2px;max-width:100%;overflow-x:auto;
+  }
+  .portfolio-selector-btn{
+    background:transparent;border:none;color:var(--text-muted);font-size:12.5px;font-weight:600;
+    padding:8px 16px;border-radius:7px;cursor:pointer;white-space:nowrap;font-family:var(--font-body);
+    transition:background .15s ease, color .15s ease;flex:none;
+  }
+  .portfolio-selector-btn:hover{color:var(--text);}
+  .portfolio-selector-btn.active{background:var(--gold);color:#1b1408;}
+  @media (max-width:700px){
+    .portfolio-header{flex-direction:column;align-items:stretch;gap:12px;}
+    .portfolio-selector{width:100%;}
+    .portfolio-selector-btn{flex:1;text-align:center;padding:10px 6px;font-size:12px;}
+  }
+  @media (max-width:360px){
+    .portfolio-selector-btn{padding:10px 4px;font-size:11px;}
+  }
   .dash-market-dot.open{background:var(--positive);}
   .dash-market-dot.closed{background:var(--text-faint);}
 
@@ -1328,7 +1354,7 @@
     align-items:center;justify-content:center;
   }
   @media (max-width:700px){
-    .panel.active .fab-add{display:flex;}
+    .panel.active .fab-add, .portfolio-subpanel.active .fab-add{display:flex;}
   }
 
   /* Dashboard's allocation table and Insights' MF Category Breakdown
@@ -1380,10 +1406,7 @@
 
 <div class="tabs" role="tablist">
   <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
-  <button class="tab-btn" data-tab="equity">Equity</button>
-  <button class="tab-btn" data-tab="debt">Debt</button>
-  <button class="tab-btn" data-tab="mf">Mutual Funds</button>
-  <button class="tab-btn" data-tab="gold">Gold</button>
+  <button class="tab-btn" data-tab="portfolio">Portfolio</button>
   <button class="tab-btn" data-tab="insights">Insights</button>
   <button class="tab-btn" data-tab="stockanalysis">Stock Analysis</button>
 </div>
@@ -1515,8 +1538,23 @@
 
   </section>
 
-  <!-- ============ EQUITY ============ -->
-  <section class="panel" id="panel-equity">
+  <!-- ============ PORTFOLIO ============ -->
+  <section class="panel" id="panel-portfolio">
+    <div class="portfolio-header">
+      <div>
+        <h2 class="portfolio-header-title">Portfolio</h2>
+        <p class="portfolio-header-sub">Overview of your entire portfolio</p>
+      </div>
+      <div class="portfolio-selector" id="portfolioSelector" role="tablist">
+        <button class="portfolio-selector-btn active" data-subtab="equity">Equity</button>
+        <button class="portfolio-selector-btn" data-subtab="debt">Debt</button>
+        <button class="portfolio-selector-btn" data-subtab="mf">Mutual Funds</button>
+        <button class="portfolio-selector-btn" data-subtab="gold">Gold</button>
+      </div>
+    </div>
+
+    <!-- ============ EQUITY ============ -->
+    <section class="portfolio-subpanel active" id="panel-equity">
     <h2 class="section-title">Equity — Stocks</h2>
     <p class="section-sub">Track individual stock holdings. Units, Avg Price and LTP are driven by Zerodha Holdings import and an automatic live-price refresh every 30 seconds — only Sector can be edited by hand. Cap (Large/Mid/Small) is derived from the Market Cap you import via "Import Screener Data" on the Stock Analysis tab, matched by Symbol; it shows a dash until that's imported.</p>
 
@@ -1609,7 +1647,8 @@
   </section>
 
   <!-- ============ DEBT ============ -->
-  <section class="panel" id="panel-debt">
+    <section class="portfolio-subpanel" id="panel-debt">
+
 
     <div class="debt-header">
       <div>
@@ -1811,7 +1850,7 @@
   </section>
 
   <!-- ============ MUTUAL FUNDS ============ -->
-  <section class="panel" id="panel-mf">
+    <section class="portfolio-subpanel" id="panel-mf">
     <h2 class="section-title">Mutual Funds</h2>
     <p class="section-sub">Equity mutual fund holdings. Units, Category and NAV are driven by Zerodha Holdings import and an automatic live-NAV refresh every 30 seconds — only Remarks can be edited by hand.</p>
 
@@ -1899,7 +1938,7 @@
   </section>
 
   <!-- ============ GOLD ============ -->
-  <section class="panel" id="panel-gold">
+    <section class="portfolio-subpanel" id="panel-gold">
     <h2 class="section-title">Gold</h2>
     <p class="section-sub">Gold ETF holdings. Weight, Purchase Rate, Invested Amt and Current Rate are driven by Zerodha Holdings import and an automatic live-price refresh every 30 seconds — only Notes can be edited by hand.</p>
 
@@ -1980,6 +2019,7 @@
         </tfoot>
       </table>
     </div>
+    </section>
   </section>
 
   <!-- ============ INSIGHTS ============ -->
@@ -2186,6 +2226,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-09-03-8"></script>
+<script src="app.js?v=2026-09-03-9"></script>
 </body>
 </html>

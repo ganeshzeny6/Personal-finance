@@ -3130,11 +3130,36 @@ function renderDashHeaderBits() {
 
 // Switches to another tab exactly the way clicking its button would —
 // reuses the existing tab-switch handler rather than duplicating its
-// panel/active-class logic here.
+// panel/active-class logic here. The four asset classes now live as
+// sub-tabs inside Portfolio rather than top-level tabs, so those keys
+// route through switchPortfolioSubTab() instead of looking for a
+// (no longer existing) top-level button.
+const PORTFOLIO_SUBTABS = ["equity", "debt", "mf", "gold"];
+
 function goToTab(tabKey) {
+  if (PORTFOLIO_SUBTABS.includes(tabKey)) {
+    const btn = document.querySelector('.tab-btn[data-tab="portfolio"]');
+    if (btn) btn.click();
+    switchPortfolioSubTab(tabKey);
+    return;
+  }
   const btn = document.querySelector(`.tab-btn[data-tab="${tabKey}"]`);
   if (btn) btn.click();
 }
+
+// Swaps which of the four existing asset-class panels is visible
+// inside the Portfolio tab. Each panel already fully re-renders on
+// every data change regardless of visibility (same as before this
+// restructuring — only Insights guards on active state), so no
+// render call is needed here, just the class swap.
+function switchPortfolioSubTab(key) {
+  document.querySelectorAll(".portfolio-selector-btn").forEach(b => b.classList.toggle("active", b.dataset.subtab === key));
+  document.querySelectorAll(".portfolio-subpanel").forEach(p => p.classList.toggle("active", p.id === "panel-" + key));
+}
+
+document.querySelectorAll(".portfolio-selector-btn").forEach(btn => {
+  btn.addEventListener("click", () => switchPortfolioSubTab(btn.dataset.subtab));
+});
 
 function renderDashboard() {
   const cashInput = document.getElementById("cashInput");
