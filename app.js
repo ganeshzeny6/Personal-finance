@@ -2899,7 +2899,8 @@ function renderDashAllocDonut(classes, netWorth) {
         maintainAspectRatio: false,
         plugins: {
           legend: { display: false },
-          tooltip: { callbacks: { label: (ctx) => `${ctx.label}: ${fmtINR(ctx.parsed)}` } }
+          tooltip: { callbacks: { label: (ctx) => `${ctx.label}: ${fmtINR(ctx.parsed)}` } },
+          datalabels: { display: false }
         },
         cutout: "72%"
       }

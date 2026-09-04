@@ -314,7 +314,13 @@
   .dash-alloc-alert span{font-size:12.5px;color:var(--negative);}
   .dash-alloc-alert .btn{flex:none;}
 
-  @media (max-width:700px){
+  /* This card responds to its OWN width, not just the viewport —
+     it sits in a 1.6fr grid column next to Portfolio Health on
+     desktop, so the donut+table can be squeezed even on a wide
+     screen, not only on an actual mobile viewport. */
+  #dashAllocCard{container-type:inline-size;}
+
+  @container (max-width:560px){
     .dash-alloc-layout{flex-direction:column;align-items:stretch;gap:18px;}
     .dash-alloc-donut-wrap{width:150px;height:150px;align-self:center;}
     .dash-alloc-table-wrap{overflow-x:hidden;}
@@ -332,6 +338,13 @@
     .dash-alloc-table td:not(:first-child)::before{content:attr(data-label);color:var(--text-faint);font-weight:400;font-size:11.5px;}
     .dash-alloc-alert{flex-direction:column;align-items:stretch;text-align:center;}
     .dash-alloc-alert .btn{width:100%;}
+  }
+  @container (min-width:561px) and (max-width:680px){
+    /* Medium width: keep the side-by-side layout but shrink the
+       donut and tighten the table so nothing crowds the edge. */
+    .dash-alloc-donut-wrap{width:130px;height:130px;}
+    .dash-alloc-layout{gap:16px;}
+    .dash-alloc-table{font-size:11.5px;}
   }
 
   /* ---------- Investment opportunities ---------- */
@@ -1421,57 +1434,61 @@
       <div id="dashAttentionList"></div>
     </div>
 
-    <div class="dash-section card" id="dashAllocCard">
-      <div class="dash-alloc-card-header">
-        <h3>Asset Allocation <span class="dash-alloc-info" title="Target % is editable — used only to compute the drift shown here. Debt is valued at amount invested (FDs don't fluctuate day-to-day); Equity, Mutual Fund, and Gold values use live prices where available.">ⓘ</span></h3>
-        <button class="dash-alloc-edit-link" id="btnEditTargets">Edit targets</button>
-      </div>
-      <div class="dash-alloc-layout">
-        <div class="dash-alloc-donut-wrap">
-          <canvas id="dashAllocDonut"></canvas>
-          <div class="dash-alloc-donut-center">
-            <div class="dash-alloc-donut-total" id="dashAllocDonutTotal">₹0</div>
-            <div class="dash-alloc-donut-label">Total Value</div>
+    <div class="dash-grid dash-section">
+      <div class="card" id="dashAllocCard">
+        <div class="dash-alloc-card-header">
+          <h3>Asset Allocation <span class="dash-alloc-info" title="Target % is editable — used only to compute the drift shown here. Debt is valued at amount invested (FDs don't fluctuate day-to-day); Equity, Mutual Fund, and Gold values use live prices where available.">ⓘ</span></h3>
+          <button class="dash-alloc-edit-link" id="btnEditTargets">Edit targets</button>
+        </div>
+        <div class="dash-alloc-layout">
+          <div class="dash-alloc-donut-wrap">
+            <canvas id="dashAllocDonut"></canvas>
+            <div class="dash-alloc-donut-center">
+              <div class="dash-alloc-donut-total" id="dashAllocDonutTotal">₹0</div>
+              <div class="dash-alloc-donut-label">Total Value</div>
+            </div>
+          </div>
+          <div class="dash-alloc-table-wrap">
+            <table class="dash-alloc-table">
+              <thead>
+                <tr><th class="left">Asset Class</th><th>Current</th><th>Target</th><th>Variance</th><th>Amount</th></tr>
+              </thead>
+              <tbody id="dashAllocTableBody"></tbody>
+            </table>
           </div>
         </div>
-        <div class="dash-alloc-table-wrap">
-          <table class="dash-alloc-table">
-            <thead>
-              <tr><th class="left">Asset Class</th><th>Current</th><th>Target</th><th>Variance</th><th>Amount</th></tr>
-            </thead>
-            <tbody id="dashAllocTableBody"></tbody>
-          </table>
+        <div class="dash-alloc-alert" id="dashAllocAlert" style="display:none">
+          <span id="dashAllocAlertText"></span>
+          <button class="btn btn-ghost btn-sm" id="dashAllocAlertBtn">View Rebalance Plan</button>
         </div>
       </div>
-      <div class="dash-alloc-alert" id="dashAllocAlert" style="display:none">
-        <span id="dashAllocAlertText"></span>
-        <button class="btn btn-ghost btn-sm" id="dashAllocAlertBtn">View Rebalance Plan</button>
+
+      <div class="card">
+        <h3>Portfolio health</h3>
+        <div id="dashHealthBody"></div>
       </div>
     </div>
 
-    <div class="dash-section card">
-      <h3>Portfolio health</h3>
-      <div id="dashHealthBody"></div>
-    </div>
-
-    <div class="dash-section card">
-      <h3>Investment opportunities <span class="hint">top picks from Intelligent Insights</span></h3>
-      <div id="dashOpportunitiesList"></div>
-      <div class="dash-alloc-footer">
-        <button class="btn btn-ghost" id="btnViewAllOpportunities">View all opportunities</button>
-      </div>
-    </div>
-
-    <div class="dash-section card">
-      <h3>Portfolio movers <span class="hint">by absolute P&amp;L</span></h3>
-      <div class="dash-perf-grid">
-        <div>
-          <div class="dash-kpi-label" style="margin-bottom:8px;">Top contributors</div>
-          <div id="dashTopContributors"></div>
+    <div class="dash-grid dash-section">
+      <div class="card">
+        <h3>Investment opportunities <span class="hint">top picks from Intelligent Insights</span></h3>
+        <div id="dashOpportunitiesList"></div>
+        <div class="dash-alloc-footer">
+          <button class="btn btn-ghost" id="btnViewAllOpportunities">View all opportunities</button>
         </div>
-        <div>
-          <div class="dash-kpi-label" style="margin-bottom:8px;">Biggest losers</div>
-          <div id="dashBiggestLosers"></div>
+      </div>
+
+      <div class="card">
+        <h3>Portfolio movers <span class="hint">by absolute P&amp;L</span></h3>
+        <div class="dash-perf-grid">
+          <div>
+            <div class="dash-kpi-label" style="margin-bottom:8px;">Top contributors</div>
+            <div id="dashTopContributors"></div>
+          </div>
+          <div>
+            <div class="dash-kpi-label" style="margin-bottom:8px;">Biggest losers</div>
+            <div id="dashBiggestLosers"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -2169,6 +2186,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-09-03-7"></script>
+<script src="app.js?v=2026-09-03-8"></script>
 </body>
 </html>
