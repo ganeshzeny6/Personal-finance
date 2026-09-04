@@ -260,7 +260,9 @@
   .dash-health-fill.poor{background:var(--negative);}
   .dash-health-note{font-size:11.5px;color:var(--text-faint);margin-top:6px;line-height:1.5;}
 
-  /* ---------- Asset allocation bars ---------- */
+  /* ---------- Asset allocation bars (still used by Debt's
+     per-category breakdown — Dashboard's own allocation card below
+     uses the donut+table design instead) ---------- */
   .dash-alloc-row{margin-bottom:13px;}
   .dash-alloc-row:last-child{margin-bottom:0;}
   .dash-alloc-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;}
@@ -273,11 +275,64 @@
   .dash-alloc-amounts b{font-family:var(--font-mono);font-weight:600;color:var(--text);}
   .dash-alloc-track{height:6px;background:var(--surface-2);border-radius:3px;position:relative;overflow:visible;}
   .dash-alloc-fill{height:100%;border-radius:3px;background:var(--blue);}
-  .dash-alloc-target{position:absolute;top:-2px;width:2px;height:10px;background:var(--text-faint);border-radius:1px;}
-  .dash-alloc-diff{font-family:var(--font-mono);font-size:10.5px;color:var(--text-faint);margin-top:3px;}
-  .dash-alloc-diff.over{color:var(--negative);}
-  .dash-alloc-diff.under{color:var(--warning);}
   .dash-alloc-footer{display:flex;justify-content:flex-end;margin-top:12px;}
+
+  /* ---------- Asset Allocation card (Dashboard): donut + table + alert ---------- */
+  .dash-alloc-card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;}
+  .dash-alloc-card-header h3{margin:0;}
+  .dash-alloc-info{
+    display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;
+    border-radius:50%;border:1px solid var(--text-faint);color:var(--text-faint);
+    font-size:10px;font-style:normal;margin-left:5px;cursor:help;vertical-align:middle;
+  }
+  .dash-alloc-edit-link{background:transparent;border:none;color:var(--text-muted);font-size:11.5px;cursor:pointer;text-decoration:underline;padding:0;}
+  .dash-alloc-edit-link:hover{color:var(--gold);}
+  .dash-alloc-layout{display:flex;gap:28px;align-items:center;}
+  .dash-alloc-donut-wrap{position:relative;width:170px;height:170px;flex:none;}
+  #dashAllocDonut{width:100% !important;height:100% !important;display:block;}
+  .dash-alloc-donut-center{
+    position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    text-align:center;pointer-events:none;
+  }
+  .dash-alloc-donut-total{font-family:var(--font-mono);font-size:17px;font-weight:600;color:var(--text);white-space:nowrap;}
+  .dash-alloc-donut-label{font-size:10.5px;color:var(--text-faint);margin-top:2px;}
+  .dash-alloc-table-wrap{flex:1;min-width:0;overflow-x:auto;}
+  .dash-alloc-table{width:100%;min-width:0;border-collapse:collapse;font-size:12.5px;}
+  .dash-alloc-table th{text-align:right;font-weight:500;font-size:10.5px;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-faint);padding:0 0 10px;white-space:nowrap;}
+  .dash-alloc-table th.left, .dash-alloc-table td:first-child{text-align:left;}
+  .dash-alloc-table td{padding:9px 0;border-top:1px solid var(--border);white-space:nowrap;text-align:right;color:var(--text);}
+  .dash-alloc-table td:first-child{display:flex;align-items:center;gap:8px;font-weight:500;}
+  .dash-alloc-dot{width:9px;height:9px;border-radius:50%;flex:none;}
+  .dash-alloc-var{font-family:var(--font-mono);color:var(--text-muted);}
+  .dash-alloc-var.over{color:var(--negative);}
+  .dash-alloc-var.under{color:var(--positive);}
+  .dash-alloc-alert{
+    display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+    margin-top:18px;padding:12px 16px;border-radius:9px;
+    background:var(--negative-soft);border:1px solid #e0667a44;
+  }
+  .dash-alloc-alert span{font-size:12.5px;color:var(--negative);}
+  .dash-alloc-alert .btn{flex:none;}
+
+  @media (max-width:700px){
+    .dash-alloc-layout{flex-direction:column;align-items:stretch;gap:18px;}
+    .dash-alloc-donut-wrap{width:150px;height:150px;align-self:center;}
+    .dash-alloc-table-wrap{overflow-x:hidden;}
+    .dash-alloc-table{font-size:12px;width:100%;table-layout:fixed;}
+    .dash-alloc-table thead{display:none;}
+    .dash-alloc-table, .dash-alloc-table tbody, .dash-alloc-table tr{display:block;width:100%;}
+    .dash-alloc-table tr{border-top:1px solid var(--border);padding:9px 0;}
+    .dash-alloc-table tr:first-child{border-top:none;}
+    .dash-alloc-table td{
+      display:flex;width:100%;box-sizing:border-box;justify-content:space-between;align-items:center;
+      border-top:none;padding:3px 0;text-align:right;white-space:normal;
+    }
+    .dash-alloc-table td:first-child{font-weight:600;font-size:13px;}
+    #panel-dashboard .dash-alloc-table td:first-child::before{content:none;}
+    .dash-alloc-table td:not(:first-child)::before{content:attr(data-label);color:var(--text-faint);font-weight:400;font-size:11.5px;}
+    .dash-alloc-alert{flex-direction:column;align-items:stretch;text-align:center;}
+    .dash-alloc-alert .btn{width:100%;}
+  }
 
   /* ---------- Investment opportunities ---------- */
   .dash-opp-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;}
@@ -1145,6 +1200,15 @@
 
   @media (max-width:700px){
     .table-scroll{border:none;overflow:visible;}
+    /* Exception: the Mutual Fund Category Breakdown table (Insights)
+       is a plain <table>, not .data-table — it never gets the
+       stacked-card conversion below, so unlike every other table on
+       this page it still needs its own contained horizontal scroll
+       on narrow screens instead of inheriting the blanket
+       overflow:visible above (which was pushing it into full page
+       overflow). */
+    #panel-insights .table-scroll{overflow-x:auto;border:1px solid var(--border);}
+    #panel-insights .table-scroll table{min-width:0;width:100%;}
     table.data-table{table-layout:auto;min-width:0 !important;width:100%;}
     .data-table thead, .data-table tfoot{display:none;}
     .data-table tbody{display:block;}
@@ -1357,19 +1421,37 @@
       <div id="dashAttentionList"></div>
     </div>
 
-    <div class="dash-grid dash-section">
-      <div class="card">
-        <h3>Asset allocation <span class="hint">current vs. target</span></h3>
-        <div id="dashAllocBars"></div>
-        <div class="dash-alloc-footer">
-          <button class="btn btn-ghost" id="btnEditTargets">Edit targets</button>
+    <div class="dash-section card" id="dashAllocCard">
+      <div class="dash-alloc-card-header">
+        <h3>Asset Allocation <span class="dash-alloc-info" title="Target % is editable — used only to compute the drift shown here. Debt is valued at amount invested (FDs don't fluctuate day-to-day); Equity, Mutual Fund, and Gold values use live prices where available.">ⓘ</span></h3>
+        <button class="dash-alloc-edit-link" id="btnEditTargets">Edit targets</button>
+      </div>
+      <div class="dash-alloc-layout">
+        <div class="dash-alloc-donut-wrap">
+          <canvas id="dashAllocDonut"></canvas>
+          <div class="dash-alloc-donut-center">
+            <div class="dash-alloc-donut-total" id="dashAllocDonutTotal">₹0</div>
+            <div class="dash-alloc-donut-label">Total Value</div>
+          </div>
+        </div>
+        <div class="dash-alloc-table-wrap">
+          <table class="dash-alloc-table">
+            <thead>
+              <tr><th class="left">Asset Class</th><th>Current</th><th>Target</th><th>Variance</th><th>Amount</th></tr>
+            </thead>
+            <tbody id="dashAllocTableBody"></tbody>
+          </table>
         </div>
       </div>
-
-      <div class="card">
-        <h3>Portfolio health</h3>
-        <div id="dashHealthBody"></div>
+      <div class="dash-alloc-alert" id="dashAllocAlert" style="display:none">
+        <span id="dashAllocAlertText"></span>
+        <button class="btn btn-ghost btn-sm" id="dashAllocAlertBtn">View Rebalance Plan</button>
       </div>
+    </div>
+
+    <div class="dash-section card">
+      <h3>Portfolio health</h3>
+      <div id="dashHealthBody"></div>
     </div>
 
     <div class="dash-section card">
@@ -2087,6 +2169,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-09-03-6"></script>
+<script src="app.js?v=2026-09-03-7"></script>
 </body>
 </html>

@@ -288,6 +288,30 @@ function fmtPct(n) {
   return (n >= 0 ? "" : "") + n.toFixed(2) + "%";
 }
 
+// Compact Indian currency notation (₹1.21 Cr / ₹10.9 L) for the
+// Dashboard's Asset Allocation card, where full digit-grouped rupee
+// figures would be too wide next to a donut + 5-column table. Same
+// underlying number as fmtINR — just a different display format.
+function fmtINRCompact(n, decimals) {
+  n = Number(n) || 0;
+  const sign = n < 0 ? "-" : "";
+  const abs = Math.abs(n);
+  if (abs >= 1e7) return sign + "\u20B9" + (abs / 1e7).toFixed(decimals ?? 2) + " Cr";
+  if (abs >= 1e5) return sign + "\u20B9" + (abs / 1e5).toFixed(decimals ?? 1) + " L";
+  return fmtINR(n);
+}
+
+// Same as above but always shows an explicit +/- sign, for variance/
+// diff amounts where "no sign" would read as ambiguous rather than
+// "on target".
+function fmtINRCompactSigned(n, decimals) {
+  n = Number(n) || 0;
+  const base = fmtINRCompact(Math.abs(n), decimals);
+  if (n > 0) return "+" + base;
+  if (n < 0) return "-" + base;
+  return base;
+}
+
 function plClass(n) {
   return n > 0 ? "pos" : n < 0 ? "neg" : "muted";
 }
@@ -612,6 +636,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
 // lives in full.
 document.getElementById("btnEditTargets")?.addEventListener("click", openIdealTargetsModal);
 document.getElementById("btnDashRebalance")?.addEventListener("click", openIdealTargetsModal);
+document.getElementById("dashAllocAlertBtn")?.addEventListener("click", openIdealTargetsModal);
 document.getElementById("btnDashAddMoney")?.addEventListener("click", openAddMoneyModal);
 document.getElementById("btnDashViewOpportunities")?.addEventListener("click", () => goToTab("stockanalysis"));
 document.getElementById("btnViewAllOpportunities")?.addEventListener("click", () => goToTab("stockanalysis"));
@@ -2841,45 +2866,92 @@ function renderDashHealth() {
   `;
 }
 
-// Horizontal current-vs-target bars, replacing the old donut. Reads
-// the exact same classes/netWorth/state.ideal as the Edit Targets
-// modal below — never a separately-computed allocation. Rupee
-// amounts (current vs. planned) are the primary numbers per row,
-// with the current/target % shown as smaller secondary context.
-function renderDashAllocBars() {
-  const el = document.getElementById("dashAllocBars");
-  if (!el) return;
+// Donut + table + single-alert Asset Allocation card, matching the
+// reference layout: colored ring with the net worth centered inside
+// it, a 5-column table (dot/label, Current %, Target %, Variance,
+// Amount) to its right, and — only when something is meaningfully
+// overweight — one alert bar naming the worst offender with a
+// rebalance shortcut. Reads the exact same classes/netWorth/
+// state.ideal as everything else on the Dashboard; only the
+// presentation is new.
+let dashAllocDonutChart = null;
+
+function renderDashAllocDonut(classes, netWorth) {
+  const ctx = document.getElementById("dashAllocDonut");
+  if (!ctx || typeof Chart === "undefined") return; // fails quietly if the Chart.js CDN hiccups — table/alert still work
+  const labels = classes.map(c => c.label);
+  const data = classes.map(c => c.current);
+  const colors = classes.map(c => ASSET_COLORS[c.key]);
+
+  try {
+    if (dashAllocDonutChart) {
+      dashAllocDonutChart.data.labels = labels;
+      dashAllocDonutChart.data.datasets[0].data = data;
+      dashAllocDonutChart.data.datasets[0].backgroundColor = colors;
+      dashAllocDonutChart.update();
+      return;
+    }
+    dashAllocDonutChart = new Chart(ctx, {
+      type: "doughnut",
+      data: { labels, datasets: [{ data, backgroundColor: colors, borderColor: "#0c1220", borderWidth: 2 }] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: (ctx) => `${ctx.label}: ${fmtINR(ctx.parsed)}` } }
+        },
+        cutout: "72%"
+      }
+    });
+  } catch (e) {
+    console.error("Dashboard allocation donut render failed", e);
+  }
+}
+
+function renderDashAllocation() {
   const { classes, netWorth } = computeAssetClassesAndNetWorth();
-  el.innerHTML = classes.map(c => {
+  renderDashAllocDonut(classes, netWorth);
+
+  const totalEl = document.getElementById("dashAllocDonutTotal");
+  if (totalEl) totalEl.textContent = fmtINRCompact(netWorth, 2);
+
+  const tbody = document.getElementById("dashAllocTableBody");
+  if (!tbody) return;
+
+  let worstOver = null;
+  tbody.innerHTML = classes.map(c => {
     const currentPct = netWorth > 0 ? (c.current / netWorth) * 100 : 0;
     const idealPct = Number(state.ideal[c.key]) || 0;
-    const plannedAmount = (idealPct / 100) * netWorth;
     const diffPct = currentPct - idealPct;
-    const diffAmount = c.current - plannedAmount;
-    const over = diffPct > ATTENTION_DRIFT_THRESHOLD;
-    const under = diffPct < -ATTENTION_DRIFT_THRESHOLD;
-    const numCls = over ? "over" : under ? "under" : "";
-    const barPct = Math.max(0, Math.min(100, currentPct));
+    const diffAmount = c.current - (idealPct / 100) * netWorth;
+    const varCls = diffPct > ATTENTION_DRIFT_THRESHOLD ? "over" : diffPct < -ATTENTION_DRIFT_THRESHOLD ? "under" : "";
+
+    if (diffPct > ATTENTION_DRIFT_THRESHOLD && (!worstOver || diffAmount > worstOver.diffAmount)) {
+      worstOver = { label: c.label, diffAmount };
+    }
+
     return `
-      <div class="dash-alloc-row">
-        <div class="dash-alloc-top">
-          <span class="dash-alloc-name"><span class="swatch" style="background:${ASSET_COLORS[c.key]}"></span>${escapeAttr(c.label)}</span>
-          <span class="dash-alloc-pct ${numCls}">${fmtNum(currentPct, 1)}% / ${fmtNum(idealPct, 1)}%</span>
-        </div>
-        <div class="dash-alloc-amounts">
-          <span>Invested <b>${fmtINR(c.current)}</b></span>
-          <span>Planned <b>${fmtINR(plannedAmount)}</b></span>
-        </div>
-        <div class="dash-alloc-track">
-          <div class="dash-alloc-fill" style="width:${barPct}%;background:${ASSET_COLORS[c.key]}"></div>
-          <div class="dash-alloc-target" style="left:${Math.max(0, Math.min(100, idealPct))}%"></div>
-        </div>
-        ${Math.abs(diffPct) >= ATTENTION_DRIFT_THRESHOLD
-          ? `<div class="dash-alloc-diff ${numCls}">${over ? "+" : "-"}${fmtINR(Math.abs(diffAmount))} ${over ? "overweight" : "underweight"}</div>`
-          : ""}
-      </div>
+      <tr>
+        <td data-label="Asset Class"><span class="dash-alloc-dot" style="background:${ASSET_COLORS[c.key]}"></span>${escapeAttr(c.label)}</td>
+        <td data-label="Current">${fmtNum(currentPct, 1)}%</td>
+        <td data-label="Target">${fmtNum(idealPct, 1)}%</td>
+        <td data-label="Variance" class="dash-alloc-var ${varCls}">${diffPct >= 0 ? "+" : ""}${fmtNum(diffPct, 1)}%</td>
+        <td data-label="Amount" class="dash-alloc-var ${varCls}">${fmtINRCompactSigned(diffAmount, 1)}</td>
+      </tr>
     `;
   }).join("");
+
+  const alertEl = document.getElementById("dashAllocAlert");
+  if (alertEl) {
+    if (worstOver) {
+      alertEl.style.display = "";
+      document.getElementById("dashAllocAlertText").textContent =
+        `${worstOver.label} is ${fmtINRCompact(worstOver.diffAmount, 1)} above your target. Consider rebalancing.`;
+    } else {
+      alertEl.style.display = "none";
+    }
+  }
 }
 
 // Opens the existing ideal-% editor (previously an always-visible
@@ -3096,7 +3168,7 @@ function renderDashboard() {
   renderDashHeaderBits();
   renderDashAttention();
   renderDashHealth();
-  renderDashAllocBars();
+  renderDashAllocation();
   renderDashOpportunities();
   renderDashPerformers();
   renderDashBreakdown();
