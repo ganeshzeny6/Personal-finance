@@ -332,6 +332,55 @@ function saveState() {
   scheduleCloudPush();
 }
 
+/* ============================================================
+   TRADE BOOK (Portfolio performance chart — deliberately separate
+   from `state`/STORAGE_KEY/Firestore)
+   Ganesh asked for this data to stay out of Firestore specifically
+   (everything else in `state` still syncs to the cloud as before) —
+   so it lives in its own localStorage key, with its own load/save
+   pair, and saveTradeBook() below never calls scheduleCloudPush().
+   Holds raw trade-level rows imported from Zerodha Console
+   Tradebook CSV exports across however many demat accounts, later
+   used to build the "Portfolio performance vs Nifty 50" chart. It
+   is intentionally NOT reconciled into state.equity/mf/gold here —
+   that's a separate, not-yet-built step; this is import + storage
+   only.
+   ============================================================ */
+
+const TRADEBOOK_STORAGE_KEY = "tradebook_data_v1";
+
+function blankTradeBook() {
+  return {
+    // One entry per unique (accountId + exchange + segment + tradeId)
+    // key — see tradeKey(). Shape: { accountId, symbol, isin,
+    // tradeDate, exchange, segment, series, tradeType, auction,
+    // quantity, price, tradeId, orderId, orderExecutionTime,
+    // assetClass } — assetClass is "equity" | "mf" | "gold" (Gold ETF
+    // rows like GOLDBEES are detected the same way Zerodha Holdings
+    // import already does, via isGoldSymbol()).
+    trades: [],
+    // Informational import history only, shown in Settings.
+    imports: []
+  };
+}
+
+function loadTradeBook() {
+  try {
+    const raw = localStorage.getItem(TRADEBOOK_STORAGE_KEY);
+    if (!raw) return blankTradeBook();
+    return { ...blankTradeBook(), ...JSON.parse(raw) };
+  } catch (e) {
+    console.error("Failed to load trade book data, starting fresh.", e);
+    return blankTradeBook();
+  }
+}
+
+function saveTradeBook() {
+  localStorage.setItem(TRADEBOOK_STORAGE_KEY, JSON.stringify(tradeBook));
+}
+
+let tradeBook = loadTradeBook();
+
 /* ---------------- number formatting ---------------- */
 
 function fmtINR(n) {
@@ -6803,6 +6852,298 @@ async function runDriveImportPicker() {
 
 
 /* ============================================================
+   IMPORT — Trade Book (Zerodha Console Tradebook CSV exports)
+   Separate from the Holdings import above: a Tradebook export is
+   trade-level (every buy/sell, not a current-holdings snapshot) and
+   has no Client ID column, so the person labels each file with an
+   account name at import time instead. Parsed rows are stored in
+   `tradeBook` (see the TRADE BOOK block near saveState() above) —
+   never in `state`, never pushed to Firestore. Local files only for
+   now; Drive-backed import is a later phase (per plan doc §3b).
+   ============================================================ */
+
+// Minimal CSV parser (quoted fields with embedded commas/escaped
+// double-quotes handled) — sufficient for Zerodha Console's Tradebook
+// export, which occasionally quotes Mutual Fund scheme names that
+// contain commas. Blank trailing rows are dropped.
+function parseCSVText(text) {
+  const rows = [];
+  let row = [], field = "", inQuotes = false;
+  const pushField = () => { row.push(field); field = ""; };
+  const pushRow = () => { pushField(); rows.push(row); row = []; };
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += c;
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ',') {
+      pushField();
+    } else if (c === '\r') {
+      // ignore — the paired \n (or end of file) closes the row
+    } else if (c === '\n') {
+      pushRow();
+    } else {
+      field += c;
+    }
+  }
+  if (field !== "" || row.length) pushRow();
+  return rows.filter(r => !(r.length === 1 && r[0].trim() === ""));
+}
+
+// Composite dedup key: account (as labelled at import time) + exchange
+// + segment + trade_id. trade_id alone isn't safely unique across
+// exchanges/segments, and the file itself never carries an account
+// identifier the way the Holdings Statement's "Client ID" row does.
+function tradeKey(t) {
+  return [t.accountId || "", t.exchange || "", t.segment || "", t.tradeId || ""].join("|");
+}
+
+// Zerodha Console "Tradebook" CSV columns: symbol, isin, trade_date,
+// exchange, segment, series, trade_type, auction, quantity, price,
+// trade_id, order_id, order_execution_time. Matched by header name
+// (case-insensitive) rather than fixed position, same convention as
+// the rest of the app's importers. Rows missing Symbol/Trade ID or a
+// usable Quantity/Price are skipped and counted rather than crashing
+// the whole import.
+function parseTradeBookCSV(text, accountId) {
+  const rows = parseCSVText(text);
+  if (rows.length === 0) return { trades: [], skipped: 0 };
+  const headers = rows[0].map(h => String(h || "").trim().toLowerCase());
+  const idx = (name) => headers.indexOf(name);
+  const iSymbol = idx("symbol"), iIsin = idx("isin"), iDate = idx("trade_date"),
+    iExchange = idx("exchange"), iSegment = idx("segment"), iSeries = idx("series"),
+    iType = idx("trade_type"), iAuction = idx("auction"), iQty = idx("quantity"),
+    iPrice = idx("price"), iTradeId = idx("trade_id"), iOrderId = idx("order_id"),
+    iExecTime = idx("order_execution_time");
+  if (iSymbol === -1 || iTradeId === -1) return { trades: [], skipped: Math.max(0, rows.length - 1) };
+
+  const trades = [];
+  let skipped = 0;
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    if (!row || row.every(c => String(c ?? "").trim() === "")) continue;
+    const symbol = String(row[iSymbol] ?? "").trim();
+    const tradeId = String(row[iTradeId] ?? "").trim();
+    const qty = parseFloat(row[iQty]);
+    const price = parseFloat(row[iPrice]);
+    if (!symbol || !tradeId || isNaN(qty) || isNaN(price)) { skipped++; continue; }
+    const segment = iSegment !== -1 ? String(row[iSegment] ?? "").trim().toUpperCase() : "";
+    trades.push({
+      accountId,
+      symbol,
+      isin: iIsin !== -1 ? String(row[iIsin] ?? "").trim() : "",
+      tradeDate: iDate !== -1 ? String(row[iDate] ?? "").trim() : "",
+      exchange: iExchange !== -1 ? String(row[iExchange] ?? "").trim().toUpperCase() : "",
+      segment,
+      series: iSeries !== -1 ? String(row[iSeries] ?? "").trim() : "",
+      tradeType: iType !== -1 ? String(row[iType] ?? "").trim().toLowerCase() : "",
+      auction: iAuction !== -1 ? String(row[iAuction] ?? "").trim().toLowerCase() === "true" : false,
+      quantity: qty,
+      price: price,
+      tradeId,
+      orderId: iOrderId !== -1 ? String(row[iOrderId] ?? "").trim() : "",
+      orderExecutionTime: iExecTime !== -1 ? String(row[iExecTime] ?? "").trim() : "",
+      // Gold ETFs (e.g. GOLDBEES) live inside the Equity (EQ) segment
+      // of the export, exactly like on the Holdings side — reuse the
+      // same isGoldSymbol() routing rather than a second regex.
+      assetClass: segment === "MF" ? "mf" : (isGoldSymbol(symbol) ? "gold" : "equity")
+    });
+  }
+  return { trades, skipped };
+}
+
+// Builds the add/skip/conflict plan for one batch of newly-parsed
+// trades against whatever's already stored. Mirrors the spirit of
+// planZerodhaImport() above: a key repeated within THIS batch (same
+// account, same trade_id — e.g. the same file picked twice) is a
+// true duplicate and the later row wins; a key that already exists in
+// `tradeBook.trades` with IDENTICAL data is a silent no-op re-import;
+// a key that already exists with DIFFERENT data is a genuine conflict
+// and is only ever flagged here, never auto-resolved — the person
+// decides in the preview modal whether to overwrite it.
+function planTradeBookImport(newTrades, existingTrades) {
+  const byKey = new Map();
+  const batchDuplicates = [];
+  newTrades.forEach(t => {
+    const k = tradeKey(t);
+    if (byKey.has(k)) batchDuplicates.push(k);
+    byKey.set(k, t);
+  });
+
+  const existingByKey = new Map(existingTrades.map(t => [tradeKey(t), t]));
+  const toAdd = [], unchanged = [], conflicts = [];
+  byKey.forEach((t, k) => {
+    const existing = existingByKey.get(k);
+    if (!existing) { toAdd.push(t); return; }
+    const same = existing.symbol === t.symbol && existing.quantity === t.quantity &&
+      existing.price === t.price && existing.tradeDate === t.tradeDate &&
+      existing.tradeType === t.tradeType;
+    if (same) unchanged.push(t); else conflicts.push({ key: k, existing, incoming: t });
+  });
+
+  return { toAdd, unchanged, conflicts, batchDuplicates: [...new Set(batchDuplicates)] };
+}
+
+function showTradeBookImportPreview(newTrades, sourceLabel, statusEl) {
+  const plan = planTradeBookImport(newTrades, tradeBook.trades);
+  const totalExisting = tradeBook.trades.length;
+
+  const conflictRows = plan.conflicts.slice(0, 10).map(c => `
+    <tr>
+      <td class="left">${escapeAttr(c.incoming.symbol)}</td>
+      <td class="left">${escapeAttr(c.incoming.tradeId)}</td>
+      <td class="left">${escapeAttr(c.existing.quantity + " @ " + c.existing.price)}</td>
+      <td class="left">${escapeAttr(c.incoming.quantity + " @ " + c.incoming.price)}</td>
+    </tr>`).join("");
+
+  const html = `
+    <div class="import-stat-row">
+      <div class="import-stat"><div class="n">${totalExisting}</div><div class="l">Trades On File</div></div>
+      <div class="import-stat"><div class="n">${newTrades.length}</div><div class="l">Trades In File(s)</div></div>
+      <div class="import-stat"><div class="n">${plan.toAdd.length}</div><div class="l">New Trades To Add</div></div>
+      <div class="import-stat"><div class="n">${plan.unchanged.length}</div><div class="l">Already Imported</div></div>
+      <div class="import-stat ${plan.conflicts.length ? "warn" : ""}"><div class="n">${plan.conflicts.length}</div><div class="l">Conflicting Duplicates</div></div>
+    </div>
+    <p>Trade book data is stored only in this browser (never synced to the cloud) and is used for the upcoming Portfolio performance chart — it doesn't change your Equity, Mutual Funds or Gold holdings above.</p>
+    ${plan.batchDuplicates.length ? `<p class="settings-note">${plan.batchDuplicates.length} repeated trade_id${plan.batchDuplicates.length === 1 ? "" : "s"} within the selected file(s) themselves — the later row won for each.</p>` : ""}
+    ${plan.conflicts.length ? `
+      <h4>Conflicting duplicates <span class="hint">same account + exchange + segment + trade ID, different data</span></h4>
+      <div class="table-scroll-wrap">
+        <table>
+          <thead><tr><th class="left">Symbol</th><th class="left">Trade ID</th><th class="left">Stored (Qty @ Price)</th><th class="left">Incoming (Qty @ Price)</th></tr></thead>
+          <tbody>${conflictRows}</tbody>
+        </table>
+      </div>
+      ${plan.conflicts.length > 10 ? `<p class="settings-note">…and ${plan.conflicts.length - 10} more.</p>` : ""}
+      <div class="settings-field">
+        <label style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="tbOverwriteConflicts" style="width:auto;">
+          Overwrite these ${plan.conflicts.length} conflicting ${plan.conflicts.length === 1 ? "entry" : "entries"} with the incoming data
+        </label>
+      </div>
+    ` : ""}
+  `;
+
+  openModal(
+    `Import Trade Book from ${escapeAttr(sourceLabel)} — Preview`,
+    html,
+    [
+      { label: "Cancel", onClick: () => { closeModal(); if (statusEl) statusEl.textContent = ""; } },
+      {
+        label: `Add ${plan.toAdd.length} Trade${plan.toAdd.length === 1 ? "" : "s"}`, primary: true, onClick: () => {
+          plan.toAdd.forEach(t => tradeBook.trades.push(t));
+          const overwriteEl = document.getElementById("tbOverwriteConflicts");
+          const overwrite = plan.conflicts.length > 0 && overwriteEl && overwriteEl.checked;
+          if (overwrite) {
+            plan.conflicts.forEach(c => {
+              const i = tradeBook.trades.findIndex(t => tradeKey(t) === c.key);
+              if (i !== -1) tradeBook.trades[i] = c.incoming; else tradeBook.trades.push(c.incoming);
+            });
+          }
+          tradeBook.imports.push({
+            id: uid(), fileName: sourceLabel, importedAt: new Date().toISOString(),
+            tradeCount: newTrades.length, added: plan.toAdd.length,
+            conflicts: plan.conflicts.length, overwritten: overwrite ? plan.conflicts.length : 0
+          });
+          saveTradeBook();
+          closeModal();
+          if (statusEl) {
+            statusEl.textContent = `Added ${plan.toAdd.length} new trade${plan.toAdd.length === 1 ? "" : "s"}` +
+              (overwrite ? `, overwrote ${plan.conflicts.length}.` : (plan.conflicts.length ? ` — ${plan.conflicts.length} conflicting duplicate${plan.conflicts.length === 1 ? "" : "s"} left as-is.` : "."));
+          }
+        }
+      }
+    ]
+  );
+}
+
+// Remembers the account label typed for each filename within this
+// browser tab's session only (not persisted) — just a convenience so
+// re-importing the same account's updated export doesn't require
+// re-typing the label.
+let lastTradeBookAccountLabels = {};
+
+function openTradeBookAccountLabelModal(files) {
+  const rows = files.map((f, i) => `
+    <div class="settings-field">
+      <label for="tbAccountLabel${i}">${escapeAttr(f.name)}</label>
+      <input type="text" id="tbAccountLabel${i}" placeholder="e.g. Zerodha - Primary" value="${escapeAttr(lastTradeBookAccountLabels[f.name] || "")}">
+    </div>`).join("");
+  openModal(
+    "Label each file with an account",
+    `<p>A Tradebook export doesn't carry an account/Client ID the way the Holdings Statement does — give each file a short account label so trades from your different demat accounts can be told apart and deduplicated correctly. Using the same label on two files is correct when they really are the same account.</p>${rows}`,
+    [
+      { label: "Cancel", onClick: closeModal },
+      {
+        label: "Continue", primary: true, onClick: async () => {
+          const labels = files.map((f, i) => {
+            const el = document.getElementById(`tbAccountLabel${i}`);
+            const v = (el && el.value || "").trim() || f.name;
+            lastTradeBookAccountLabels[f.name] = v;
+            return v;
+          });
+          closeModal();
+          await processTradeBookFiles(files, labels);
+        }
+      }
+    ]
+  );
+}
+
+async function processTradeBookFiles(files, labels) {
+  const statusEl = document.getElementById("tradeBookImportStatus");
+  if (statusEl) statusEl.textContent = `Reading ${files.length} file${files.length > 1 ? "s" : ""}...`;
+  let allTrades = [];
+  let totalSkipped = 0;
+  try {
+    for (let i = 0; i < files.length; i++) {
+      const text = await files[i].text();
+      const { trades, skipped } = parseTradeBookCSV(text, labels[i]);
+      allTrades = allTrades.concat(trades);
+      totalSkipped += skipped;
+    }
+  } catch (err) {
+    if (statusEl) statusEl.textContent = "";
+    alert("Could not read one of the selected files. Make sure each is an unmodified Zerodha Console Tradebook .csv export.");
+    return;
+  }
+  if (statusEl) statusEl.textContent = "";
+  if (allTrades.length === 0) {
+    alert("No valid trade rows found in the selected file(s). Expected columns: symbol, isin, trade_date, exchange, segment, series, trade_type, auction, quantity, price, trade_id, order_id, order_execution_time.");
+    return;
+  }
+  const sourceLabel = files.map(f => f.name).join(", ");
+  showTradeBookImportPreview(allTrades, sourceLabel, statusEl);
+  if (totalSkipped > 0) {
+    console.warn(`Trade Book import: ${totalSkipped} row(s) skipped (missing Symbol/Trade ID/Quantity/Price).`);
+  }
+}
+
+function openTradeBookImportChooser() {
+  openModal(
+    "Import Trade Book",
+    `<p>Import Zerodha Console Tradebook CSV exports — trade-level history (every buy/sell) used for the upcoming Portfolio performance chart. Equity, Mutual Fund and Gold ETF trades (e.g. GOLDBEES) are all detected automatically; you can select several files at once.</p>
+     <p class="settings-note">This is stored only in this browser (not synced to the cloud) and is separate from your Equity/Mutual Funds/Gold holdings — importing it never changes those tabs.</p>`,
+    [
+      { label: "Cancel", onClick: closeModal },
+      { label: "Choose Files", primary: true, onClick: () => { closeModal(); document.getElementById("importTradeBookFile").click(); } }
+    ]
+  );
+}
+
+document.getElementById("importTradeBookFile").addEventListener("change", async (e) => {
+  const files = Array.from(e.target.files || []);
+  e.target.value = "";
+  if (files.length === 0) return;
+  openTradeBookAccountLabelModal(files);
+});
+
+
+/* ============================================================
    EXPORT / IMPORT (full JSON backup)
    ============================================================ */
 
@@ -7406,6 +7747,13 @@ function renderBrand() {
    ============================================================ */
 
 function openSettingsModal() {
+  const tbByAccount = {};
+  tradeBook.trades.forEach(t => { tbByAccount[t.accountId || "(unlabeled)"] = (tbByAccount[t.accountId || "(unlabeled)"] || 0) + 1; });
+  const tbAccountNames = Object.keys(tbByAccount);
+  const tbSummaryText = tradeBook.trades.length
+    ? `${tradeBook.trades.length} trade${tradeBook.trades.length === 1 ? "" : "s"} stored across ${tbAccountNames.length} account${tbAccountNames.length === 1 ? "" : "s"} (${tbAccountNames.map(a => `${a}: ${tbByAccount[a]}`).join(", ")}).`
+    : "No trade book data imported yet.";
+
   const html = `
     <h4>Display</h4>
     <div class="settings-field">
@@ -7472,6 +7820,15 @@ function openSettingsModal() {
       <span class="status-tag" id="investmentsImportStatus"></span>
     </div>
 
+    <h4>Import Trade Book</h4>
+    <p class="settings-note" style="margin-top:0">Import Zerodha Console Tradebook CSV exports (per demat account) to build trade-level history for the upcoming "Portfolio performance vs Nifty 50" chart. Stored only in this browser — never synced to the cloud — and separate from your Equity/Mutual Funds/Gold holdings above; importing it never changes those tabs.</p>
+    <div class="settings-actions">
+      <button class="btn" id="settingsBtnImportTradeBook">Import Trade Book</button>
+      <span class="status-tag" id="tradeBookImportStatus"></span>
+      ${tradeBook.trades.length ? `<button class="btn btn-ghost" id="settingsBtnClearTradeBook">Clear Trade Book Data</button>` : ""}
+    </div>
+    <p class="settings-note">${escapeAttr(tbSummaryText)}</p>
+
     <h4>Backup &amp; Restore</h4>
     <div class="settings-actions">
       <button class="btn" id="settingsBtnExportExcel">Export Excel</button>
@@ -7520,6 +7877,20 @@ function openSettingsModal() {
     closeModal();
     openImportChooser();
   });
+  document.getElementById("settingsBtnImportTradeBook").addEventListener("click", () => {
+    closeModal();
+    openTradeBookImportChooser();
+  });
+  const clearTradeBookBtn = document.getElementById("settingsBtnClearTradeBook");
+  if (clearTradeBookBtn) {
+    clearTradeBookBtn.addEventListener("click", () => {
+      const ok = confirm(`Delete all ${tradeBook.trades.length} stored trade book records? This can't be undone. (Your Equity/Mutual Funds/Gold holdings are unaffected — this only clears trade-book data used for the upcoming Portfolio performance chart.)`);
+      if (!ok) return;
+      tradeBook = blankTradeBook();
+      saveTradeBook();
+      closeModal();
+    });
+  }
 
   // Only shown when a pre-cloud-sync snapshot actually exists — this
   // is the recovery path for the empty-cloud-doc scenario (and any
