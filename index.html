@@ -1041,7 +1041,7 @@
      tokens the Debt maturity highlighting already uses. */
   td.c-alloc.alloc-approaching{color:var(--warning);font-weight:600;}
   td.c-alloc.alloc-above{color:var(--negative);font-weight:600;}
-  .alloc-limit-note{color:var(--text-faint);font-family:var(--font-mono);font-size:10.5px;margin-left:2px;}
+  .alloc-limit-note{color:var(--text-faint);font-family:var(--font-mono);font-size:11.5px;margin-left:3px;}
 
   /* Computed (read-only, non-input) cells: truncate with an ellipsis
      instead of silently overflowing into the neighboring cell when a
@@ -1730,10 +1730,16 @@
   .mf-cat-badge.mf-cat-6{background:var(--mf-cat-6-soft);color:var(--mf-cat-6);}
   .mf-cat-badge.mf-cat-7{background:var(--mf-cat-7-soft);color:var(--mf-cat-7);}
 
-  .mf-alloc-cell{display:flex;flex-direction:column;gap:5px;min-width:90px;}
-  .mf-alloc-track{width:100%;height:5px;border-radius:3px;background:var(--surface-2);overflow:hidden;}
+  .mf-alloc-cell{display:flex;flex-direction:column;gap:6px;min-width:90px;}
+  .mf-alloc-track{width:100%;height:6px;border-radius:3px;background:var(--surface-2);overflow:hidden;}
   .mf-alloc-fill{height:100%;border-radius:3px;background:var(--gold);}
-  .mf-alloc-pct{font-family:var(--font-mono);font-size:11.5px;color:var(--text-muted);}
+  /* Bumped up from 11.5px/text-muted — at that size/weight this read
+     as noticeably smaller and lower-contrast than the P&L/Return %
+     values right next to it in the same row. Matching their size and
+     giving it var(--text) instead of the muted tone puts Allocation
+     on equal visual footing, with the amber/red .limit-* colors above
+     still taking over for a stock that's approaching/over its cap. */
+  .mf-alloc-pct{font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--text);}
 
   /* Floating three-dot row menu — a single reusable element is
      appended to <body> and positioned in JS (fixed, from the
@@ -1892,20 +1898,23 @@
   }
 
   /* Cap Category (Large/Mid/Small) shown as a small "L/M/S" chip right
-     next to the stock name instead of its own table column — kept
-     deliberately plain/outlined rather than filled, so it doesn't
-     compete visually with the Sector badge's fill color in the same
-     row. Unknown cap category (no Screener match yet) renders no chip
-     at all — see eqCapChipHTML(). */
+     next to the stock name instead of its own table column. Uses the
+     same soft-tinted-background language as the Sector badge
+     (.mf-cat-badge) rather than a solid full-strength border/text
+     color — the earlier solid-border version read as too bright/loud
+     sitting directly next to the stock name; a pale fill with the
+     same hue keeps it identifiable at a glance without shouting.
+     Unknown cap category (no Screener match yet) renders no chip at
+     all — see eqCapChipHTML(). */
   .eq-cap-chip{
     display:inline-flex;align-items:center;justify-content:center;
-    width:16px;height:16px;margin-left:6px;vertical-align:middle;
-    border-radius:4px;border:1px solid var(--border);
+    min-width:16px;height:16px;padding:0 1px;margin-left:6px;vertical-align:middle;
+    border-radius:4px;border:none;
     font-family:var(--font-mono);font-size:9.5px;font-weight:700;line-height:1;
   }
-  .eq-cap-chip.cap-large{color:var(--blue);border-color:var(--blue);}
-  .eq-cap-chip.cap-mid{color:var(--gold);border-color:var(--gold);}
-  .eq-cap-chip.cap-small{color:var(--warning);border-color:var(--warning);}
+  .eq-cap-chip.cap-large{color:var(--blue);background:var(--blue-soft);}
+  .eq-cap-chip.cap-mid{color:var(--gold);background:var(--gold-soft);}
+  .eq-cap-chip.cap-small{color:var(--warning);background:var(--warning-soft);}
 </style>
 </head>
 <body>
