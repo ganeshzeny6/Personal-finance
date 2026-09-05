@@ -1624,6 +1624,186 @@
     }
     #panel-dashboard table tbody td .ideal-input{width:70px;}
   }
+
+  /* ============================================================
+     MUTUAL FUNDS — REDESIGN (2026)
+     Summary cards reuse .sa-summary-grid/.sa-stat-card (already
+     built for Stock Analysis) rather than a second copy of the same
+     card CSS. New pieces below: category color tokens (8 stable
+     slots, hashed for any category name so nothing needs
+     hardcoding), the fund avatar + name cell, category badges, the
+     allocation progress bar, a floating three-dot row menu, a
+     stacked mobile card list (same architectural pattern as Stock
+     Analysis's own mobile deck — the generic table-to-card CSS is
+     switched off for this tab and this replaces it), and the app's
+     first right-side/bottom-sheet drawer (existing dialogs are all
+     centered modals; the drawer body content still reuses the
+     Stock Analysis detail panel's .sa-detail-section/.sa-detail-row
+     classes so its look matches the rest of the app for free).
+     ============================================================ */
+
+  :root{
+    --mf-cat-0:#3f6ea5; --mf-cat-0-soft:#3f6ea51f;
+    --mf-cat-1:#1a8a5f; --mf-cat-1-soft:#1a8a5f1a;
+    --mf-cat-2:#a3742f; --mf-cat-2-soft:#a3742f22;
+    --mf-cat-3:#8a4fb0; --mf-cat-3-soft:#8a4fb020;
+    --mf-cat-4:#c23c4e; --mf-cat-4-soft:#c23c4e1a;
+    --mf-cat-5:#2f9aa3; --mf-cat-5-soft:#2f9aa320;
+    --mf-cat-6:#b07a1c; --mf-cat-6-soft:#b07a1c20;
+    --mf-cat-7:#5f6f8a; --mf-cat-7-soft:#5f6f8a20;
+  }
+  :root[data-theme="dark"]{
+    --mf-cat-0:#7099cf; --mf-cat-0-soft:#7099cf26;
+    --mf-cat-1:#4cbf8f; --mf-cat-1-soft:#4cbf8f24;
+    --mf-cat-2:#d4a24e; --mf-cat-2-soft:#d4a24e2a;
+    --mf-cat-3:#b183dd; --mf-cat-3-soft:#b183dd28;
+    --mf-cat-4:#e2707f; --mf-cat-4-soft:#e2707f26;
+    --mf-cat-5:#5fc2cc; --mf-cat-5-soft:#5fc2cc28;
+    --mf-cat-6:#e0ac4c; --mf-cat-6-soft:#e0ac4c2a;
+    --mf-cat-7:#8b9ab3; --mf-cat-7-soft:#8b9ab328;
+  }
+  .sa-stat-card.accent-neg::before{background:var(--negative);}
+
+  #panel-mf .sa-summary-grid{margin-bottom:16px;}
+  #panel-mf .sa-stat-label svg{flex:0 0 auto;}
+
+  /* Toolbar: category + sort dropdowns share the existing
+     .attn-filter-select look used elsewhere in the app. */
+  #panel-mf .table-toolbar{margin-bottom:10px;}
+  #panel-mf .mf-toolbar-select{min-width:172px;}
+  @media (max-width:700px){
+    #panel-mf .table-toolbar .attn-filter-wrap{flex:1 1 150px;}
+    #panel-mf .table-toolbar .attn-filter-select{width:100%;}
+  }
+
+  #panel-mf tbody tr.mf-row{cursor:pointer;transition:background .12s ease;}
+  #panel-mf tbody tr.mf-row:hover{background:var(--surface-2);}
+  #panel-mf tbody tr.mf-row:hover td.sticky-col{background:var(--surface-2);}
+
+  .mf-fund-cell{display:flex;align-items:center;gap:10px;min-width:0;}
+  .mf-avatar{
+    flex:0 0 auto;width:34px;height:34px;border-radius:10px;color:#fff;
+    display:flex;align-items:center;justify-content:center;
+    font-family:var(--font-display);font-size:13px;font-weight:700;letter-spacing:.02em;
+  }
+  .mf-avatar.mf-cat-0{background:var(--mf-cat-0);} .mf-avatar.mf-cat-1{background:var(--mf-cat-1);}
+  .mf-avatar.mf-cat-2{background:var(--mf-cat-2);} .mf-avatar.mf-cat-3{background:var(--mf-cat-3);}
+  .mf-avatar.mf-cat-4{background:var(--mf-cat-4);} .mf-avatar.mf-cat-5{background:var(--mf-cat-5);}
+  .mf-avatar.mf-cat-6{background:var(--mf-cat-6);} .mf-avatar.mf-cat-7{background:var(--mf-cat-7);}
+  .mf-fund-name-wrap{min-width:0;}
+  .mf-fund-name{font-family:var(--font-display);font-weight:600;font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:230px;}
+
+  .mf-cat-badge{
+    display:inline-flex;align-items:center;font-size:10.5px;font-weight:600;
+    padding:3px 10px;border-radius:20px;white-space:nowrap;letter-spacing:.01em;
+  }
+  .mf-cat-badge.mf-cat-0{background:var(--mf-cat-0-soft);color:var(--mf-cat-0);}
+  .mf-cat-badge.mf-cat-1{background:var(--mf-cat-1-soft);color:var(--mf-cat-1);}
+  .mf-cat-badge.mf-cat-2{background:var(--mf-cat-2-soft);color:var(--mf-cat-2);}
+  .mf-cat-badge.mf-cat-3{background:var(--mf-cat-3-soft);color:var(--mf-cat-3);}
+  .mf-cat-badge.mf-cat-4{background:var(--mf-cat-4-soft);color:var(--mf-cat-4);}
+  .mf-cat-badge.mf-cat-5{background:var(--mf-cat-5-soft);color:var(--mf-cat-5);}
+  .mf-cat-badge.mf-cat-6{background:var(--mf-cat-6-soft);color:var(--mf-cat-6);}
+  .mf-cat-badge.mf-cat-7{background:var(--mf-cat-7-soft);color:var(--mf-cat-7);}
+
+  .mf-alloc-cell{display:flex;flex-direction:column;gap:5px;min-width:90px;}
+  .mf-alloc-track{width:100%;height:5px;border-radius:3px;background:var(--surface-2);overflow:hidden;}
+  .mf-alloc-fill{height:100%;border-radius:3px;background:var(--gold);}
+  .mf-alloc-pct{font-family:var(--font-mono);font-size:11.5px;color:var(--text-muted);}
+
+  /* Floating three-dot row menu — a single reusable element is
+     appended to <body> and positioned in JS (fixed, from the
+     trigger button's own bounding rect), which sidesteps every
+     scroll-container clipping issue an absolutely-positioned
+     in-row dropdown would otherwise have inside .table-scroll's
+     horizontal scroller. */
+  .mf-menu-wrap{position:relative;display:inline-flex;}
+  .mf-menu-btn{
+    background:none;border:none;color:var(--text-faint);cursor:pointer;
+    padding:5px 8px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;
+  }
+  .mf-menu-btn:hover{background:var(--surface-2);color:var(--text);}
+  .mf-menu-dropdown{
+    display:none;position:fixed;z-index:250;
+    background:var(--surface);border:1px solid var(--border);border-radius:10px;
+    box-shadow:var(--shadow-md);min-width:190px;padding:6px;
+  }
+  .mf-menu-dropdown.open{display:block;}
+  .mf-menu-item{
+    display:flex;align-items:center;gap:9px;width:100%;text-align:left;
+    background:none;border:none;color:var(--text);font-family:var(--font-body);
+    font-size:12.5px;padding:8px 10px;border-radius:7px;cursor:pointer;
+  }
+  .mf-menu-item:hover{background:var(--surface-2);}
+  .mf-menu-item svg{flex:0 0 auto;color:var(--text-faint);}
+  .mf-menu-item.danger{color:var(--negative);}
+  .mf-menu-item.danger svg{color:var(--negative);}
+
+  /* ---- Mobile card list (<=700px) — replaces the generic
+     table-to-stacked-card treatment for this tab only, same
+     precedent as Stock Analysis's own mobile deck. ---- */
+  .mf-mobile-list{display:none;flex-direction:column;gap:10px;}
+  @media (max-width:700px){
+    #panel-mf .table-scroll{display:none;}
+    .mf-mobile-list{display:flex;}
+  }
+  .mf-mobile-card{
+    background:var(--surface);border:1px solid var(--border);border-radius:12px;
+    padding:14px 15px;box-shadow:var(--shadow-xs);cursor:pointer;
+  }
+  .mf-mobile-card-top{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
+  .mf-mobile-card-top .mf-fund-name{max-width:none;white-space:normal;}
+  .mf-mobile-card-top .mf-fund-name-wrap{flex:1 1 auto;display:flex;flex-direction:column;gap:4px;align-items:flex-start;}
+  .mf-mobile-card-menu{flex:0 0 auto;}
+  .mf-mobile-card-values{display:flex;justify-content:space-between;gap:10px;margin-bottom:10px;}
+  .mf-mobile-card-value{flex:1 1 0;}
+  .mf-mobile-card-value.align-r{text-align:right;}
+  .mf-mobile-card-value .l{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-faint);margin-bottom:3px;}
+  .mf-mobile-card-value .v{font-family:var(--font-mono);font-size:13.5px;font-weight:600;color:var(--text);}
+  .mf-mobile-card-alloc{display:flex;align-items:center;gap:8px;}
+  .mf-mobile-card-alloc .mf-alloc-track{flex:1 1 auto;}
+
+  /* ---- Detail drawer: right-side panel on desktop/tablet, bottom
+     sheet on mobile. First drawer in the app (existing dialogs are
+     all centered .modal-overlay/.modal-card). ---- */
+  .drawer-overlay{
+    display:none;position:fixed;inset:0;background:#0008;backdrop-filter:blur(2px);z-index:210;
+  }
+  .drawer-overlay.open{display:block;}
+  .drawer-panel{
+    position:fixed;top:0;right:0;height:100%;width:440px;max-width:92vw;
+    background:var(--surface);border-left:1px solid var(--border);
+    box-shadow:-12px 0 32px rgba(0,0,0,.25);
+    display:flex;flex-direction:column;
+    transform:translateX(100%);transition:transform .22s ease;
+  }
+  .drawer-overlay.open .drawer-panel{transform:translateX(0);}
+  .drawer-header{
+    padding:16px 20px;border-bottom:1px solid var(--border);
+    display:flex;align-items:center;justify-content:space-between;gap:12px;flex:0 0 auto;
+  }
+  .drawer-header-title{font-family:var(--font-display);font-size:15px;font-weight:600;color:var(--text);}
+  .drawer-close{
+    background:none;border:none;color:var(--text-faint);cursor:pointer;
+    padding:5px 9px;border-radius:7px;font-size:15px;line-height:1;
+  }
+  .drawer-close:hover{color:var(--text);background:var(--surface-2);}
+  .drawer-body{padding:18px 20px;overflow-y:auto;flex:1 1 auto;}
+  .drawer-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;}
+  .mf-viz-row{display:flex;align-items:center;gap:10px;margin-top:9px;}
+  .mf-viz-row:first-of-type{margin-top:2px;}
+  .mf-viz-label{flex:0 0 62px;font-size:11px;color:var(--text-muted);}
+  .mf-viz-row .mf-alloc-track{flex:1 1 auto;height:7px;}
+  .mf-viz-value{flex:0 0 auto;font-family:var(--font-mono);font-size:11.5px;color:var(--text);min-width:64px;text-align:right;}
+
+  @media (max-width:700px){
+    .drawer-panel{
+      top:auto;bottom:0;left:0;right:0;width:100%;max-width:100%;height:auto;max-height:88vh;
+      border-left:none;border-top:1px solid var(--border);border-radius:18px 18px 0 0;
+      transform:translateY(100%);
+    }
+    .drawer-overlay.open .drawer-panel{transform:translateY(0);}
+  }
 </style>
 </head>
 <body>
@@ -2187,70 +2367,59 @@
   <!-- ============ MUTUAL FUNDS ============ -->
     <section class="portfolio-subpanel" id="panel-mf">
     <h2 class="section-title">Mutual Funds</h2>
-    <p class="section-sub">Equity mutual fund holdings. Units, Category and NAV are driven by Zerodha Holdings import and an automatic live-NAV refresh every 30 seconds — only Remarks can be edited by hand.</p>
+    <p class="section-sub">Equity mutual fund holdings. Units, Category and NAV are driven by Zerodha Holdings import and an automatic live-NAV refresh every 30 seconds — open a fund's details to edit its Remarks.</p>
+
+    <div class="sa-summary-grid" id="mfSummaryGrid"></div>
 
     <div class="table-toolbar">
       <div class="left-group">
         <div class="filter-clear-wrap">
-          <input type="text" class="filter-input" id="mfFilter" placeholder="Filter...">
+          <input type="text" class="filter-input" id="mfFilter" placeholder="Search funds...">
           <button type="button" class="filter-clear-btn" data-clear-target="mfFilter" title="Clear filter" aria-label="Clear filter">✕</button>
+        </div>
+        <div class="attn-filter-wrap">
+          <select class="attn-filter-select mf-toolbar-select" id="mfCategoryFilter">
+            <option value="">All Categories</option>
+          </select>
+        </div>
+        <div class="attn-filter-wrap">
+          <select class="attn-filter-select mf-toolbar-select" id="mfSortSelect">
+            <option value="allocPct:-1">Allocation: High to Low</option>
+            <option value="allocPct:1">Allocation: Low to High</option>
+            <option value="pl:-1">P&amp;L: High to Low</option>
+            <option value="pl:1">P&amp;L: Low to High</option>
+            <option value="currentValue:-1">Current Value: High to Low</option>
+            <option value="currentValue:1">Current Value: Low to High</option>
+            <option value="name:1">Name: A to Z</option>
+            <option value="name:-1">Name: Z to A</option>
+          </select>
         </div>
         <span class="status-tag" id="mfFetchStatus"></span>
       </div>
-    </div>
-    <div class="mobile-totals" id="mfMobileTotals">
-      <div>
-        <div class="row"><span>Invested</span></div>
-        <div class="vals"><span id="mfMobTotalInvested">₹0</span></div>
-      </div>
-      <div>
-        <div class="row"><span>Current</span></div>
-        <div class="vals"><span id="mfMobTotalCurrent">₹0</span></div>
-      </div>
-      <div>
-        <div class="row"><span>P&amp;L</span></div>
-        <div class="vals"><span id="mfMobTotalPL">₹0</span></div>
-      </div>
-    </div>
-    <div class="mobile-sort-row">
-      <select id="mfMobileSort">
-        <option value="">Sort: default</option>
-        <option value="name">Name</option>
-        <option value="category">Category</option>
-        <option value="invested">Invested Amt</option>
-        <option value="units">Units</option>
-        <option value="unitPrice">NAV</option>
-        <option value="currentValue">Current Value</option>
-        <option value="pl">P&amp;L</option>
-        <option value="plPct">P&amp;L %</option>
-        <option value="allocPct" selected>Alloc %</option>
-      </select>
-      <button class="mobile-sort-dir" id="mfMobileSortDir" title="Toggle ascending/descending">↓</button>
     </div>
     <div class="fail-panel" id="mfFailPanel" style="display:none"></div>
 
     <div class="table-scroll">
       <table class="data-table">
         <colgroup>
-          <col id="col-mf-name" style="width:200px">
+          <col id="col-mf-name" style="width:240px">
+          <col style="width:130px">
+          <col style="width:130px">
+          <col style="width:140px">
           <col style="width:120px">
-          <col style="width:140px"><col style="width:90px"><col style="width:100px">
-          <col style="width:110px"><col style="width:140px"><col style="width:130px"><col style="width:90px">
-          <col style="width:85px"><col style="width:150px"><col style="width:45px">
+          <col style="width:100px">
+          <col style="width:150px">
+          <col style="width:50px">
         </colgroup>
         <thead>
           <tr>
-            <th class="left sortable resizable sticky-col" data-col="name">Name<span class="col-resizer"></span></th>
+            <th class="left sortable resizable sticky-col" data-col="name">Fund<span class="col-resizer"></span></th>
             <th class="left sortable" data-col="category">Category</th>
             <th class="sortable" data-col="invested">Invested Amt</th>
-            <th class="sortable" data-col="units">Units</th>
-            <th class="sortable" data-col="avgPrice">Avg Price</th>
-            <th class="sortable" data-col="unitPrice">NAV</th>
             <th class="sortable" data-col="currentValue">Current Value</th>
             <th class="sortable" data-col="pl">P&amp;L</th>
-            <th class="sortable" data-col="plPct">P&amp;L %</th>
-            <th class="sortable" data-col="allocPct">Alloc %</th>
-            <th class="left sortable" data-col="remarks">Remarks</th>
+            <th class="sortable" data-col="plPct">Return %</th>
+            <th class="sortable" data-col="allocPct">Allocation</th>
             <th class="row-actions">—</th>
           </tr>
         </thead>
@@ -2260,16 +2429,17 @@
             <td class="left sticky-col">Total</td>
             <td></td>
             <td id="mfTotalInvested">₹0</td>
-            <td></td><td></td><td></td>
             <td id="mfTotalCurrent">₹0</td>
             <td id="mfTotalPL">₹0</td>
             <td id="mfTotalPLPct">0%</td>
             <td>100%</td>
-            <td></td><td></td>
+            <td></td>
           </tr>
         </tfoot>
       </table>
     </div>
+
+    <div class="mf-mobile-list" id="mfMobileList"></div>
   </section>
 
   <!-- ============ GOLD ============ -->
@@ -2571,6 +2741,19 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-09-04-redesign1"></script>
+<!-- Mutual Fund detail drawer — right-side panel on desktop/tablet,
+     bottom sheet on mobile (see .drawer-overlay/.drawer-panel CSS).
+     Content is injected by openMFDrawer() in app.js. -->
+<div class="drawer-overlay" id="mfDrawerOverlay">
+  <div class="drawer-panel">
+    <div class="drawer-header">
+      <div class="drawer-header-title">Fund Details</div>
+      <button class="drawer-close" id="mfDrawerClose" title="Close" aria-label="Close">✕</button>
+    </div>
+    <div class="drawer-body" id="mfDrawerBody"></div>
+  </div>
+</div>
+
+<script src="app.js?v=2026-09-05-mf-redesign"></script>
 </body>
 </html>

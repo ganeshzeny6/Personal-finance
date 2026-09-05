@@ -456,6 +456,31 @@ function plClass(n) {
   return n > 0 ? "pos" : n < 0 ? "neg" : "muted";
 }
 
+/* ============================================================
+   ICONS
+   Small hand-built Lucide-style inline SVGs (stroke-based, 24x24
+   viewBox) — used by the Mutual Funds redesign instead of emoji, per
+   spec. Not a copy of any icon library's files; just plain
+   geometric shapes drawn to match that visual language, with only
+   the handful of glyphs this UI actually needs.
+   ============================================================ */
+const ICON_PATHS = {
+  "more-vertical": '<circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/>',
+  "eye": '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
+  "list": '<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>',
+  "edit-3": '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+  "trash-2": '<path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>',
+  "wallet": '<path d="M20 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-3"/><path d="M20 12a2 2 0 0 0 0 4h1a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1Z"/>',
+  "trending-up": '<path d="M22 7 13.5 15.5 8.5 10.5 2 17"/><path d="M16 7h6v6"/>',
+  "trending-down": '<path d="M22 17 13.5 8.5 8.5 13.5 2 7"/><path d="M16 17h6v-6"/>',
+  "percent": '<path d="M19 5 5 19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>'
+};
+function icon(name, size, cls) {
+  size = size || 16;
+  const body = ICON_PATHS[name] || "";
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="${cls || ""}" style="vertical-align:-3px">${body}</svg>`;
+}
+
 // Rounds a numeric field to 2 decimal places FOR DISPLAY ONLY (e.g. an
 // <input>'s value attribute). The underlying row[field] in state is
 // never touched here — full-precision numbers (as fetched live, or
@@ -521,7 +546,7 @@ modalOverlay.addEventListener("click", (e) => {
 const tableUI = {
   equity: { sortCol: "allocPct", sortDir: -1, filter: "" },
   debt:   { sortCol: "maturityDate", sortDir: 1, filter: "" },
-  mf:     { sortCol: "allocPct", sortDir: -1, filter: "" },
+  mf:     { sortCol: "allocPct", sortDir: -1, filter: "", category: "" },
   gold:   { sortCol: null, sortDir: 1, filter: "" },
   stockanalysis: { sortCol: null, sortDir: 1, filter: "", page: 1, pageSize: "10" }
 };
@@ -2446,59 +2471,515 @@ function mfGetSortValue(row, col) {
   }
 }
 
+/* ---- XIRR (Extended Internal Rate of Return) ----
+   Solves for the annualized rate r that makes the NPV of a set of
+   DATED cash flows zero: sum( amount_i / (1+r)^(days_i/365) ) = 0.
+   This is the correct way to annualize returns from an irregular
+   series of buys/sells (SIPs, lump sums, partial redemptions) — a
+   plain (current-invested)/invested "absolute return" ignores WHEN
+   money went in and badly overstates/understates funds that have
+   only been held a few months vs several years. Newton-Raphson from
+   a 10% starting guess, with a bisection fallback for cash-flow
+   shapes (very lumpy/sparse SIP histories) where Newton can diverge.
+   Returns null — never a misleading number — when there isn't
+   enough data to solve (fewer than 2 usable flows, or no sign
+   change across them). */
+function xirrNPV(rate, flows, t0) {
+  return flows.reduce((sum, f) => {
+    const years = (f.date - t0) / (365 * 86400000);
+    return sum + f.amount / Math.pow(1 + rate, years);
+  }, 0);
+}
+function xirrDerivative(rate, flows, t0) {
+  return flows.reduce((sum, f) => {
+    const years = (f.date - t0) / (365 * 86400000);
+    return sum - (years * f.amount) / Math.pow(1 + rate, years + 1);
+  }, 0);
+}
+function calcXIRR(cashflows) {
+  const flows = (cashflows || [])
+    .filter(f => f.date instanceof Date && !isNaN(f.date) && isFinite(f.amount) && f.amount !== 0)
+    .sort((a, b) => a.date - b.date);
+  if (flows.length < 2) return null;
+  if (!flows.some(f => f.amount > 0) || !flows.some(f => f.amount < 0)) return null;
+  const t0 = flows[0].date;
+
+  let rate = 0.1, converged = false;
+  for (let i = 0; i < 100; i++) {
+    const npv = xirrNPV(rate, flows, t0);
+    const d = xirrDerivative(rate, flows, t0);
+    if (Math.abs(d) < 1e-10) break;
+    const next = rate - npv / d;
+    if (!isFinite(next) || next <= -0.999999) break;
+    if (Math.abs(next - rate) < 1e-7) { rate = next; converged = true; break; }
+    rate = next;
+  }
+  if (converged && isFinite(rate)) return rate * 100;
+
+  // Bisection fallback over a wide, sane annualized-rate range.
+  let lo = -0.9999, hi = 10;
+  let npvLo = xirrNPV(lo, flows, t0), npvHi = xirrNPV(hi, flows, t0);
+  if (npvLo * npvHi > 0) {
+    hi = 100;
+    npvHi = xirrNPV(hi, flows, t0);
+    if (npvLo * npvHi > 0) return null;
+  }
+  for (let i = 0; i < 200; i++) {
+    const mid = (lo + hi) / 2;
+    const npvMid = xirrNPV(mid, flows, t0);
+    if (Math.abs(npvMid) < 1e-6) return mid * 100;
+    if ((npvLo < 0) === (npvMid < 0)) { lo = mid; npvLo = npvMid; } else { hi = mid; }
+  }
+  return ((lo + hi) / 2) * 100;
+}
+
+// Turns a set of Trade Book rows into XIRR cash flows: every buy is
+// a negative outflow, every sell a positive inflow, and — because
+// XIRR needs a closing flow to annualize a position that's still
+// open — the position's value as of today is appended as one final
+// positive inflow (the standard "sell everything today" convention).
+function mfCashflowsFromTrades(trades, currentValueToday) {
+  const flows = trades
+    .filter(t => t.tradeDate && isFinite(Number(t.quantity)) && isFinite(Number(t.price)))
+    .map(t => ({
+      date: new Date(String(t.tradeDate).slice(0, 10)),
+      amount: Number(t.quantity) * Number(t.price) * (String(t.tradeType).toLowerCase() === "sell" ? 1 : -1)
+    }))
+    .filter(f => !isNaN(f.date));
+  if (flows.length === 0) return [];
+  if (currentValueToday > 0) flows.push({ date: new Date(), amount: currentValueToday });
+  return flows;
+}
+
+// Portfolio-level XIRR — every Trade Book row tagged assetClass
+// "mf", across every account. This is what the summary card shows,
+// and it's robust: it needs no per-fund matching at all (see
+// mfFundXIRR() below for why that's not always possible per-fund).
+function mfPortfolioXIRR() {
+  const trades = tradeBook.trades.filter(t => t.assetClass === "mf");
+  if (trades.length === 0) return null;
+  return calcXIRR(mfCashflowsFromTrades(trades, mfTotals().current));
+}
+
+// Best-effort per-fund XIRR for the detail drawer. The Trade Book
+// (Zerodha "Tradebook" export) and this app's state.mf holdings
+// (built from the separate "Holdings" export) don't share a
+// reliable key: Holdings never carries an ISIN, and a holding's
+// Symbol is only opportunistically backfilled from the live-NAV
+// sheet once its Name happens to match (see refreshMFPrices()). So
+// this only works when that Symbol also lines up with the
+// Tradebook's own Symbol column for the same fund — otherwise it
+// returns null and the drawer says so plainly rather than showing a
+// number that might belong to a different fund.
+function mfFundXIRR(row) {
+  const key = (row.symbol || "").trim().toUpperCase();
+  if (!key) return null;
+  const trades = tradeBook.trades.filter(t => t.assetClass === "mf" && (t.symbol || "").trim().toUpperCase() === key);
+  if (trades.length === 0) return null;
+  return calcXIRR(mfCashflowsFromTrades(trades, mfDerived(row).currentValue));
+}
+
+/* ---- category color coding: 8 stable slots, deterministically
+   hashed per category name so every fund gets *a* consistent color
+   without hardcoding every possible category string. A handful of
+   very common categories are pinned to a sensible slot so e.g.
+   "Large Cap" and "Largecap" always land on the same color even
+   though the hash of those two strings would differ. ---- */
+function mfHashSlot(str, mod) {
+  let h = 0;
+  const s = String(str || "");
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h % mod;
+}
+const MF_KNOWN_CATEGORY_SLOTS = {
+  "large cap": 0, "largecap": 0, "bluechip": 0,
+  "mid cap": 1, "midcap": 1,
+  "small cap": 4, "smallcap": 4,
+  "flexi cap": 3, "flexicap": 3, "multi cap": 3, "multicap": 3,
+  "elss": 2, "tax saver": 2, "elss (tax saving)": 2,
+  "debt": 7, "liquid": 7, "gilt": 7, "overnight": 7,
+  "hybrid": 5, "balanced": 5, "balanced advantage": 5,
+  "index": 6, "index fund": 6, "etf": 6,
+  "international": 5, "global": 5
+};
+function mfCategorySlot(category) {
+  const key = String(category || "").trim().toLowerCase();
+  if (!key) return 7;
+  if (key in MF_KNOWN_CATEGORY_SLOTS) return MF_KNOWN_CATEGORY_SLOTS[key];
+  return mfHashSlot(key, 8);
+}
+function mfCategoryBadgeHTML(category) {
+  if (!category) return '<span class="mf-cat-badge mf-cat-7">Uncategorized</span>';
+  return `<span class="mf-cat-badge mf-cat-${mfCategorySlot(category)}">${escapeAttr(category)}</span>`;
+}
+function mfAvatarHTML(row) {
+  const initial = (String(row.name || "").trim().charAt(0) || "?").toUpperCase();
+  return `<div class="mf-avatar mf-cat-${mfCategorySlot(row.category)}">${escapeAttr(initial)}</div>`;
+}
+
+// Applies the category dropdown (on top of the existing text
+// filter + sort) — a separate step from applySortFilter() since
+// that helper only knows about the one free-text filter + sort
+// every table shares; category is MF-specific.
+function mfVisibleRows() {
+  let rows = state.mf;
+  if (tableUI.mf.category) rows = rows.filter(r => (r.category || "") === tableUI.mf.category);
+  return applySortFilter("mf", rows, mfGetSearchText, mfGetSortValue);
+}
+
+function populateMFCategoryFilter() {
+  const sel = document.getElementById("mfCategoryFilter");
+  if (!sel) return;
+  const current = tableUI.mf.category;
+  const cats = Array.from(new Set(state.mf.map(r => r.category).filter(Boolean))).sort();
+  sel.innerHTML = '<option value="">All Categories</option>' +
+    cats.map(c => `<option value="${escapeAttr(c)}">${escapeAttr(c)}</option>`).join("");
+  if (cats.includes(current)) sel.value = current;
+  else { tableUI.mf.category = ""; sel.value = ""; }
+}
+
+function renderMFSummary() {
+  const el = document.getElementById("mfSummaryGrid");
+  if (!el) return;
+  const totals = mfTotals();
+  const xirr = mfPortfolioXIRR();
+  el.innerHTML = `
+    <div class="sa-stat-card accent-blue">
+      <div class="sa-stat-label">${icon("wallet", 14)} Total Invested</div>
+      <div class="sa-stat-value">${fmtINR(totals.invested)}</div>
+    </div>
+    <div class="sa-stat-card accent-gold">
+      <div class="sa-stat-label">${icon("trending-up", 14)} Current Value</div>
+      <div class="sa-stat-value">${fmtINR(totals.current)}</div>
+    </div>
+    <div class="sa-stat-card ${totals.pl >= 0 ? "accent-pos" : "accent-neg"}">
+      <div class="sa-stat-label">${icon(totals.pl >= 0 ? "trending-up" : "trending-down", 14)} Total P&amp;L</div>
+      <div class="sa-stat-value ${plClass(totals.pl)}">${fmtINRCompactSigned(totals.pl)}<span class="sa-stat-sub">${fmtPct(totals.plPct)}</span></div>
+    </div>
+    <div class="sa-stat-card accent-warn">
+      <div class="sa-stat-label">${icon("percent", 14)} XIRR</div>
+      <div class="sa-stat-value ${xirr === null ? "muted" : plClass(xirr)}">${xirr === null ? "—" : fmtPct(xirr)}</div>
+      ${xirr === null ? '<div class="sa-stat-sub" style="margin-left:0;margin-top:5px;display:block;">Connect Trade Book for XIRR</div>' : ""}
+    </div>
+  `;
+}
+
+/* ---- floating three-dot row menu ----
+   A single reusable element appended to <body> and positioned in JS
+   from the trigger button's own bounding rect (position:fixed) —
+   this sidesteps every scroll-container clipping issue an
+   absolutely-positioned in-row dropdown would otherwise have inside
+   .table-scroll's own horizontal scroller. */
+let mfMenuOpenRowId = null;
+function mfMenuOutsideHandler(e) {
+  const el = document.getElementById("mfRowMenu");
+  if (el && !el.contains(e.target)) closeMFRowMenu();
+}
+function closeMFRowMenu() {
+  const el = document.getElementById("mfRowMenu");
+  if (el) el.remove();
+  mfMenuOpenRowId = null;
+  document.removeEventListener("click", mfMenuOutsideHandler, true);
+  window.removeEventListener("resize", closeMFRowMenu);
+  window.removeEventListener("scroll", closeMFRowMenu, true);
+}
+function openMFRowMenu(btn, rowId) {
+  if (mfMenuOpenRowId === rowId) { closeMFRowMenu(); return; }
+  closeMFRowMenu();
+  const row = state.mf.find(r => r.id === rowId);
+  if (!row) return;
+  mfMenuOpenRowId = rowId;
+
+  const menu = document.createElement("div");
+  menu.id = "mfRowMenu";
+  menu.className = "mf-menu-dropdown open";
+  menu.innerHTML = `
+    <button type="button" class="mf-menu-item" data-act="view">${icon("eye", 15)} View Details</button>
+    <button type="button" class="mf-menu-item" data-act="transactions">${icon("list", 15)} View Transactions</button>
+    <button type="button" class="mf-menu-item" data-act="remarks">${icon("edit-3", 15)} Edit Remarks</button>
+    <button type="button" class="mf-menu-item danger" data-act="remove">${icon("trash-2", 15)} Remove Holding</button>
+  `;
+  document.body.appendChild(menu);
+
+  const r = btn.getBoundingClientRect();
+  const menuW = menu.offsetWidth || 190;
+  let left = Math.max(8, Math.min(r.right - menuW, window.innerWidth - menuW - 8));
+  menu.style.left = left + "px";
+  menu.style.top = (r.bottom + 6) + "px";
+  requestAnimationFrame(() => {
+    const mh = menu.getBoundingClientRect().height;
+    if (r.bottom + 6 + mh > window.innerHeight - 8) {
+      menu.style.top = Math.max(8, r.top - mh - 6) + "px";
+    }
+  });
+
+  menu.querySelector('[data-act="view"]').addEventListener("click", () => { closeMFRowMenu(); openMFDrawer(rowId); });
+  menu.querySelector('[data-act="transactions"]').addEventListener("click", () => { closeMFRowMenu(); openMFTransactionsModal(rowId); });
+  menu.querySelector('[data-act="remarks"]').addEventListener("click", () => { closeMFRowMenu(); openMFDrawer(rowId, { focusRemarks: true }); });
+  menu.querySelector('[data-act="remove"]').addEventListener("click", () => {
+    closeMFRowMenu();
+    mfRemoveHolding(rowId);
+  });
+
+  setTimeout(() => document.addEventListener("click", mfMenuOutsideHandler, true), 0);
+  window.addEventListener("resize", closeMFRowMenu);
+  window.addEventListener("scroll", closeMFRowMenu, true);
+}
+
+function mfRemoveHolding(rowId) {
+  const row = state.mf.find(r => r.id === rowId);
+  if (!row) return;
+  const ok = confirm(`Remove "${row.name || "this fund"}" from your Mutual Fund holdings? This can't be undone.`);
+  if (!ok) return;
+  state.mf = state.mf.filter(r => r.id !== rowId);
+  saveState();
+  if (mfDrawerRowId === rowId) closeMFDrawer();
+  renderMF();
+  renderDashboard();
+}
+
+/* ---- detail drawer ---- */
+let mfDrawerRowId = null;
+
+function mfDrawerVisualizationHTML(row, d) {
+  const invested = Number(row.invested) || 0;
+  const current = d.currentValue;
+  const max = Math.max(invested, current, 1);
+  return `
+    <div class="sa-detail-section">
+      <div class="sa-detail-section-title">Invested vs Current Value</div>
+      <div class="mf-viz-row">
+        <div class="mf-viz-label">Invested</div>
+        <div class="mf-alloc-track"><div class="mf-alloc-fill" style="width:${clamp((invested / max) * 100, 0, 100)}%;background:var(--blue)"></div></div>
+        <div class="mf-viz-value">${fmtINRCompact(invested)}</div>
+      </div>
+      <div class="mf-viz-row">
+        <div class="mf-viz-label">Current</div>
+        <div class="mf-alloc-track"><div class="mf-alloc-fill" style="width:${clamp((current / max) * 100, 0, 100)}%;background:${d.pl >= 0 ? "var(--positive)" : "var(--negative)"}"></div></div>
+        <div class="mf-viz-value">${fmtINRCompact(current)}</div>
+      </div>
+    </div>
+  `;
+}
+
+function mfDrawerBodyHTML(row) {
+  const d = mfDerived(row);
+  const totals = mfTotals();
+  const allocPct = totals.current > 0 ? (d.currentValue / totals.current) * 100 : 0;
+  const fundXirr = mfFundXIRR(row);
+  const locked = isReadOnly();
+  return `
+    <div class="sa-detail-head" style="border-bottom:none;padding-bottom:0;margin-bottom:16px;">
+      ${mfAvatarHTML(row)}
+      <div style="flex:1 1 auto;min-width:0;">
+        <div class="sa-detail-name">${escapeAttr(row.name || "Unnamed fund")}</div>
+        <div class="sa-detail-meta">${mfCategoryBadgeHTML(row.category)}</div>
+      </div>
+    </div>
+    <div class="sa-detail-sections" style="grid-template-columns:1fr 1fr;margin-bottom:16px;">
+      <div class="sa-detail-section">
+        <div class="sa-detail-section-title">Overview</div>
+        <div class="sa-detail-row"><span class="k">Invested</span><span class="v">${fmtINR(row.invested)}</span></div>
+        <div class="sa-detail-row"><span class="k">Current Value</span><span class="v">${fmtINR(d.currentValue)}</span></div>
+        <div class="sa-detail-row"><span class="k">P&amp;L</span><span class="v ${plClass(d.pl)}">${fmtINRCompactSigned(d.pl)}</span></div>
+        <div class="sa-detail-row"><span class="k">Return %</span><span class="v ${plClass(d.pl)}">${fmtPct(d.plPct)}</span></div>
+        <div class="sa-detail-row"><span class="k">Allocation</span><span class="v">${fmtNum(allocPct, 1)}%</span></div>
+        <div class="sa-detail-row"><span class="k">Fund XIRR</span><span class="v ${fundXirr === null ? "muted" : plClass(fundXirr)}">${fundXirr === null ? "Insufficient trade data" : fmtPct(fundXirr)}</span></div>
+      </div>
+      <div class="sa-detail-section">
+        <div class="sa-detail-section-title">Fund Details</div>
+        <div class="sa-detail-row"><span class="k">Units</span><span class="v">${fmtNum(row.units, 3)}</span></div>
+        <div class="sa-detail-row"><span class="k">Avg Price</span><span class="v">${fmtNum(d.avgPrice)}</span></div>
+        <div class="sa-detail-row"><span class="k">NAV</span><span class="v">${fmtNum(row.unitPrice)}${row.livePricePending ? ' <span class="pending-badge">Pending</span>' : ""}</span></div>
+      </div>
+    </div>
+    ${mfDrawerVisualizationHTML(row, d)}
+    <div class="sa-detail-section" style="margin-top:14px;">
+      <div class="sa-detail-section-title">Remarks</div>
+      <input type="text" id="mfDrawerRemarks" value="${escapeAttr(row.remarks || "")}" placeholder="Add a note..." ${locked ? "disabled" : ""}
+        style="width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font-body);font-size:13px;padding:8px 10px;">
+    </div>
+    <div class="drawer-actions">
+      <button type="button" class="btn btn-ghost" id="mfDrawerViewTx">${icon("list", 15)} View Transactions</button>
+      ${locked ? "" : `<button type="button" class="btn btn-ghost" id="mfDrawerRemove" style="color:var(--negative)">${icon("trash-2", 15)} Remove Holding</button>`}
+    </div>
+  `;
+}
+
+function openMFDrawer(rowId, opts) {
+  const row = state.mf.find(r => r.id === rowId);
+  if (!row) return;
+  closeMFRowMenu();
+  mfDrawerRowId = rowId;
+  document.getElementById("mfDrawerBody").innerHTML = mfDrawerBodyHTML(row);
+  document.getElementById("mfDrawerOverlay").classList.add("open");
+
+  const remarksInput = document.getElementById("mfDrawerRemarks");
+  if (remarksInput) {
+    remarksInput.addEventListener("change", () => {
+      row.remarks = remarksInput.value;
+      saveState();
+    });
+    if (opts && opts.focusRemarks) setTimeout(() => remarksInput.focus(), 260);
+  }
+  const viewTxBtn = document.getElementById("mfDrawerViewTx");
+  if (viewTxBtn) viewTxBtn.addEventListener("click", () => openMFTransactionsModal(rowId));
+  const removeBtn = document.getElementById("mfDrawerRemove");
+  if (removeBtn) removeBtn.addEventListener("click", () => mfRemoveHolding(rowId));
+}
+
+function closeMFDrawer() {
+  const overlay = document.getElementById("mfDrawerOverlay");
+  if (overlay) overlay.classList.remove("open");
+  mfDrawerRowId = null;
+}
+
+// View Transactions — best-effort list of Trade Book rows matched to
+// this fund by Symbol (see mfFundXIRR()'s comment for why that match
+// isn't always possible). Reuses the app's one generic modal rather
+// than a second dialog component.
+function openMFTransactionsModal(rowId) {
+  const row = state.mf.find(r => r.id === rowId);
+  if (!row) return;
+  const key = (row.symbol || "").trim().toUpperCase();
+  const trades = key ? tradeBook.trades.filter(t => t.assetClass === "mf" && (t.symbol || "").trim().toUpperCase() === key) : [];
+  const sorted = [...trades].sort((a, b) => String(a.tradeDate).localeCompare(String(b.tradeDate)));
+
+  let body;
+  if (tradeBook.trades.length === 0) {
+    body = `<p class="settings-note" style="margin-top:0">Connect your Trade Book (Settings → Trade Book) to see transaction history here — once connected it syncs automatically from Google Drive.</p>`;
+  } else if (sorted.length === 0) {
+    body = `<p class="settings-note" style="margin-top:0">No Trade Book transactions could be matched to this fund yet. Matching relies on the fund's Symbol lining up with your Tradebook export, which isn't always available for older Mutual Fund holdings.</p>`;
+  } else {
+    body = `<div class="table-scroll-wrap"><table>
+        <thead><tr><th>Date</th><th>Type</th><th>Qty</th><th>Price</th><th>Amount</th></tr></thead>
+        <tbody>${sorted.map(t => `
+          <tr>
+            <td>${escapeAttr(String(t.tradeDate).slice(0, 10))}</td>
+            <td style="text-transform:capitalize">${escapeAttr(t.tradeType || "")}</td>
+            <td>${fmtNum(t.quantity, 3)}</td>
+            <td>${fmtNum(t.price)}</td>
+            <td>${fmtINR(Number(t.quantity) * Number(t.price))}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table></div>`;
+  }
+  openModal(`Transactions — ${row.name || "Fund"}`, body, [{ label: "Close", primary: true, onClick: closeModal }]);
+}
+
+function renderMFMobileList() {
+  const wrap = document.getElementById("mfMobileList");
+  if (!wrap) return;
+  const rows = mfVisibleRows();
+  const totals = mfTotals();
+
+  if (state.mf.length === 0) {
+    wrap.innerHTML = '<div class="empty-row" style="padding:22px 0;text-align:center;color:var(--text-faint)">No mutual funds yet. Use "Import Holdings" to bring in your Zerodha Console export.</div>';
+    return;
+  }
+  if (rows.length === 0) {
+    wrap.innerHTML = '<div class="empty-row" style="padding:22px 0;text-align:center;color:var(--text-faint)">No funds match this filter.</div>';
+    return;
+  }
+
+  wrap.innerHTML = rows.map(row => {
+    const d = mfDerived(row);
+    const allocPct = totals.current > 0 ? (d.currentValue / totals.current) * 100 : 0;
+    return `
+      <div class="mf-mobile-card" data-id="${row.id}">
+        <div class="mf-mobile-card-top">
+          ${mfAvatarHTML(row)}
+          <div class="mf-fund-name-wrap">
+            <div class="mf-fund-name">${escapeAttr(row.name || "Unnamed fund")}</div>
+            ${mfCategoryBadgeHTML(row.category)}
+          </div>
+          <div class="mf-menu-wrap mf-mobile-card-menu">
+            <button type="button" class="mf-menu-btn" title="Actions" aria-label="Actions">${icon("more-vertical", 18)}</button>
+          </div>
+        </div>
+        <div class="mf-mobile-card-values">
+          <div class="mf-mobile-card-value"><div class="l">Invested</div><div class="v">${fmtINR(row.invested)}</div></div>
+          <div class="mf-mobile-card-value align-r"><div class="l">Current</div><div class="v">${fmtINR(d.currentValue)}</div></div>
+        </div>
+        <div class="mf-mobile-card-values">
+          <div class="mf-mobile-card-value"><div class="l">P&amp;L</div><div class="v ${plClass(d.pl)}">${fmtINRCompactSigned(d.pl)}</div></div>
+          <div class="mf-mobile-card-value align-r"><div class="l">Return</div><div class="v ${plClass(d.pl)}">${fmtPct(d.plPct)}</div></div>
+        </div>
+        <div class="mf-mobile-card-alloc">
+          <div class="mf-alloc-track"><div class="mf-alloc-fill" style="width:${clamp(allocPct, 0, 100)}%"></div></div>
+          <span class="mf-alloc-pct">${fmtNum(allocPct, 1)}%</span>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  wrap.querySelectorAll(".mf-mobile-card").forEach(card => {
+    card.addEventListener("click", (e) => {
+      if (e.target.closest(".mf-menu-wrap")) return;
+      openMFDrawer(card.dataset.id);
+    });
+    card.querySelector(".mf-menu-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      openMFRowMenu(e.currentTarget, card.dataset.id);
+    });
+  });
+}
+
 function renderMF() {
+  populateMFCategoryFilter();
+  renderMFSummary();
+
   const tbody = document.getElementById("mfTableBody");
   tbody.innerHTML = "";
   const totals = mfTotals();
-  const displayRows = applySortFilter("mf", state.mf, mfGetSearchText, mfGetSortValue);
+  const displayRows = mfVisibleRows();
 
   if (state.mf.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="12">No mutual funds yet. Use "Import Holdings" to bring in your Zerodha Console export.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="8">No mutual funds yet. Use "Import Holdings" to bring in your Zerodha Console export.</td></tr>';
   } else if (displayRows.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="12">No funds match this filter.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="8">No funds match this filter.</td></tr>';
   }
 
-  // Name, Category, Invested, Units and NAV are only ever meant to
-  // change via Zerodha Holdings import or the automatic live-NAV
-  // refresh now — they're permanently read-only regardless of the
-  // Lock Portfolio toggle. Remarks is the one field left for manual
-  // annotation, and still follows the Lock Portfolio toggle.
-  const notesLocked = isReadOnly();
   displayRows.forEach(row => {
     const d = mfDerived(row);
     const allocPct = totals.current > 0 ? (d.currentValue / totals.current) * 100 : 0;
-    const pendingBadge = row.livePricePending ? '<span class="pending-badge">Pending</span>' : "";
+    const pendingBadge = row.livePricePending ? ' <span class="pending-badge">Pending</span>' : "";
     const tr = document.createElement("tr");
     tr.dataset.id = row.id;
+    tr.className = "mf-row";
     tr.innerHTML = `
-      <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" disabled></td>
-      <td class="left" data-label="Category"><input type="text" value="${escapeAttr(row.category || "")}" data-field="category" disabled></td>
-      <td data-label="Invested Amt"><input type="number" step="any" value="${roundedInputValue(row.invested)}" data-field="invested" disabled></td>
-      <td data-label="Units"><input type="number" step="any" value="${roundedInputValue(row.units)}" data-field="units" disabled></td>
-      <td class="c-avg" data-label="Avg Price">${fmtNum(d.avgPrice)}</td>
-      <td data-label="NAV"><div class="price-cell"><input type="number" step="any" value="${roundedInputValue(row.unitPrice)}" data-field="unitPrice" disabled>${pendingBadge}</div></td>
-      <td class="c-cv" data-label="Current Value">${fmtNum(d.currentValue)}</td>
-      <td class="c-pl ${plClass(d.pl)}" data-label="P&amp;L">${fmtNum(d.pl)}</td>
-      <td class="c-plpct ${plClass(d.pl)}" data-label="P&amp;L %">${fmtPct(d.plPct)}</td>
-      <td class="c-alloc" data-label="Alloc %">${fmtNum(allocPct)}%</td>
-      <td class="left" data-label="Remarks"><input type="text" value="${escapeAttr(row.remarks || "")}" data-field="remarks" ${notesLocked ? "disabled" : ""}></td>
-      <td class="row-actions"><button class="icon-btn" title="Remove">✕</button></td>
+      <td class="left sticky-col" data-label="Fund">
+        <div class="mf-fund-cell">
+          ${mfAvatarHTML(row)}
+          <div class="mf-fund-name-wrap">
+            <div class="mf-fund-name" title="${escapeAttr(row.name || "")}">${escapeAttr(row.name || "Unnamed fund")}</div>
+          </div>
+        </div>
+      </td>
+      <td class="left" data-label="Category">${mfCategoryBadgeHTML(row.category)}</td>
+      <td data-label="Invested Amt">${fmtINR(row.invested)}</td>
+      <td data-label="Current Value">${fmtINR(d.currentValue)}${pendingBadge}</td>
+      <td class="${plClass(d.pl)}" data-label="P&amp;L">${fmtINRCompactSigned(d.pl)}</td>
+      <td class="${plClass(d.pl)}" data-label="Return %">${fmtPct(d.plPct)}</td>
+      <td data-label="Allocation">
+        <div class="mf-alloc-cell">
+          <div class="mf-alloc-track"><div class="mf-alloc-fill" style="width:${clamp(allocPct, 0, 100)}%"></div></div>
+          <span class="mf-alloc-pct">${fmtNum(allocPct, 1)}%</span>
+        </div>
+      </td>
+      <td class="row-actions">
+        <div class="mf-menu-wrap">
+          <button type="button" class="mf-menu-btn" title="Actions" aria-label="Actions">${icon("more-vertical", 16)}</button>
+        </div>
+      </td>
     `;
-    tr.querySelectorAll("input").forEach(inp => {
-      inp.addEventListener("change", () => {
-        const field = inp.dataset.field;
-        const numericFields = ["invested", "units", "unitPrice"];
-        row[field] = numericFields.includes(field) ? (parseFloat(inp.value) || 0) : inp.value;
-        saveState();
-        updateMFComputed();
-        renderDashboard();
-      });
+    tr.addEventListener("click", (e) => {
+      if (e.target.closest(".mf-menu-wrap")) return;
+      openMFDrawer(row.id);
     });
-    tr.querySelector(".icon-btn").addEventListener("click", () => {
-      state.mf = state.mf.filter(r => r.id !== row.id);
-      saveState();
-      renderMF();
-      renderDashboard();
+    tr.querySelector(".mf-menu-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      openMFRowMenu(e.currentTarget, row.id);
     });
     tbody.appendChild(tr);
   });
@@ -2511,44 +2992,24 @@ function renderMF() {
   const plPctCell = document.getElementById("mfTotalPLPct");
   plPctCell.textContent = fmtPct(totals.plPct);
   plPctCell.className = plClass(totals.pl);
-  document.getElementById("mfMobTotalInvested").textContent = fmtINR(totals.invested);
-  document.getElementById("mfMobTotalCurrent").textContent = fmtINR(totals.current);
-  const mobPlCell = document.getElementById("mfMobTotalPL");
-  mobPlCell.textContent = fmtINR(totals.pl);
-  mobPlCell.className = plClass(totals.pl);
-}
 
-function updateMFComputed() {
-  const tbody = document.getElementById("mfTableBody");
-  const totals = mfTotals();
-  state.mf.forEach(row => {
-    const tr = tbody.querySelector(`tr[data-id="${row.id}"]`);
-    if (!tr) return;
-    const d = mfDerived(row);
-    const allocPct = totals.current > 0 ? (d.currentValue / totals.current) * 100 : 0;
-    tr.querySelector(".c-avg").textContent = fmtNum(d.avgPrice);
-    tr.querySelector(".c-cv").textContent = fmtNum(d.currentValue);
-    const plCell = tr.querySelector(".c-pl");
-    plCell.textContent = fmtNum(d.pl);
-    plCell.className = "c-pl " + plClass(d.pl);
-    const plPctCell = tr.querySelector(".c-plpct");
-    plPctCell.textContent = fmtPct(d.plPct);
-    plPctCell.className = "c-plpct " + plClass(d.pl);
-    tr.querySelector(".c-alloc").textContent = fmtNum(allocPct) + "%";
-  });
-  document.getElementById("mfTotalInvested").textContent = fmtINR(totals.invested);
-  document.getElementById("mfTotalCurrent").textContent = fmtINR(totals.current);
-  const plCell = document.getElementById("mfTotalPL");
-  plCell.textContent = fmtINR(totals.pl);
-  plCell.className = plClass(totals.pl);
-  const plPctCell = document.getElementById("mfTotalPLPct");
-  plPctCell.textContent = fmtPct(totals.plPct);
-  plPctCell.className = plClass(totals.pl);
-  document.getElementById("mfMobTotalInvested").textContent = fmtINR(totals.invested);
-  document.getElementById("mfMobTotalCurrent").textContent = fmtINR(totals.current);
-  const mobPlCell2 = document.getElementById("mfMobTotalPL");
-  mobPlCell2.textContent = fmtINR(totals.pl);
-  mobPlCell2.className = plClass(totals.pl);
+  renderMFMobileList();
+
+  const sortSelect = document.getElementById("mfSortSelect");
+  if (sortSelect) {
+    const val = `${tableUI.mf.sortCol}:${tableUI.mf.sortDir}`;
+    if (Array.from(sortSelect.options).some(o => o.value === val)) sortSelect.value = val;
+  }
+
+  // Keeps the drawer live if it's open on a fund that's still in the
+  // list — e.g. the 30-second NAV auto-refresh ticking while the
+  // panel is open — and closes it gracefully if that fund was
+  // removed from underneath it instead.
+  if (mfDrawerRowId) {
+    const stillThere = state.mf.find(r => r.id === mfDrawerRowId);
+    if (stillThere) document.getElementById("mfDrawerBody").innerHTML = mfDrawerBodyHTML(stillThere);
+    else closeMFDrawer();
+  }
 }
 
 // Mutual Fund rows are no longer created by hand — Name, Category,
@@ -8329,9 +8790,43 @@ markInitialSortIndicator("stockanalysis", "#panel-stockanalysis thead");
 
 setupMobileSort("equity", "equityMobileSort", "equityMobileSortDir", "#panel-equity thead", () => { renderEquity(); });
 setupMobileSort("debt", "debtMobileSort", "debtMobileSortDir", "#panel-debt thead", () => { renderDebt(); });
-setupMobileSort("mf", "mfMobileSort", "mfMobileSortDir", "#panel-mf thead", () => { renderMF(); });
+// Mutual Funds no longer has a mobile-only sort row — its redesigned
+// toolbar has one sort dropdown that works at every width (wired
+// below, next to the category filter), replacing setupMobileSort()
+// for this tab.
 setupMobileSort("gold", "goldMobileSort", "goldMobileSortDir", "#panel-gold thead", () => { renderGold(); });
 setupMobileSort("stockanalysis", "stockAnalysisMobileSort", "stockAnalysisMobileSortDir", "#panel-stockanalysis thead", () => { tableUI.stockanalysis.page = 1; renderStockAnalysis(); });
+
+// Mutual Funds toolbar — category filter + unified sort dropdown
+// (see the redesigned #panel-mf toolbar in index.html). Both just
+// mutate the same tableUI.mf state the desktop column-header sort
+// already uses, then re-render.
+document.getElementById("mfCategoryFilter")?.addEventListener("change", (e) => {
+  tableUI.mf.category = e.target.value;
+  renderMF();
+});
+document.getElementById("mfSortSelect")?.addEventListener("change", (e) => {
+  const [col, dir] = e.target.value.split(":");
+  tableUI.mf.sortCol = col;
+  tableUI.mf.sortDir = Number(dir);
+  document.querySelectorAll("#panel-mf thead th.sortable").forEach(h => h.classList.remove("sort-asc", "sort-desc"));
+  const th = document.querySelector(`#panel-mf thead th.sortable[data-col="${col}"]`);
+  if (th) th.classList.add(tableUI.mf.sortDir === 1 ? "sort-asc" : "sort-desc");
+  renderMF();
+});
+
+// Mutual Fund detail drawer — close via the X button or by clicking
+// the dimmed overlay outside the panel (same convention as the
+// existing modal's overlay-click-to-close).
+document.getElementById("mfDrawerClose")?.addEventListener("click", closeMFDrawer);
+document.getElementById("mfDrawerOverlay")?.addEventListener("click", (e) => {
+  if (e.target.id === "mfDrawerOverlay") closeMFDrawer();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  closeMFRowMenu();
+  if (document.getElementById("mfDrawerOverlay")?.classList.contains("open")) closeMFDrawer();
+});
 
 setupOverflowToggle("debtOverflowToggle", "debtToolbarSecondary");
 
