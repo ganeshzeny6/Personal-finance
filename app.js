@@ -832,7 +832,14 @@ document.getElementById("navOpportunities")?.addEventListener("click", () => {
 // reflects the same computeAttentionItems() list that card shows.
 document.getElementById("notifBtn")?.addEventListener("click", () => {
   goToTab("dashboard");
-  setTimeout(() => document.getElementById("dashAttentionList")?.closest(".card")?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
+  setTimeout(() => {
+    const card = document.getElementById("dashAttnCard");
+    if (card && !card.classList.contains("expanded")) {
+      card.classList.add("expanded");
+      document.getElementById("dashAttnToggle")?.setAttribute("aria-expanded", "true");
+    }
+    card?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, 150);
 });
 
 function updateNotifBadge(count) {
@@ -844,6 +851,35 @@ function updateNotifBadge(count) {
   } else {
     badge.style.display = "none";
   }
+}
+
+// Small count badge shown next to "What needs your attention" on both
+// Dashboard and Debt — lets the person see at a glance whether there's
+// anything to look at without expanding the (collapsed-by-default)
+// card. Same show/hide-at-zero behavior as updateNotifBadge above.
+function updateAttnCountBadge(id, count) {
+  const badge = document.getElementById(id);
+  if (!badge) return;
+  if (count > 0) {
+    badge.textContent = count > 9 ? "9+" : String(count);
+    badge.style.display = "";
+  } else {
+    badge.style.display = "none";
+  }
+}
+
+// "What needs your attention" (Dashboard + Debt) is collapsed by
+// default — this wires the chevron/title button that expands it in
+// place. Purely a CSS class toggle (.expanded on the card); the list
+// underneath keeps rendering/updating regardless of collapsed state.
+function setupAttentionToggle(cardId, toggleId) {
+  const card = document.getElementById(cardId);
+  const toggle = document.getElementById(toggleId);
+  if (!card || !toggle) return;
+  toggle.addEventListener("click", () => {
+    const expanded = card.classList.toggle("expanded");
+    toggle.setAttribute("aria-expanded", String(expanded));
+  });
 }
 
 // Global header search — quick-jump to a holding by name/symbol
@@ -1872,6 +1908,7 @@ function renderDebtAttention() {
   const el = document.getElementById("debtAttentionList");
   if (!el) return;
   const allItems = computeDebtAttentionItems();
+  updateAttnCountBadge("debtAttnCount", allItems.length);
   const items = debtUI.attnFilter === "all" ? allItems : allItems.filter(i => i.kind === debtUI.attnFilter);
 
   if (allItems.length === 0) {
@@ -3055,6 +3092,7 @@ function renderDashAttention() {
   if (!el) return;
   const allItems = computeAttentionItems();
   updateNotifBadge(allItems.length);
+  updateAttnCountBadge("dashAttnCount", allItems.length);
   const items = dashAttnFilter === "all" ? allItems : allItems.filter(i => i.kind === dashAttnFilter);
 
   if (allItems.length === 0) {
@@ -8358,6 +8396,8 @@ document.getElementById("debtAttnFilter")?.addEventListener("change", (e) => {
 
 setupIntelligentInsightsControls();
 setupFilterClearButtons();
+setupAttentionToggle("dashAttnCard", "dashAttnToggle");
+setupAttentionToggle("debtAttnCard", "debtAttnToggle");
 
 setupFabAdd("fabAddDebt", "btnAddDebt");
 

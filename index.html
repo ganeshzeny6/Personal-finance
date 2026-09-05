@@ -458,6 +458,27 @@
     .attn-card-header{align-items:stretch;}
   }
 
+  /* "What needs your attention" — collapsed by default; a toggle
+     button (chevron + title + item-count badge) replaces the plain
+     <h3> so the card can be expanded on demand instead of always
+     taking up space on Dashboard/Debt. Only CSS display is toggled;
+     the underlying list is still rendered/kept current either way. */
+  .attn-toggle-btn{
+    display:flex;align-items:center;gap:8px;background:none;border:none;padding:0;margin:0;cursor:pointer;
+    font-family:var(--font-display);font-size:16px;font-weight:600;color:var(--text);text-align:left;
+  }
+  .attn-toggle-btn:hover .attn-toggle-label{color:var(--gold);}
+  .attn-toggle-chevron{font-size:10px;color:var(--text-faint);display:inline-block;transition:transform .15s ease;flex:none;}
+  .attn-card.expanded .attn-toggle-chevron{transform:rotate(90deg);}
+  .attn-count-badge{
+    font-family:var(--font-mono);font-size:10.5px;font-weight:700;color:#fff;background:var(--negative);
+    border-radius:20px;padding:1px 7px;line-height:1.5;
+  }
+  .attn-card #dashAttentionList, .attn-card #debtAttentionList{display:none;}
+  .attn-card.expanded #dashAttentionList, .attn-card.expanded #debtAttentionList{display:grid;}
+  .attn-card .attn-filter-wrap{display:none;}
+  .attn-card.expanded .attn-filter-wrap{display:inline-flex;}
+
   /* ---------- Portfolio health ---------- */
   .dash-health-score-row{display:flex;align-items:baseline;gap:8px;margin-bottom:14px;}
   .dash-health-score{font-family:var(--font-mono);font-size:28px;font-weight:600;color:var(--text);}
@@ -698,17 +719,20 @@
   .debt-sort-shortcuts{display:flex;flex-wrap:wrap;gap:6px;}
   .debt-sort-shortcut{background:transparent;border:1px solid var(--border);color:var(--text-muted);font-size:11px;border-radius:7px;padding:5px 10px;cursor:pointer;}
   .debt-sort-shortcut.active{border-color:var(--blue);color:var(--text);}
-  .debt-holdings-search{width:100%;max-width:360px;}
+  .debt-holdings-search{width:100%;}
+  .debt-holdings-search-wrap{width:100%;max-width:360px;}
   .debt-bucket-note{font-size:11.5px;color:var(--text-muted);margin-bottom:10px;}
   .debt-bucket-note b{color:var(--text);}
   .debt-chip-clear{background:transparent;border:none;color:var(--gold);font-size:11px;cursor:pointer;text-decoration:underline;padding:0;margin-left:6px;}
 
   .debt-holding-row{
-    display:grid;grid-template-columns:1.4fr 0.9fr 0.7fr 1fr 1fr auto auto;
+    display:grid;grid-template-columns:1.4fr 0.9fr 0.7fr 1fr 1fr 138px 30px;
     align-items:center;gap:10px;padding:12px 4px;border-bottom:1px solid var(--border);cursor:pointer;
   }
   .debt-holding-row:hover{background:var(--surface-2);}
   .debt-holding-row:last-child{border-bottom:none;}
+  .debt-holding-row .debt-status-badge{justify-self:center;}
+  .debt-holding-row .debt-holding-more{justify-self:center;}
   .debt-holding-main{min-width:0;}
   .debt-holding-name{font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .debt-holding-sub{font-size:11px;color:var(--text-faint);margin-top:2px;}
@@ -1710,9 +1734,13 @@
       </div>
     </div>
 
-    <div class="dash-section card">
+    <div class="dash-section card attn-card" id="dashAttnCard">
       <div class="attn-card-header">
-        <h3>What needs your attention</h3>
+        <button type="button" class="attn-toggle-btn" id="dashAttnToggle" aria-expanded="false" aria-controls="dashAttentionList" title="Show/hide">
+          <span class="attn-toggle-chevron">▸</span>
+          <span class="attn-toggle-label">What needs your attention</span>
+          <span class="attn-count-badge" id="dashAttnCount" style="display:none">0</span>
+        </button>
         <span class="attn-filter-wrap">
           <select class="attn-filter-select" id="dashAttnFilter">
             <option value="all">All</option>
@@ -1982,9 +2010,13 @@
       </div>
     </div>
 
-    <div class="dash-section card">
+    <div class="dash-section card attn-card" id="debtAttnCard">
       <div class="attn-card-header">
-        <h3>What needs your attention</h3>
+        <button type="button" class="attn-toggle-btn" id="debtAttnToggle" aria-expanded="false" aria-controls="debtAttentionList" title="Show/hide">
+          <span class="attn-toggle-chevron">▸</span>
+          <span class="attn-toggle-label">What needs your attention</span>
+          <span class="attn-count-badge" id="debtAttnCount" style="display:none">0</span>
+        </button>
         <span class="attn-filter-wrap">
           <select class="attn-filter-select" id="debtAttnFilter">
             <option value="all">All</option>
@@ -2023,7 +2055,10 @@
     <div class="dash-section card" id="debtHoldingsCard">
       <h3>Debt holdings</h3>
       <div class="debt-filters-row">
-        <input type="text" class="filter-input debt-holdings-search" id="debtHoldingsSearch" placeholder="Search institution or investment...">
+        <div class="filter-clear-wrap debt-holdings-search-wrap">
+          <input type="text" class="filter-input debt-holdings-search" id="debtHoldingsSearch" placeholder="Search institution or investment...">
+          <button type="button" class="filter-clear-btn" data-clear-target="debtHoldingsSearch" title="Clear search" aria-label="Clear search">✕</button>
+        </div>
         <div class="debt-chip-group" id="debtCategoryChips"></div>
         <div class="debt-chip-group" id="debtStatusChips"></div>
         <div class="debt-sort-shortcuts">
