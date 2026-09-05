@@ -1149,9 +1149,79 @@ function eqSectorBadgeHTML(sector) {
   if (!sector) return '<span class="mf-cat-badge mf-cat-7">Uncategorized</span>';
   return `<span class="mf-cat-badge mf-cat-${eqSectorSlot(sector)}">${escapeAttr(sector)}</span>`;
 }
+// Ticker -> verified company domain, used only to fetch a small
+// favicon-style logo (via Google's public favicon service) to show
+// next to the stock name. Deliberately excludes pure index ETFs
+// (NIFTYBEES/BANKBEES/ITBEES/PHARMABEES) and any ticker with no
+// single-company logo — those simply fall back to the existing
+// colored-letter avatar, same as an unmapped/unknown symbol.
+const EQ_LOGO_DOMAINS = {
+  "ITC": "itcportal.com",
+  "INFY": "infosys.com",
+  "HDFCBANK": "hdfcbank.com",
+  "TCS": "tcs.com",
+  "DRREDDY": "drreddys.com",
+  "INDUSINDBK": "indusind.com",
+  "WIPRO": "wipro.com",
+  "NATCOPHARM": "natcopharma.co.in",
+  "KTKBANK": "ktkbank.com",
+  "TMPV": "tatamotors.com",
+  "SOUTHBANK": "southindianbank.com",
+  "CIPLA": "cipla.com",
+  "ZYDUSLIFE": "zyduslife.com",
+  "IDFCFIRSTB": "idfcfirstbank.com",
+  "TMCV": "tatamotors.com",
+  "TATATECH": "tatatechnologies.com",
+  "JYOTHYLAB": "jyothylabs.com",
+  "FINPIPE": "finolexpipes.com",
+  "TECHM": "techmahindra.com",
+  "HDBFS": "hdbfs.com",
+  "ZYDUSWELL": "zyduswellness.com",
+  "TTKPRESTIG": "ttkprestige.com",
+  "HINDUNILVR": "hul.co.in",
+  "HEROMOTOCO": "heromotocorp.com",
+  "EMAMILTD": "emamigroup.com",
+  "TATACHEM": "tatachemicals.com",
+  "BERGEPAINT": "bergerpaints.com",
+  "SUNPHARMA": "sunpharma.com",
+  "MANAPPURAM": "manappuram.com",
+  "ITCHOTELS": "itchotels.com",
+  "KOTAKBANK": "kotak.com",
+  "BAJFINANCE": "bajajfinance.com",
+  "GODREJAGRO": "godrejagrovet.com",
+  "YESBANK": "yesbank.in",
+  "VGUARD": "vguard.in",
+  "HDFCAMC": "hdfcfund.com",
+  "LUPIN": "lupin.com",
+  "RELAXO": "relaxofootwear.com",
+  "SUPREMEIND": "supreme.co.in",
+  "HDFCLIFE": "hdfclife.com",
+  "TVSMOTOR": "tvsmotor.com",
+  "MARICO": "marico.com",
+  "FEDERALBNK": "federalbank.co.in",
+  "ASHOKLEY": "ashokleyland.com",
+  "ICICIBANK": "icicibank.com",
+  "TATASTEEL": "tatasteel.com",
+  "KWIL": "kwalitywallsindia.com",
+  "IFCI": "ifciltd.com",
+  "VAKRANGEE": "vakrangee.in"
+};
+function eqLogoUrl(symbol) {
+  const key = String(symbol || "").trim().toUpperCase();
+  if (!key) return "";
+  const domain = EQ_LOGO_DOMAINS[key];
+  if (!domain) return "";
+  return `https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(domain)}`;
+}
 function eqAvatarHTML(row) {
   const initial = (String(row.name || "").trim().charAt(0) || "?").toUpperCase();
-  return `<div class="mf-avatar mf-cat-${eqSectorSlot(row.sector)}">${escapeAttr(initial)}</div>`;
+  const letterAvatar = `<div class="mf-avatar mf-cat-${eqSectorSlot(row.sector)}" data-eq-avatar-fallback="1">${escapeAttr(initial)}</div>`;
+  const logoUrl = eqLogoUrl(row.symbol);
+  if (!logoUrl) return letterAvatar;
+  // Logo image is layered on top of the letter avatar (which stays in
+  // the DOM underneath); onerror hides the broken image so the
+  // colored-letter avatar shows through untouched as a fallback.
+  return `<div class="mf-avatar mf-cat-${eqSectorSlot(row.sector)}" data-eq-avatar-fallback="1">${escapeAttr(initial)}<img class="eq-logo-img" src="${escapeAttr(logoUrl)}" alt="" loading="lazy" onerror="this.remove()"></div>`;
 }
 
 // Applies the Sector dropdown on top of the shared search/sort infra
