@@ -1206,22 +1206,47 @@ const EQ_LOGO_DOMAINS = {
   "IFCI": "ifciltd.com",
   "VAKRANGEE": "vakrangee.in"
 };
-function eqLogoUrl(symbol) {
+// Three independent logo sources, tried in order, so that a single
+// provider being blocked (ad blockers and privacy DNS filters commonly
+// block Google's s2/favicons as a tracking-adjacent endpoint) doesn't
+// kill the whole feature: (1) the company's own favicon, first-party
+// and not associated with any tracker filter list; (2) DuckDuckGo's
+// icon service as a second, differently-hosted fallback; (3) Google's
+// favicon service as a last resort. If all three fail to load, the
+// image is removed and the existing colored-letter avatar underneath
+// shows through untouched.
+function eqLogoUrls(symbol) {
   const key = String(symbol || "").trim().toUpperCase();
-  if (!key) return "";
+  if (!key) return [];
   const domain = EQ_LOGO_DOMAINS[key];
-  if (!domain) return "";
-  return `https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(domain)}`;
+  if (!domain) return [];
+  return [
+    `https://${domain}/favicon.ico`,
+    `https://icons.duckduckgo.com/ip3/${domain}.ico`,
+    `https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(domain)}`
+  ];
+}
+// Wired via onerror on the <img> itself — advances to the next URL in
+// the data-eq-fallback-chain attribute, or removes the image once the
+// chain is exhausted so the letter avatar underneath shows through.
+function eqLogoImgError(img) {
+  const chain = (img.getAttribute("data-eq-fallback-chain") || "").split("|").filter(Boolean);
+  if (chain.length === 0) { img.remove(); return; }
+  const next = chain.shift();
+  img.setAttribute("data-eq-fallback-chain", chain.join("|"));
+  img.src = next;
 }
 function eqAvatarHTML(row) {
   const initial = (String(row.name || "").trim().charAt(0) || "?").toUpperCase();
   const letterAvatar = `<div class="mf-avatar mf-cat-${eqSectorSlot(row.sector)}" data-eq-avatar-fallback="1">${escapeAttr(initial)}</div>`;
-  const logoUrl = eqLogoUrl(row.symbol);
-  if (!logoUrl) return letterAvatar;
+  const urls = eqLogoUrls(row.symbol);
+  if (urls.length === 0) return letterAvatar;
+  const [firstUrl, ...restUrls] = urls;
   // Logo image is layered on top of the letter avatar (which stays in
-  // the DOM underneath); onerror hides the broken image so the
-  // colored-letter avatar shows through untouched as a fallback.
-  return `<div class="mf-avatar mf-cat-${eqSectorSlot(row.sector)}" data-eq-avatar-fallback="1">${escapeAttr(initial)}<img class="eq-logo-img" src="${escapeAttr(logoUrl)}" alt="" loading="lazy" onerror="this.remove()"></div>`;
+  // the DOM underneath); onerror walks the fallback chain, and once
+  // that's exhausted removes the image so the colored-letter avatar
+  // shows through untouched as the final fallback.
+  return `<div class="mf-avatar mf-cat-${eqSectorSlot(row.sector)}" data-eq-avatar-fallback="1">${escapeAttr(initial)}<img class="eq-logo-img" src="${escapeAttr(firstUrl)}" data-eq-fallback-chain="${escapeAttr(restUrls.join("|"))}" alt="" loading="lazy" onerror="eqLogoImgError(this)"></div>`;
 }
 
 // Applies the Sector dropdown on top of the shared search/sort infra
