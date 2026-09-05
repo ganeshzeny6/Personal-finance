@@ -1093,7 +1093,13 @@
   table.data-table{table-layout:fixed;width:100%;}
   #panel-equity table.data-table{min-width:1430px;}
   #panel-debt table.data-table{min-width:1615px;}
-  #panel-mf table.data-table{min-width:1400px;}
+  /* Left over from the old 12-column layout before the redesign to 8
+     columns — that stale 1400px minimum was forcing this table wider
+     than the actual content area on most screens (sidebar + page
+     padding leaves less than that), which is why columns ran off the
+     right edge and needed horizontal dragging to reach. The 8-column
+     table now fits comfortably in far less width. */
+  #panel-mf table.data-table{min-width:760px;}
   #panel-gold table.data-table{min-width:1295px;}
   #panel-stockanalysis table.data-table{min-width:3240px;}
 
@@ -1671,6 +1677,10 @@
      .attn-filter-select look used elsewhere in the app. */
   #panel-mf .table-toolbar{margin-bottom:10px;}
   #panel-mf .mf-toolbar-select{min-width:172px;}
+  /* Match the search box's own vertical padding exactly (it was 1px
+     off, which showed up as the two dropdowns sitting a touch taller
+     than the search box in the same toolbar row). */
+  #panel-mf .attn-filter-select{padding-top:7px;padding-bottom:7px;}
   @media (max-width:700px){
     #panel-mf .table-toolbar .attn-filter-wrap{flex:1 1 150px;}
     #panel-mf .table-toolbar .attn-filter-select{width:100%;}
@@ -2426,13 +2436,13 @@
         <tbody id="mfTableBody"></tbody>
         <tfoot>
           <tr>
-            <td class="left sticky-col">Total</td>
+            <td class="left sticky-col" id="mfTotalLabel">Total</td>
             <td></td>
             <td id="mfTotalInvested">₹0</td>
             <td id="mfTotalCurrent">₹0</td>
             <td id="mfTotalPL">₹0</td>
             <td id="mfTotalPLPct">0%</td>
-            <td>100%</td>
+            <td id="mfTotalAlloc">100%</td>
             <td></td>
           </tr>
         </tfoot>

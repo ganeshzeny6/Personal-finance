@@ -2436,15 +2436,24 @@ function mfDerived(row) {
   return { avgPrice, currentValue, pl, plPct };
 }
 
-function mfTotals() {
+// Totals over an arbitrary set of rows — mfTotals() below is just
+// this called with the full portfolio. Having the array-taking form
+// separately lets the table/mobile-card "Total" row show the total
+// of whatever's currently filtered/searched, without disturbing the
+// whole-portfolio figures the summary cards and XIRR use.
+function mfTotalsFor(rows) {
   let invested = 0, current = 0;
-  state.mf.forEach(r => {
+  rows.forEach(r => {
     invested += Number(r.invested) || 0;
     current += mfDerived(r).currentValue;
   });
   const pl = current - invested;
   const plPct = invested > 0 ? (pl / invested) * 100 : 0;
   return { invested, current, pl, plPct };
+}
+
+function mfTotals() {
+  return mfTotalsFor(state.mf);
 }
 
 function mfGetSearchText(row) {
@@ -2871,7 +2880,9 @@ function renderMFMobileList() {
   const wrap = document.getElementById("mfMobileList");
   if (!wrap) return;
   const rows = mfVisibleRows();
-  const totals = mfTotals();
+  // Same as the desktop table: allocation bars are re-based to
+  // whatever's currently filtered/searched, not the whole portfolio.
+  const viewTotals = mfTotalsFor(rows);
 
   if (state.mf.length === 0) {
     wrap.innerHTML = '<div class="empty-row" style="padding:22px 0;text-align:center;color:var(--text-faint)">No mutual funds yet. Use "Import Holdings" to bring in your Zerodha Console export.</div>';
@@ -2884,7 +2895,7 @@ function renderMFMobileList() {
 
   wrap.innerHTML = rows.map(row => {
     const d = mfDerived(row);
-    const allocPct = totals.current > 0 ? (d.currentValue / totals.current) * 100 : 0;
+    const allocPct = viewTotals.current > 0 ? (d.currentValue / viewTotals.current) * 100 : 0;
     return `
       <div class="mf-mobile-card" data-id="${row.id}">
         <div class="mf-mobile-card-top">
@@ -2931,8 +2942,19 @@ function renderMF() {
 
   const tbody = document.getElementById("mfTableBody");
   tbody.innerHTML = "";
-  const totals = mfTotals();
   const displayRows = mfVisibleRows();
+  // Totals for the table's own Total row (and each row's Allocation
+  // %) are scoped to whatever's currently filtered/searched, not the
+  // whole portfolio — filter down to just your ETFs and this reflects
+  // only those ETFs' total, with their allocation bars re-based to
+  // sum to 100% among themselves. The summary cards above stay
+  // whole-portfolio on purpose (mfTotals()/mfPortfolioXIRR() are
+  // unaffected by this), since those are meant to always show the
+  // full picture regardless of how the table below is filtered.
+  const viewTotals = mfTotalsFor(displayRows);
+  const filtered = !!(tableUI.mf.category || tableUI.mf.filter);
+  const totalLabel = document.getElementById("mfTotalLabel");
+  if (totalLabel) totalLabel.textContent = filtered ? "Total (filtered)" : "Total";
 
   if (state.mf.length === 0) {
     tbody.innerHTML = '<tr class="empty-row"><td colspan="8">No mutual funds yet. Use "Import Holdings" to bring in your Zerodha Console export.</td></tr>';
@@ -2942,7 +2964,7 @@ function renderMF() {
 
   displayRows.forEach(row => {
     const d = mfDerived(row);
-    const allocPct = totals.current > 0 ? (d.currentValue / totals.current) * 100 : 0;
+    const allocPct = viewTotals.current > 0 ? (d.currentValue / viewTotals.current) * 100 : 0;
     const pendingBadge = row.livePricePending ? ' <span class="pending-badge">Pending</span>' : "";
     const tr = document.createElement("tr");
     tr.dataset.id = row.id;
@@ -2984,14 +3006,16 @@ function renderMF() {
     tbody.appendChild(tr);
   });
 
-  document.getElementById("mfTotalInvested").textContent = fmtINR(totals.invested);
-  document.getElementById("mfTotalCurrent").textContent = fmtINR(totals.current);
+  document.getElementById("mfTotalInvested").textContent = fmtINR(viewTotals.invested);
+  document.getElementById("mfTotalCurrent").textContent = fmtINR(viewTotals.current);
   const plCell = document.getElementById("mfTotalPL");
-  plCell.textContent = fmtINR(totals.pl);
-  plCell.className = plClass(totals.pl);
+  plCell.textContent = fmtINR(viewTotals.pl);
+  plCell.className = plClass(viewTotals.pl);
   const plPctCell = document.getElementById("mfTotalPLPct");
-  plPctCell.textContent = fmtPct(totals.plPct);
-  plPctCell.className = plClass(totals.pl);
+  plPctCell.textContent = fmtPct(viewTotals.plPct);
+  plPctCell.className = plClass(viewTotals.pl);
+  const allocTotalCell = document.getElementById("mfTotalAlloc");
+  if (allocTotalCell) allocTotalCell.textContent = displayRows.length ? "100%" : "—";
 
   renderMFMobileList();
 
