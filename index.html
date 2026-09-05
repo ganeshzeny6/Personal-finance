@@ -1,0 +1,2905 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ganesh's Net Worth &amp; Allocation Tracker</title>
+<script>
+  // Applies the saved theme choice (or system preference, for "auto")
+  // before first paint, so the page never flashes the wrong theme.
+  (function(){
+    try{
+      var pref = localStorage.getItem("themePreference") || "light";
+      var effective = pref === "auto"
+        ? ((window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark")
+        : pref;
+      document.documentElement.setAttribute("data-theme", effective);
+      document.documentElement.style.colorScheme = effective;
+    }catch(e){}
+  })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<style>
+  /* ============================================================
+     DESIGN TOKENS
+     Light is the primary, default palette — a soft off-white
+     wealth-management look (white cards, subtle borders, very soft
+     shadows). Dark is an explicit opt-in via the theme toggle
+     ([data-theme="dark"], set by the FOUC-prevention script in
+     <head> and kept in sync by app.js) rather than the default, but
+     gets the same treatment (elevated surfaces + soft shadows) so
+     it never feels like an afterthought.
+     ============================================================ */
+  :root{
+    --bg:#f6f5f2;
+    --surface:#ffffff;
+    --surface-2:#f4f2ed;
+    --border:#e6e3da;
+    --text:#1c1b18;
+    --text-muted:#6b6862;
+    --text-faint:#9b978c;
+    --gold:#a3742f;
+    --gold-soft:#a3742f1f;
+    --positive:#1a8a5f;
+    --positive-soft:#1a8a5f16;
+    --negative:#c23c4e;
+    --negative-soft:#c23c4e16;
+    --warning:#b07a1c;
+    --warning-soft:#b07a1c1c;
+    --blue:#3f6ea5;
+    --blue-soft:#3f6ea516;
+    --radius:14px;
+    --radius-sm:10px;
+    --radius-lg:18px;
+    --shadow-xs:0 1px 2px rgba(30,26,14,.04);
+    --shadow-sm:0 1px 2px rgba(30,26,14,.04), 0 2px 8px rgba(30,26,14,.05);
+    --shadow-md:0 4px 16px rgba(30,26,14,.07), 0 1px 3px rgba(30,26,14,.05);
+    --shadow-lg:0 12px 32px rgba(30,26,14,.10), 0 2px 6px rgba(30,26,14,.05);
+    --font-display:'Inter',-apple-system,sans-serif;
+    --font-body:'Inter',-apple-system,sans-serif;
+    --font-mono:'Inter',-apple-system,sans-serif;
+    --sidebar-w:232px;
+    --sidebar-w-collapsed:76px;
+    --header-h:64px;
+  }
+
+  /* Dark theme — opt-in via the toggle, same structure/shadows,
+     deeper neutral surfaces instead of white. */
+  :root[data-theme="dark"]{
+    --bg:#0e1116;
+    --surface:#171a21;
+    --surface-2:#1e222b;
+    --border:#2b303b;
+    --text:#eceef2;
+    --text-muted:#9aa0ac;
+    --text-faint:#666d7a;
+    --gold:#d4a24e;
+    --gold-soft:#d4a24e26;
+    --positive:#4cbf8f;
+    --positive-soft:#4cbf8f20;
+    --negative:#e2707f;
+    --negative-soft:#e2707f20;
+    --warning:#e0ac4c;
+    --warning-soft:#e0ac4c24;
+    --blue:#7099cf;
+    --blue-soft:#7099cf20;
+    --shadow-xs:0 1px 2px rgba(0,0,0,.18);
+    --shadow-sm:0 1px 2px rgba(0,0,0,.2), 0 2px 8px rgba(0,0,0,.22);
+    --shadow-md:0 4px 16px rgba(0,0,0,.28), 0 1px 3px rgba(0,0,0,.22);
+    --shadow-lg:0 12px 32px rgba(0,0,0,.36), 0 2px 6px rgba(0,0,0,.24);
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--font-body);
+    font-size:14px;
+    line-height:1.5;
+    min-height:100vh;
+    font-variant-numeric:tabular-nums;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  ::selection{background:var(--gold-soft);}
+  a{color:var(--blue);}
+
+  /* ============================================================
+     APP SHELL — left sidebar (desktop) + top header + main column.
+     Desktop: sidebar is a sticky flex column beside the content.
+     <=900px: sidebar becomes an off-canvas drawer (hamburger-
+     triggered) and a bottom tab bar takes over primary navigation —
+     the same pattern most premium mobile finance apps use.
+     ============================================================ */
+  .app-shell{display:flex;align-items:flex-start;min-height:100vh;}
+
+  .sidebar{
+    width:var(--sidebar-w);flex:none;
+    background:var(--surface);border-right:1px solid var(--border);
+    display:flex;flex-direction:column;
+    position:sticky;top:0;height:100vh;overflow-y:auto;
+    z-index:70;
+  }
+  .sidebar-brand{display:flex;align-items:center;gap:10px;padding:22px 18px 16px;}
+  .sidebar-logo{
+    width:34px;height:34px;border-radius:10px;flex:none;
+    background:linear-gradient(135deg, var(--gold), #7d5a26);color:#fff;
+    display:flex;align-items:center;justify-content:center;
+    font-family:var(--font-display);font-weight:700;font-size:15px;
+  }
+  .sidebar-brand-text{min-width:0;}
+  .sidebar-brand-name{font-family:var(--font-display);font-weight:700;font-size:14.5px;color:var(--text);letter-spacing:-0.01em;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .sidebar-brand-sub{font-size:11px;color:var(--text-faint);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+  .sidebar-nav{display:flex;flex-direction:column;gap:2px;padding:8px 12px;flex:1;}
+  .sidebar-section-label{font-size:10.5px;font-weight:600;color:var(--text-faint);text-transform:uppercase;letter-spacing:.06em;padding:16px 10px 6px;}
+  .sidebar-divider{height:1px;background:var(--border);margin:10px 2px;flex:none;}
+  .sidebar-footer{padding:12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px;}
+  .sidebar-footer .status-tag{padding:0 2px;}
+
+  .tab-btn, .sidebar-nav-item{
+    display:flex;align-items:center;gap:11px;
+    font-family:var(--font-body);font-size:13.5px;font-weight:500;
+    color:var(--text-muted);background:none;border:none;border-radius:9px;
+    padding:10px 12px;cursor:pointer;white-space:nowrap;text-align:left;width:100%;
+    transition:background .15s ease, color .15s ease;
+  }
+  .tab-btn:hover, .sidebar-nav-item:hover{background:var(--surface-2);color:var(--text);}
+  .tab-btn.active{background:var(--gold-soft);color:var(--gold);font-weight:600;}
+  .sidebar-nav-item.active{background:var(--gold-soft);color:var(--gold);font-weight:600;}
+  .nav-icon{width:18px;height:18px;flex:none;display:flex;align-items:center;justify-content:center;font-size:15px;line-height:1;}
+  .nav-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+
+  .sidebar-backdrop{display:none;position:fixed;inset:0;background:rgba(20,17,10,.45);z-index:65;}
+
+  /* ---------- Top header ---------- */
+  .main-col{flex:1;min-width:0;display:flex;flex-direction:column;}
+  .app-header{
+    position:sticky;top:0;z-index:50;
+    display:flex;align-items:center;gap:12px;
+    min-height:var(--header-h);padding:12px 24px;
+    background:var(--surface);border-bottom:1px solid var(--border);
+    flex-wrap:wrap;
+  }
+  .hamburger-btn{
+    display:none;background:none;border:1px solid var(--border);border-radius:9px;
+    width:36px;height:36px;align-items:center;justify-content:center;cursor:pointer;
+    color:var(--text);font-size:16px;flex:none;
+  }
+  .header-search{flex:1 1 220px;min-width:120px;max-width:360px;position:relative;}
+  .header-search input{
+    width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;
+    padding:9px 12px 9px 34px;font-family:var(--font-body);font-size:13px;color:var(--text);
+  }
+  .header-search input::placeholder{color:var(--text-faint);}
+  .header-search input:focus{border-color:var(--gold);outline:none;background:var(--surface);}
+  .header-search::before{
+    content:"";position:absolute;left:11px;top:50%;width:14px;height:14px;transform:translateY(-50%);
+    background:var(--text-faint);pointer-events:none;
+    -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E") center/contain no-repeat;
+    mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E") center/contain no-repeat;
+  }
+  .header-spacer{flex:1 1 auto;}
+  .header-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap;justify-content:flex-end;}
+  .header-market-pill{
+    display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);
+    background:var(--surface-2);border:1px solid var(--border);border-radius:20px;
+    padding:7px 12px;white-space:nowrap;
+  }
+  .header-icon-btn{
+    width:36px;height:36px;border-radius:9px;background:var(--surface-2);border:1px solid var(--border);
+    display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-muted);
+    font-size:14px;position:relative;flex:none;padding:0;
+  }
+  .header-icon-btn:hover{border-color:var(--gold);color:var(--text);}
+  /* Same visual family as .header-icon-btn but for the two buttons
+     whose label text changes at runtime (Lock/Unlock, Cloud Sync) —
+     auto width instead of a fixed 36px square so the text is never
+     clipped or pushed into the next control. */
+  .header-pill-btn{
+    height:36px;border-radius:9px;background:var(--surface-2);border:1px solid var(--border);
+    display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--text-muted);
+    font-family:var(--font-body);font-size:12px;font-weight:500;padding:0 12px;flex:none;white-space:nowrap;
+  }
+  .header-pill-btn:hover{border-color:var(--gold);color:var(--text);}
+  .header-pill-btn.locked{background:var(--negative-soft);border-color:var(--negative);color:var(--negative);}
+  .header-pill-btn.synced{background:var(--positive-soft);border-color:var(--positive);color:var(--positive);}
+  .notif-badge{
+    position:absolute;top:-4px;right:-4px;min-width:16px;height:16px;padding:0 3px;border-radius:8px;
+    background:var(--negative);color:#fff;font-size:9.5px;font-weight:700;line-height:16px;text-align:center;
+  }
+  .header-profile{
+    width:36px;height:36px;border-radius:50%;flex:none;cursor:default;
+    background:linear-gradient(135deg, var(--gold), #7d5a26);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:600;font-size:13px;
+  }
+
+  @media (max-width:900px){
+    .sidebar{
+      position:fixed;left:0;top:0;bottom:0;height:100vh;
+      transform:translateX(-100%);transition:transform .22s ease;box-shadow:var(--shadow-lg);
+    }
+    .sidebar.open{transform:translateX(0);}
+    .sidebar-backdrop.open{display:block;}
+    .hamburger-btn{display:flex;}
+    .header-market-pill{display:none;}
+  }
+  @media (max-width:560px){
+    .app-header{padding:10px 14px;gap:8px;}
+    .header-search{flex:1 1 auto;max-width:none;}
+  }
+
+  /* ---------- Mobile bottom navigation ---------- */
+  .mobile-bottom-nav{
+    display:none;position:fixed;left:0;right:0;bottom:0;z-index:55;
+    background:var(--surface);border-top:1px solid var(--border);
+    padding:6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+    align-items:center;justify-content:space-around;
+    box-shadow:0 -4px 16px rgba(30,26,14,.06);
+  }
+  .mobile-bottom-nav-item{
+    display:flex;flex-direction:column;align-items:center;gap:2px;flex:1;min-width:0;
+    background:none;border:none;color:var(--text-faint);font-family:var(--font-body);
+    font-size:10px;font-weight:500;padding:6px 4px;border-radius:9px;cursor:pointer;
+  }
+  .mobile-bottom-nav-item .nav-icon{font-size:19px;}
+  .mobile-bottom-nav-item.active{color:var(--gold);}
+  @media (max-width:900px){
+    .mobile-bottom-nav{display:flex;}
+    main{padding-bottom:88px !important;}
+    .fab-add{bottom:88px;}
+  }
+
+  .btn{
+    font-family:var(--font-body);
+    font-size:12.5px;
+    font-weight:500;
+    color:var(--text);
+    background:var(--surface-2);
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:8px 13px;
+    cursor:pointer;
+    transition:border-color .15s ease, transform .1s ease;
+    white-space:nowrap;
+  }
+  .btn:hover{border-color:var(--gold);}
+  .btn:active{transform:translateY(1px);}
+  .btn-primary{background:var(--gold);color:#1b1408;border-color:var(--gold);font-weight:600;}
+  .btn-primary:hover{filter:brightness(1.08);}
+  .btn-ghost{background:transparent;}
+  .btn-sm{padding:5px 9px;font-size:11.5px;}
+  .btn:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible{
+    outline:2px solid var(--gold);
+    outline-offset:1px;
+  }
+
+  input[type=file]{display:none;}
+
+  /* ---------- Theme toggle (Light / Dark / Auto) ---------- */
+  .theme-toggle{
+    display:inline-flex;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:9px;padding:3px;gap:2px;flex:none;
+  }
+  .theme-toggle-btn{
+    background:transparent;border:none;color:var(--text-muted);font-size:13px;
+    padding:6px 9px;border-radius:6px;cursor:pointer;line-height:1;
+    font-family:var(--font-body);transition:background .15s ease, color .15s ease;
+  }
+  .theme-toggle-btn:hover{color:var(--text);}
+  .theme-toggle-btn.active{background:var(--gold);color:#1b1408;}
+
+  main{padding:26px 32px 60px;max-width:1320px;margin:0 auto;width:100%;}
+  @media (max-width:900px){
+    main{padding:20px 18px 40px;}
+  }
+  .panel{display:none;}
+  .panel.active{display:block;animation:fade .25s ease;}
+  .portfolio-subpanel{display:none;}
+  .portfolio-subpanel.active{display:block;animation:fade .25s ease;}
+  @keyframes fade{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:translateY(0);}}
+
+  h2.section-title{font-family:var(--font-display);font-size:17px;font-weight:600;margin:0 0 4px;}
+  p.section-sub{color:var(--text-faint);font-size:12.5px;margin:0 0 18px;}
+  @media (max-width:700px){
+    #panel-insights .section-sub, #panel-stockanalysis .section-sub{
+      display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;
+    }
+  }
+
+  .stat-row{
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(190px,1fr));
+    gap:12px;
+    margin-bottom:22px;
+  }
+  .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow-sm);}
+  .stat-card .label{font-size:12.5px;font-weight:500;color:var(--text-muted);margin-bottom:8px;}
+  .stat-card .value{font-family:var(--font-display);font-size:26px;font-weight:600;color:var(--text);letter-spacing:-0.01em;}
+  .stat-card.hero{background:linear-gradient(135deg, var(--surface-2), var(--surface));border-color:var(--gold-soft);}
+  .stat-card.hero .value{color:var(--gold);font-size:32px;}
+  .stat-card .subvalue{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);margin-top:4px;}
+  .cash-edit{display:flex;align-items:center;gap:6px;}
+  .cash-edit input{
+    width:100%;
+    background:transparent;
+    border:1px solid transparent;
+    border-radius:6px;
+    margin:-4px -6px;
+    color:var(--text);
+    font-family:var(--font-mono);
+    font-size:22px;
+    font-weight:600;
+    padding:4px 6px;
+    -webkit-appearance:none;
+    appearance:none;
+  }
+  .cash-edit input::placeholder{color:var(--text-faint);font-weight:400;}
+  .cash-edit input:hover:not(:disabled){border-color:var(--border);}
+  .cash-edit input:focus{border-color:var(--gold);outline:none;background:var(--surface-2);}
+  .cash-edit input:disabled{
+    opacity:1;
+    -webkit-text-fill-color:var(--text);
+    color:var(--text);
+    background:transparent;
+    border-color:transparent;
+    cursor:default;
+  }
+
+  .dash-grid{display:grid;grid-template-columns:1.6fr 1fr;gap:16px;}
+  @media (max-width:900px){.dash-grid{grid-template-columns:1fr;}}
+
+  /* ---------- Dashboard header ---------- */
+  .dash-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:18px;}
+  .dash-header-title{font-family:var(--font-display);font-size:28px;font-weight:600;color:var(--text);margin:0;letter-spacing:-0.015em;}
+  .dash-header-sub{font-size:12.5px;color:var(--text-faint);margin:2px 0 0;}
+  .dash-header-right{text-align:right;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);white-space:nowrap;}
+  .dash-market-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-left:5px;}
+
+  /* ---------- Portfolio tab: header + category selector ---------- */
+  .portfolio-header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:22px;}
+  .portfolio-header-title{font-family:var(--font-display);font-size:26px;font-weight:600;color:var(--text);margin:0;letter-spacing:-0.01em;}
+  .portfolio-header-sub{font-size:12.5px;color:var(--text-faint);margin:4px 0 0;}
+  .portfolio-selector{
+    display:inline-flex;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:10px;padding:4px;gap:2px;max-width:100%;overflow-x:auto;
+  }
+  .portfolio-selector-btn{
+    background:transparent;border:none;color:var(--text-muted);font-size:12.5px;font-weight:600;
+    padding:8px 16px;border-radius:7px;cursor:pointer;white-space:nowrap;font-family:var(--font-body);
+    transition:background .15s ease, color .15s ease;flex:none;
+  }
+  .portfolio-selector-btn:hover{color:var(--text);}
+  .portfolio-selector-btn.active{background:var(--gold);color:#1b1408;}
+  @media (max-width:700px){
+    .portfolio-header{flex-direction:column;align-items:stretch;gap:12px;}
+    .portfolio-selector{width:100%;}
+    .portfolio-selector-btn{flex:1;text-align:center;padding:10px 6px;font-size:12px;}
+  }
+  @media (max-width:360px){
+    .portfolio-selector-btn{padding:10px 4px;font-size:11px;}
+  }
+  .dash-market-dot.open{background:var(--positive);}
+  .dash-market-dot.closed{background:var(--text-faint);}
+
+  /* ---------- KPI cards ---------- */
+  .dash-kpi-grid{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr;gap:12px;margin-bottom:16px;}
+  .dash-kpi-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow-sm);transition:box-shadow .15s ease, transform .15s ease;}
+  .dash-kpi-card:hover{box-shadow:var(--shadow-md);}
+  .dash-kpi-card.hero{background:linear-gradient(135deg, var(--surface-2), var(--surface));border-color:var(--gold-soft);}
+  .dash-kpi-label{font-size:12.5px;font-weight:500;color:var(--text-muted);margin-bottom:10px;}
+  .dash-kpi-value{font-family:var(--font-display);font-size:26px;font-weight:600;color:var(--text);letter-spacing:-0.01em;}
+  .dash-kpi-card.hero .dash-kpi-value{color:var(--gold);font-size:32px;}
+  .dash-kpi-sub{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);margin-top:4px;}
+  .dash-cash-row{display:flex;align-items:center;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);}
+  .dash-cash-row label{font-size:11px;color:var(--text-faint);white-space:nowrap;}
+  .dash-cash-row input{
+    flex:1;min-width:0;background:transparent;border:1px solid transparent;border-radius:6px;
+    color:var(--text);font-family:var(--font-mono);font-size:13px;font-weight:600;padding:4px 6px;text-align:right;
+  }
+  .dash-cash-row input::placeholder{color:var(--text-faint);font-weight:400;}
+  .dash-cash-row input:hover:not(:disabled){border-color:var(--border);}
+  .dash-cash-row input:focus{border-color:var(--gold);outline:none;background:var(--surface-2);}
+  .dash-cash-row input:disabled{opacity:1;-webkit-text-fill-color:var(--text);color:var(--text);background:transparent;border-color:transparent;}
+
+  /* ---------- What needs your attention: compact card grid ---------- */
+  #dashAttentionList, #debtAttentionList{
+    display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));gap:10px;
+  }
+  .dash-attn-item{
+    display:flex;flex-direction:column;gap:10px;
+    padding:14px 15px;border:1px solid var(--border);border-radius:12px;
+    background:var(--surface-2);
+  }
+  .dash-attn-top{display:flex;gap:9px;align-items:flex-start;}
+  .dash-attn-dot{width:8px;height:8px;border-radius:50%;margin-top:5px;flex:none;}
+  .dash-attn-dot.warn{background:var(--warning);}
+  .dash-attn-dot.good{background:var(--positive);}
+  .dash-attn-dot.bad{background:var(--negative);}
+  .dash-attn-body{flex:1;min-width:0;}
+  .dash-attn-title{font-size:13px;font-weight:600;color:var(--text);line-height:1.4;}
+  .dash-attn-detail{font-size:11.5px;color:var(--text-muted);margin-top:3px;}
+  .dash-attn-action{
+    align-self:flex-start;flex:none;background:var(--surface);border:1px solid var(--border);color:var(--text-muted);
+    font-size:11.5px;font-weight:500;border-radius:7px;padding:6px 12px;cursor:pointer;white-space:nowrap;font-family:var(--font-body);
+    transition:border-color .15s ease, color .15s ease;
+  }
+  .dash-attn-action:hover{border-color:var(--gold);color:var(--gold);}
+  .dash-attn-empty{font-size:12.5px;color:var(--text-muted);padding:6px 0;}
+
+  /* "What needs your attention" header row + filter dropdown */
+  .attn-card-header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:2px;flex-wrap:wrap;}
+  .attn-card-header h3{margin:0;}
+  .attn-filter-wrap{position:relative;display:inline-flex;flex:none;}
+  .attn-filter-select{
+    appearance:none;-webkit-appearance:none;-moz-appearance:none;
+    font-family:var(--font-body);font-size:12px;font-weight:500;color:var(--text-muted);
+    background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
+    padding:6px 28px 6px 12px;cursor:pointer;
+  }
+  .attn-filter-select:hover{border-color:var(--gold-soft);color:var(--text);}
+  .attn-filter-select:focus{border-color:var(--gold);outline:none;color:var(--text);}
+  .attn-filter-wrap::after{
+    content:"▼";position:absolute;right:11px;top:50%;transform:translateY(-50%);
+    font-size:8px;color:var(--text-faint);pointer-events:none;
+  }
+  @media (max-width:700px){
+    .attn-filter-select{width:100%;}
+    .attn-filter-wrap{width:100%;}
+    .attn-card-header{align-items:stretch;}
+  }
+
+  /* "What needs your attention" — collapsed by default; a toggle
+     button (chevron + title + item-count badge) replaces the plain
+     <h3> so the card can be expanded on demand instead of always
+     taking up space on Dashboard/Debt. Only CSS display is toggled;
+     the underlying list is still rendered/kept current either way. */
+  .attn-toggle-btn{
+    display:flex;align-items:center;gap:8px;background:none;border:none;padding:0;margin:0;cursor:pointer;
+    font-family:var(--font-display);font-size:16px;font-weight:600;color:var(--text);text-align:left;
+  }
+  .attn-toggle-btn:hover .attn-toggle-label{color:var(--gold);}
+  .attn-toggle-chevron{font-size:10px;color:var(--text-faint);display:inline-block;transition:transform .15s ease;flex:none;}
+  .attn-card.expanded .attn-toggle-chevron{transform:rotate(90deg);}
+  .attn-count-badge{
+    font-family:var(--font-mono);font-size:10.5px;font-weight:700;color:#fff;background:var(--negative);
+    border-radius:20px;padding:1px 7px;line-height:1.5;
+  }
+  .attn-card #dashAttentionList, .attn-card #debtAttentionList, .attn-card #eqAttentionList{display:none;}
+  .attn-card.expanded #dashAttentionList, .attn-card.expanded #debtAttentionList, .attn-card.expanded #eqAttentionList{display:grid;}
+  .attn-card .attn-filter-wrap{display:none;}
+  .attn-card.expanded .attn-filter-wrap{display:inline-flex;}
+
+  /* ---------- Portfolio health ---------- */
+  .dash-health-score-row{display:flex;align-items:baseline;gap:8px;margin-bottom:14px;}
+  .dash-health-score{font-family:var(--font-mono);font-size:28px;font-weight:600;color:var(--text);}
+  .dash-health-score.good{color:var(--positive);}
+  .dash-health-score.fair{color:var(--warning);}
+  .dash-health-score.poor{color:var(--negative);}
+  .dash-health-label{font-size:12px;color:var(--text-muted);}
+  .dash-health-row{display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-bottom:3px;}
+  .dash-health-track{height:5px;background:var(--surface-2);border-radius:3px;margin-bottom:9px;overflow:hidden;}
+  .dash-health-fill{height:100%;border-radius:3px;}
+  .dash-health-fill.good{background:var(--positive);}
+  .dash-health-fill.fair{background:var(--warning);}
+  .dash-health-fill.poor{background:var(--negative);}
+  .dash-health-note{font-size:11.5px;color:var(--text-faint);margin-top:6px;line-height:1.5;}
+
+  /* ---------- Asset allocation bars (still used by Debt's
+     per-category breakdown — Dashboard's own allocation card below
+     uses the donut+table design instead) ---------- */
+  .dash-alloc-row{margin-bottom:13px;}
+  .dash-alloc-row:last-child{margin-bottom:0;}
+  .dash-alloc-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;}
+  .dash-alloc-name{color:var(--text);display:flex;align-items:center;gap:6px;font-size:12.5px;}
+  .dash-alloc-name .swatch{width:8px;height:8px;border-radius:50%;flex:none;}
+  .dash-alloc-pct{font-family:var(--font-mono);font-size:10.5px;color:var(--text-faint);}
+  .dash-alloc-pct.over{color:var(--negative);}
+  .dash-alloc-pct.under{color:var(--warning);}
+  .dash-alloc-amounts{display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-muted);margin-bottom:5px;}
+  .dash-alloc-amounts b{font-family:var(--font-mono);font-weight:600;color:var(--text);}
+  .dash-alloc-track{height:6px;background:var(--surface-2);border-radius:3px;position:relative;overflow:visible;}
+  .dash-alloc-fill{height:100%;border-radius:3px;background:var(--blue);}
+  .dash-alloc-footer{display:flex;justify-content:flex-end;margin-top:12px;}
+
+  /* ---------- Asset Allocation card (Dashboard): donut + table + alert ---------- */
+  .dash-alloc-card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;}
+  .dash-alloc-card-header h3{margin:0;flex:1;min-width:0;}
+  .dash-alloc-info{
+    display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;
+    border-radius:50%;border:1px solid var(--text-faint);color:var(--text-faint);
+    font-size:10px;font-style:normal;margin-left:5px;cursor:help;vertical-align:middle;
+  }
+  .dash-alloc-edit-link{background:transparent;border:none;color:var(--text-muted);font-size:11.5px;cursor:pointer;text-decoration:underline;padding:0;}
+  .dash-alloc-edit-link:hover{color:var(--gold);}
+  .dash-alloc-layout{display:flex;gap:28px;align-items:center;}
+  .dash-alloc-donut-wrap{position:relative;width:170px;height:170px;flex:none;}
+  #dashAllocDonut{width:100% !important;height:100% !important;display:block;}
+  .dash-alloc-donut-center{
+    position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    text-align:center;pointer-events:none;
+  }
+  .dash-alloc-donut-total{font-family:var(--font-mono);font-size:17px;font-weight:600;color:var(--text);white-space:nowrap;}
+  .dash-alloc-donut-label{font-size:10.5px;color:var(--text-faint);margin-top:2px;}
+  .dash-alloc-table-wrap{flex:1;min-width:0;overflow-x:auto;}
+  .dash-alloc-table{width:100%;min-width:0;border-collapse:collapse;font-size:12.5px;}
+  .dash-alloc-table th{text-align:right;font-weight:500;font-size:10.5px;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-faint);padding:0 0 10px;white-space:nowrap;}
+  .dash-alloc-table th.left, .dash-alloc-table td:first-child{text-align:left;}
+  .dash-alloc-table td{padding:9px 0;border-top:1px solid var(--border);white-space:nowrap;text-align:right;color:var(--text);}
+  .dash-alloc-table td:first-child{display:flex;align-items:center;gap:8px;font-weight:500;}
+  .dash-alloc-dot{width:9px;height:9px;border-radius:50%;flex:none;}
+  .dash-alloc-var{font-family:var(--font-mono);color:var(--text-muted);}
+  .dash-alloc-var.over{color:var(--negative);}
+  .dash-alloc-var.under{color:var(--positive);}
+  .dash-alloc-alert{
+    display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+    margin-top:18px;padding:12px 16px;border-radius:9px;
+    background:var(--negative-soft);border:1px solid #e0667a44;
+  }
+  .dash-alloc-alert span{font-size:12.5px;color:var(--negative);}
+  .dash-alloc-alert .btn{flex:none;}
+
+  /* ---------- Portfolio performance ---------- */
+  /* The header can hold a title+hint AND a 6-button period group —
+     let it wrap onto two rows instead of overlapping when the card
+     is too narrow for both (small tablets, mobile). */
+  .dash-perf-chart-card .dash-alloc-card-header{flex-wrap:wrap;row-gap:10px;}
+  .dash-perf-chart-card .dash-alloc-card-header h3{flex-basis:200px;}
+  .dash-perf-period-group{display:flex;gap:2px;background:var(--surface-2);border-radius:8px;padding:2px;flex:none;overflow-x:auto;max-width:100%;}
+  .dash-perf-period-group button{
+    border:none;background:transparent;color:var(--text-faint);font-size:12px;font-weight:500;
+    padding:5px 11px;border-radius:6px;cursor:not-allowed;
+  }
+  .dash-perf-period-group button:not(:disabled){cursor:pointer;color:var(--text-muted);}
+  .dash-perf-period-group button:not(:disabled):hover{color:var(--text);}
+  .dash-perf-period-group button.active{background:var(--surface);color:var(--text-muted);box-shadow:0 1px 2px rgba(0,0,0,.06);}
+  .dash-perf-period-group button.active:not(:disabled){color:var(--gold);font-weight:600;}
+  .dash-perf-chart-placeholder{
+    display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+    gap:8px;padding:44px 24px;border:1.5px dashed var(--border);border-radius:12px;color:var(--text-faint);
+  }
+  .dash-perf-chart-placeholder svg{color:var(--text-faint);opacity:.7;}
+  .dash-perf-chart-placeholder-title{font-size:14px;font-weight:600;color:var(--text-muted);}
+  .dash-perf-chart-placeholder p{margin:0;max-width:460px;font-size:12.5px;line-height:1.55;color:var(--text-faint);}
+  .dash-perf-summary{
+    display:flex;flex-wrap:wrap;gap:16px;row-gap:8px;margin-top:14px;padding-top:14px;
+    border-top:1px solid var(--border);font-size:12px;color:var(--text-muted);
+  }
+  .dash-perf-summary b{font-family:var(--font-mono);color:var(--text);font-weight:600;}
+  @media (max-width:700px){
+    .dash-perf-chart-card .dash-alloc-card-header h3{flex-basis:100%;}
+    .dash-perf-period-group{width:100%;justify-content:space-between;}
+    .dash-perf-chart-placeholder{padding:32px 16px;}
+  }
+
+  /* This card responds to its OWN width, not just the viewport —
+     it sits in a 1.6fr grid column next to Portfolio Health on
+     desktop, so the donut+table can be squeezed even on a wide
+     screen, not only on an actual mobile viewport. */
+  #dashAllocCard{container-type:inline-size;}
+
+  @container (max-width:560px){
+    .dash-alloc-layout{flex-direction:column;align-items:stretch;gap:18px;}
+    .dash-alloc-donut-wrap{width:150px;height:150px;align-self:center;}
+    .dash-alloc-table-wrap{overflow-x:hidden;}
+    .dash-alloc-table{font-size:12px;width:100%;table-layout:fixed;}
+    .dash-alloc-table thead{display:none;}
+    .dash-alloc-table, .dash-alloc-table tbody, .dash-alloc-table tr{display:block;width:100%;}
+    .dash-alloc-table tr{border-top:1px solid var(--border);padding:9px 0;}
+    .dash-alloc-table tr:first-child{border-top:none;}
+    .dash-alloc-table td{
+      display:flex;width:100%;box-sizing:border-box;justify-content:space-between;align-items:center;
+      border-top:none;padding:3px 0;text-align:right;white-space:normal;
+    }
+    .dash-alloc-table td:first-child{font-weight:600;font-size:13px;}
+    #panel-dashboard .dash-alloc-table td:first-child::before{content:none;}
+    .dash-alloc-table td:not(:first-child)::before{content:attr(data-label);color:var(--text-faint);font-weight:400;font-size:11.5px;}
+    .dash-alloc-alert{flex-direction:column;align-items:stretch;text-align:center;}
+    .dash-alloc-alert .btn{width:100%;}
+  }
+  @container (min-width:561px) and (max-width:680px){
+    /* Medium width: keep the side-by-side layout but shrink the
+       donut and tighten the table so nothing crowds the edge. */
+    .dash-alloc-donut-wrap{width:130px;height:130px;}
+    .dash-alloc-layout{gap:16px;}
+    .dash-alloc-table{font-size:11.5px;}
+  }
+
+  /* ---------- Investment opportunities ---------- */
+  .dash-opp-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;}
+  .dash-opp-row:last-child{border-bottom:none;}
+  .dash-opp-name{font-weight:600;color:var(--text);width:96px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .dash-opp-score{font-family:var(--font-mono);font-size:11px;border-radius:5px;padding:2px 7px;flex:none;}
+  .dash-opp-score.add{background:var(--positive-soft);color:var(--positive);}
+  .dash-opp-score.watch{background:var(--warning-soft);color:var(--warning);}
+  .dash-opp-tag{color:var(--text-muted);font-size:11px;width:64px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .dash-opp-alloc{color:var(--text-muted);font-family:var(--font-mono);font-size:10.5px;flex:1;min-width:0;text-align:right;}
+  .dash-opp-action{flex:none;font-size:10px;border-radius:5px;padding:3px 9px;font-weight:600;}
+  .dash-opp-action.add{background:var(--positive-soft);color:var(--positive);}
+  .dash-opp-action.watch{background:var(--warning-soft);color:var(--warning);}
+  .dash-opp-empty, .dash-perf-empty{font-size:12.5px;color:var(--text-muted);padding:4px 0;}
+
+  /* ---------- Top contributors / losers ---------- */
+  .dash-perf-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  .dash-perf-item{display:flex;justify-content:space-between;font-size:11.5px;padding:5px 0;border-bottom:1px solid var(--border);}
+  .dash-perf-item:last-child{border-bottom:none;}
+  .dash-perf-name{color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:8px;}
+  .dash-perf-val{font-family:var(--font-mono);flex:none;}
+  .dash-perf-val.pos{color:var(--positive);}
+  .dash-perf-val.neg{color:var(--negative);}
+
+  /* ---------- Quick breakdown ---------- */
+  .dash-breakdown-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px;}
+  .dash-breakdown-item{text-align:center;}
+  .dash-breakdown-n{font-family:var(--font-mono);font-size:18px;font-weight:600;color:var(--text);}
+  .dash-breakdown-l{font-size:10.5px;color:var(--text-faint);margin-top:2px;}
+  .dash-breakdown-total{display:flex;justify-content:space-between;align-items:center;padding-top:12px;border-top:1px solid var(--border);font-size:12.5px;color:var(--text-muted);}
+  .dash-breakdown-total b{font-family:var(--font-mono);color:var(--text);font-size:14px;}
+
+  /* ---------- Primary actions ---------- */
+  .dash-actions-row{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 22px;}
+
+  /* ---------- Section spacing ---------- */
+  .dash-section{margin-bottom:16px;}
+
+  @media (max-width:700px){
+    .dash-header{margin-bottom:14px;}
+    .dash-header-title{font-size:18px;}
+    .dash-kpi-grid{grid-template-columns:1fr 1fr;}
+    .dash-kpi-card.hero{grid-column:1 / -1;}
+    .dash-perf-grid{grid-template-columns:1fr 1fr;gap:8px;}
+    .dash-breakdown-grid{grid-template-columns:1fr 1fr;row-gap:14px;}
+    .dash-opp-name{width:74px;}
+    .dash-opp-tag{display:none;}
+    .dash-actions-row .btn{flex:1 1 calc(50% - 4px);text-align:center;}
+  }
+
+  /* ============ DEBT DASHBOARD (redesign) ============ */
+
+  .debt-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:16px;}
+  .debt-header-title{font-family:var(--font-display);font-size:22px;font-weight:600;color:var(--text);margin:0;letter-spacing:-0.01em;}
+  .debt-header-sub{font-size:12.5px;color:var(--text-faint);margin:4px 0 0;max-width:520px;}
+  .debt-header-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start;}
+  .debt-last-updated{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);width:100%;text-align:right;margin-top:4px;}
+
+  .debt-kpi-grid{display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr 1fr;gap:12px;margin-bottom:16px;}
+  .debt-kpi-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow-sm);}
+  .debt-kpi-card.hero{background:linear-gradient(135deg, var(--surface-2), var(--surface));border-color:var(--gold-soft);}
+  .debt-kpi-label{font-size:12.5px;font-weight:500;color:var(--text-muted);margin-bottom:8px;}
+  .debt-kpi-value{font-family:var(--font-display);font-size:24px;font-weight:600;color:var(--text);letter-spacing:-0.01em;}
+  .debt-kpi-card.hero .debt-kpi-value{color:var(--gold);font-size:28px;}
+  .debt-kpi-sub{font-family:var(--font-mono);font-size:12px;color:var(--text-muted);margin-top:4px;}
+  .debt-kpi-target-row{font-size:11px;color:var(--text-faint);margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+  .debt-kpi-rebalance-btn{margin-top:10px;}
+
+  .debt-maturity-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+  .debt-maturity-card{
+    background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius);
+    padding:12px 14px;text-align:left;cursor:pointer;font-family:var(--font-body);color:var(--text);
+  }
+  .debt-maturity-card:hover{border-color:var(--gold-soft);}
+  .debt-maturity-card.active{border-color:var(--gold);background:var(--gold-soft);}
+  .debt-maturity-label{font-size:10.5px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-faint);margin-bottom:6px;}
+  .debt-maturity-amount{font-family:var(--font-mono);font-size:16px;font-weight:600;}
+  .debt-maturity-count{font-size:10.5px;color:var(--text-muted);margin-top:3px;}
+
+  .debt-cal-controls{display:flex;justify-content:flex-end;gap:6px;margin-bottom:14px;}
+  .debt-cal-range-btn{background:transparent;border:1px solid var(--border);color:var(--text-muted);font-size:11px;border-radius:7px;padding:5px 10px;cursor:pointer;}
+  .debt-cal-range-btn.active{border-color:var(--gold);color:var(--text);background:var(--gold-soft);}
+  .debt-cal-bars{display:flex;align-items:flex-end;gap:6px;height:140px;overflow-x:auto;padding-bottom:2px;}
+  .debt-cal-bar-col{flex:1 1 0;min-width:28px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;background:transparent;border:none;cursor:pointer;padding:0;}
+  .debt-cal-bar-track{width:100%;max-width:26px;flex:1;display:flex;align-items:flex-end;}
+  .debt-cal-bar-fill{width:100%;background:var(--blue);border-radius:3px 3px 0 0;min-height:3px;}
+  .debt-cal-bar-fill.empty{background:var(--border);}
+  .debt-cal-bar-col.selected .debt-cal-bar-fill{background:var(--gold);}
+  .debt-cal-bar-label{font-size:10px;color:var(--text-faint);margin-top:6px;}
+  .debt-cal-detail{margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-size:12px;color:var(--text-muted);}
+  .debt-cal-detail b{color:var(--text);}
+
+  .debt-liquidity-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:12.5px;color:var(--text-muted);}
+  .debt-liquidity-row:last-child{border-bottom:none;}
+  .debt-liquidity-amt{font-family:var(--font-mono);color:var(--text);font-weight:600;}
+
+  .debt-health-placeholder{font-size:12.5px;color:var(--text-muted);line-height:1.6;}
+
+  .debt-filters-row{display:flex;flex-direction:column;gap:8px;margin-bottom:14px;}
+  .debt-chip-group{display:flex;flex-wrap:wrap;gap:6px;}
+  .debt-chip{background:transparent;border:1px solid var(--border);color:var(--text-muted);font-size:11.5px;border-radius:20px;padding:5px 12px;cursor:pointer;white-space:nowrap;}
+  .debt-chip:hover{border-color:var(--gold-soft);}
+  .debt-chip.active{background:var(--gold-soft);border-color:var(--gold);color:var(--text);}
+  .debt-sort-shortcuts{display:flex;flex-wrap:wrap;gap:6px;}
+  .debt-sort-shortcut{background:transparent;border:1px solid var(--border);color:var(--text-muted);font-size:11px;border-radius:7px;padding:5px 10px;cursor:pointer;}
+  .debt-sort-shortcut.active{border-color:var(--blue);color:var(--text);}
+  .debt-holdings-search{width:100%;}
+  .debt-holdings-search-wrap{width:100%;max-width:360px;}
+  .debt-bucket-note{font-size:11.5px;color:var(--text-muted);margin-bottom:10px;}
+  .debt-bucket-note b{color:var(--text);}
+  .debt-chip-clear{background:transparent;border:none;color:var(--gold);font-size:11px;cursor:pointer;text-decoration:underline;padding:0;margin-left:6px;}
+
+  .debt-holding-row{
+    display:grid;grid-template-columns:1.4fr 0.9fr 0.7fr 1fr 1fr 138px 30px;
+    align-items:center;gap:10px;padding:12px 4px;border-bottom:1px solid var(--border);cursor:pointer;
+  }
+  .debt-holding-row:hover{background:var(--surface-2);}
+  .debt-holding-row:last-child{border-bottom:none;}
+  .debt-holding-row .debt-status-badge{justify-self:center;}
+  .debt-holding-row .debt-holding-more{justify-self:center;}
+  .debt-holding-main{min-width:0;}
+  .debt-holding-name{font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .debt-holding-sub{font-size:11px;color:var(--text-faint);margin-top:2px;}
+  .debt-holding-col{min-width:0;}
+  .debt-holding-label{font-size:10px;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-faint);margin-bottom:2px;}
+  .debt-holding-val{font-family:var(--font-mono);font-size:12.5px;color:var(--text);white-space:nowrap;}
+  .debt-status-badge{font-size:10.5px;border-radius:20px;padding:4px 10px;white-space:nowrap;font-weight:600;}
+  .debt-status-badge.active{background:var(--positive-soft);color:var(--positive);}
+  .debt-status-badge.soon{background:var(--warning-soft);color:var(--warning);}
+  .debt-status-badge.action{background:#e0863322;color:#e08633;}
+  .debt-status-badge.matured{background:var(--negative-soft);color:var(--negative);}
+  .debt-status-badge.unknown{background:var(--surface-2);color:var(--text-faint);}
+  .debt-holding-more{background:transparent;border:none;color:var(--text-faint);font-size:14px;cursor:pointer;padding:4px 8px;}
+  .debt-holding-more:hover{color:var(--text);}
+
+  .debt-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:6px;}
+  .debt-detail-val{font-family:var(--font-mono);font-size:14px;font-weight:600;color:var(--text);}
+  .debt-detail-divider{border-top:1px solid var(--border);margin:16px 0;}
+
+  .debt-reinvest-amount{font-family:var(--font-mono);font-size:17px;font-weight:600;color:var(--gold);margin-bottom:10px;}
+  .debt-reinvest-rate-row{font-size:12px;color:var(--text-muted);margin-bottom:12px;}
+  .debt-reinvest-rate-row b{font-family:var(--font-mono);color:var(--text);}
+  .debt-reinvest-row{display:grid;grid-template-columns:1.2fr 1fr auto;align-items:center;gap:8px;padding:6px 0;font-size:12px;color:var(--text-muted);}
+  .debt-reinvest-status{font-size:10px;font-weight:600;white-space:nowrap;}
+  .debt-reinvest-status.over{color:var(--negative);}
+  .debt-reinvest-status.under{color:var(--warning);}
+  .debt-reinvest-note{font-size:12px;color:var(--text-muted);margin:12px 0;line-height:1.6;}
+  .debt-reinvest-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}
+
+  .debt-classic-details{margin-top:6px;}
+  .debt-classic-summary{cursor:pointer;font-size:12.5px;color:var(--text-muted);padding:10px 0;user-select:none;}
+  .debt-classic-summary:hover{color:var(--text);}
+
+  @media (max-width:900px){
+    .debt-kpi-grid{grid-template-columns:1fr 1fr;}
+    .debt-kpi-card.hero{grid-column:1 / -1;}
+    .debt-maturity-grid{grid-template-columns:1fr 1fr;}
+  }
+  @media (max-width:700px){
+    .debt-header-actions{width:100%;}
+    .debt-header-actions .btn{flex:1 1 calc(50% - 4px);text-align:center;}
+    .debt-holding-row{grid-template-columns:1fr auto;grid-template-areas:"main badge" "principal principal" "rate rate" "maturity maturity" "value value";row-gap:6px;padding:14px 4px;}
+    .debt-holding-main{grid-area:main;}
+    .debt-status-badge{grid-area:badge;justify-self:end;}
+    .debt-holding-col:nth-of-type(2){grid-area:principal;}
+    .debt-holding-col:nth-of-type(3){grid-area:rate;}
+    .debt-holding-col:nth-of-type(4){grid-area:maturity;}
+    .debt-holding-col:nth-of-type(5){grid-area:value;}
+    .debt-holding-col{display:flex;justify-content:space-between;}
+    .debt-holding-more{display:none;}
+    .debt-detail-grid{grid-template-columns:1fr 1fr;}
+    .debt-reinvest-row{grid-template-columns:1fr;gap:2px;}
+  }
+
+  /* Insights tab: Top/Worst Performers lists + Sector/Category donuts */
+  .insights-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  @media (max-width:900px){.insights-grid{grid-template-columns:1fr;}}
+
+  .performer-row{padding:10px 0;border-bottom:1px solid var(--border);}
+  .performer-row:last-child{border-bottom:none;}
+  .performer-row-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:6px;}
+  .performer-name{font-family:var(--font-display);font-size:13px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .performer-pl{font-family:var(--font-mono);font-size:12px;font-weight:600;white-space:nowrap;flex:0 0 auto;}
+  .performer-bar-track{height:6px;border-radius:4px;background:var(--surface-2);overflow:hidden;}
+  .performer-bar-fill{height:100%;border-radius:4px;}
+  .performer-bar-fill.pos{background:var(--positive);}
+  .performer-bar-fill.neg{background:var(--negative);}
+  .performer-meta{font-family:var(--font-mono);font-size:11px;color:var(--text-faint);margin-top:4px;}
+  .insights-empty{color:var(--text-faint);font-size:12.5px;padding:24px 0;text-align:center;}
+
+  /* ============================================================
+     INTELLIGENT INSIGHTS — redesign (UI only; see app.js — every
+     number rendered here still comes from computeStockInsight() /
+     stockAnalysisDerived() / the fundamental-verdict functions,
+     nothing recalculated differently for this view).
+     ============================================================ */
+  .ii-card-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:2px;}
+  .ii-card-title{font-family:var(--font-display);font-size:16px;font-weight:600;display:flex;align-items:center;gap:8px;}
+  .ii-card-title .spark{color:var(--gold);}
+  .ii-card-badge{font-size:10.5px;color:var(--text-faint);background:var(--surface-2);border:1px solid var(--border);border-radius:20px;padding:5px 11px;white-space:nowrap;}
+
+  .ii-alloc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:14px 0 16px;}
+  .ii-alloc-card{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:15px 17px;box-shadow:var(--shadow-xs);}
+  .ii-alloc-top{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
+  .ii-alloc-icon{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:15px;flex:0 0 auto;}
+  .ii-alloc-icon.large{background:#4bbf9c22;color:var(--positive);}
+  .ii-alloc-icon.mid{background:#d9a44122;color:var(--warning);}
+  .ii-alloc-icon.small{background:#6f93c922;color:var(--blue);}
+  .ii-alloc-icon.unclassified{background:#a78bfa22;color:#a78bfa;}
+  .ii-alloc-label{font-size:11.5px;font-weight:500;color:var(--text-muted);margin-bottom:3px;}
+  .ii-alloc-value{font-family:var(--font-mono);font-size:20px;font-weight:600;color:var(--text);line-height:1.1;}
+  .ii-alloc-sub{font-size:10.5px;color:var(--text-faint);margin-top:1px;}
+  .ii-alloc-bar-track{height:6px;border-radius:4px;background:var(--bg);overflow:hidden;margin:10px 0 7px;}
+  .ii-alloc-bar-fill{height:100%;border-radius:4px;}
+  .ii-alloc-status{font-size:11.5px;font-weight:600;}
+  .ii-alloc-status.over{color:var(--negative);}
+  .ii-alloc-status.within{color:var(--positive);}
+  .ii-alloc-status.none{color:var(--text-faint);font-weight:500;}
+
+  .ii-portfolio-summary{display:flex;flex-wrap:wrap;gap:20px;row-gap:12px;align-items:center;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:13px 18px;margin-bottom:16px;}
+  .ii-portfolio-summary .ii-ps-label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);flex:0 0 auto;}
+  .ii-ps-item{display:flex;align-items:center;gap:8px;}
+  .ii-ps-icon{width:24px;height:24px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:11px;flex:0 0 auto;}
+  .ii-ps-icon.add{background:var(--positive-soft);color:var(--positive);}
+  .ii-ps-icon.hold{background:#6f93c922;color:var(--blue);}
+  .ii-ps-icon.watch{background:var(--warning-soft);color:var(--warning);}
+  .ii-ps-icon.reduce{background:var(--negative-soft);color:var(--negative);}
+  .ii-ps-icon.none, .ii-ps-icon.insufficient{background:var(--surface);color:var(--text-faint);}
+  .ii-ps-n{font-family:var(--font-mono);font-weight:600;font-size:13.5px;color:var(--text);}
+  .ii-ps-l{font-size:11px;color:var(--text-muted);}
+
+  .ii-filters-row{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;}
+  .ii-filter-tabs{display:flex;gap:6px;flex-wrap:wrap;}
+  .ii-filter-tab{font-family:var(--font-body);font-size:11.5px;font-weight:600;padding:6px 12px;border-radius:20px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-muted);cursor:pointer;white-space:nowrap;transition:border-color .15s ease;}
+  .ii-filter-tab:hover{border-color:var(--gold);color:var(--text);}
+  .ii-filter-tab.active{background:var(--gold);color:#1b1408;border-color:var(--gold);}
+  .ii-filter-controls{display:flex;gap:8px;flex-wrap:wrap;}
+  .ii-filter-controls select{min-width:140px;}
+
+  .ii-section{border:1px solid var(--border);border-radius:12px;margin-bottom:9px;background:var(--surface-2);overflow:hidden;}
+  .ii-section:last-child{margin-bottom:0;}
+  .ii-section-header{cursor:pointer;padding:13px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px;user-select:none;}
+  .ii-section-header:hover{background:var(--surface);}
+  .ii-section-left{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .ii-section-count{font-family:var(--font-mono);font-size:12px;color:var(--text-faint);}
+  .ii-section-chevron{color:var(--text-faint);font-size:11px;transition:transform .2s ease;flex:0 0 auto;}
+  .ii-section.open .ii-section-chevron{transform:rotate(180deg);}
+  .ii-section-body{display:none;border-top:1px solid var(--border);}
+  .ii-section.open .ii-section-body{display:block;animation:fade .2s ease;}
+
+  .ii-stock-table-head{display:grid;grid-template-columns:1.7fr 1.5fr 1fr 1.9fr 2.3fr 0.85fr;gap:14px;padding:9px 16px;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);border-bottom:1px solid var(--border);}
+  .ii-stock-row{display:grid;grid-template-columns:1.7fr 1.5fr 1fr 1.9fr 2.3fr 0.85fr;gap:14px;padding:14px 16px;border-bottom:1px solid var(--border);align-items:start;}
+  .ii-stock-row:last-child{border-bottom:none;}
+  .ii-mobile-label{display:none;font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);margin:10px 0 4px;}
+
+  .ii-stock-name-cell{display:flex;gap:10px;align-items:flex-start;}
+  .ii-stock-avatar{width:32px;height:32px;border-radius:9px;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;font-size:12px;color:var(--gold);flex:0 0 auto;}
+  .ii-stock-name{font-family:var(--font-display);font-weight:600;font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .ii-stock-sector{font-size:11px;color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+  .ii-alloc-cell .pct{font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--text);}
+  .ii-alloc-cell .room{font-size:10.5px;margin-top:2px;}
+  .ii-alloc-cell .room.pos{color:var(--positive);}
+  .ii-alloc-cell .room.neg{color:var(--negative);}
+  .ii-mini-bar-track{height:5px;border-radius:3px;background:var(--bg);margin-top:6px;overflow:hidden;}
+  .ii-mini-bar-fill{height:100%;border-radius:3px;}
+
+  .ii-cap-cell .cap-label{font-size:12.5px;color:var(--text);font-weight:500;}
+  .ii-cap-cell .cap-value{font-family:var(--font-mono);font-size:10.5px;color:var(--text-faint);margin-top:2px;}
+
+  .ii-insight-reason{font-size:11.5px;color:var(--text-muted);line-height:1.5;margin-top:4px;}
+  .ii-why-toggle{margin-top:6px;font-size:11px;font-weight:600;color:var(--gold);cursor:pointer;user-select:none;display:inline-flex;align-items:center;gap:3px;}
+  .ii-why-toggle .chev{font-size:9px;transition:transform .15s ease;}
+  .ii-insight-cell.why-open .ii-why-toggle .chev{transform:rotate(180deg);}
+  .ii-why-full{display:none;font-size:11.5px;color:var(--text-muted);line-height:1.55;margin-top:6px;padding-top:6px;border-top:1px solid var(--border);}
+  .ii-insight-cell.why-open .ii-why-full{display:block;}
+
+  .ii-metrics-cell{display:grid;grid-template-columns:repeat(auto-fit,minmax(68px,1fr));gap:7px;}
+  .ii-metric-chip{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:6px 8px;}
+  .ii-metric-chip .l{font-size:9px;text-transform:uppercase;letter-spacing:.03em;color:var(--text-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .ii-metric-chip .v{font-family:var(--font-mono);font-size:12.5px;font-weight:600;color:var(--text);margin-top:2px;}
+  .ii-metric-chip .c{font-size:9.5px;margin-top:1px;}
+  .ii-metric-chip .c.pos{color:var(--positive);}
+  .ii-metric-chip .c.neg{color:var(--negative);}
+  .ii-metric-chip .c.muted{color:var(--text-faint);}
+
+  .ii-score-cell{display:flex;flex-direction:column;align-items:center;gap:3px;}
+  .ii-score-ring{--pct:0;--ring-color:var(--text-faint);width:50px;height:50px;border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative;background:conic-gradient(var(--ring-color) calc(var(--pct)*1%), var(--border) 0);}
+  .ii-score-ring::before{content:"";position:absolute;inset:4px;border-radius:50%;background:var(--surface-2);}
+  .ii-score-ring span{position:relative;z-index:1;font-family:var(--font-mono);font-weight:700;font-size:14px;color:var(--text);}
+  .ii-score-label{font-size:9.5px;color:var(--text-faint);text-align:center;}
+
+  .ii-cat-badge{display:inline-flex;align-items:center;gap:5px;font-family:var(--font-body);font-size:10.5px;font-weight:600;padding:4px 10px;border-radius:20px;letter-spacing:.01em;white-space:nowrap;}
+  .ii-cat-add{background:var(--positive-soft);color:var(--positive);}
+  .ii-cat-hold{background:#6f93c922;color:var(--blue);}
+  .ii-cat-watch{background:var(--warning-soft);color:var(--warning);}
+  .ii-cat-reduce{background:var(--negative-soft);color:var(--negative);}
+  .ii-cat-none, .ii-cat-insufficient{background:var(--surface);color:var(--text-faint);}
+
+  @media (max-width:900px){
+    .ii-stock-table-head{display:none;}
+    .ii-stock-row{grid-template-columns:1fr;gap:0;}
+    .ii-mobile-label{display:block;}
+    .ii-stock-row > div:first-child .ii-mobile-label{display:none;}
+    .ii-score-cell{flex-direction:row;justify-content:flex-start;gap:10px;}
+    .ii-filters-row{flex-direction:column;align-items:stretch;}
+    .ii-filter-controls select{flex:1;min-width:0;}
+  }
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px 22px;box-shadow:var(--shadow-sm);}
+  .card h3{font-family:var(--font-display);font-size:16px;font-weight:600;margin:0 0 14px;display:flex;align-items:center;justify-content:space-between;letter-spacing:-0.01em;}
+  .card h3 .hint{font-family:var(--font-body);font-weight:400;font-size:12px;color:var(--text-faint);}
+
+  .chart-wrap{position:relative;height:260px;}
+  @media (max-width:700px){
+    .chart-wrap{height:300px;}
+  }
+
+  .table-scroll{overflow-x:auto;border:1px solid var(--border);border-radius:var(--radius);}
+  table{width:100%;border-collapse:collapse;font-size:12.8px;min-width:720px;}
+  thead th{
+    text-align:right;font-weight:500;font-size:10.8px;text-transform:uppercase;letter-spacing:0.04em;
+    color:var(--text-faint);background:var(--surface-2);padding:10px 12px;border-bottom:1px solid var(--border);
+    white-space:nowrap;position:sticky;top:0;z-index:2;
+  }
+  thead th:first-child, tbody td:first-child, tbody td.left, thead th.left{text-align:left;}
+  tbody td{padding:8px 12px;border-bottom:1px solid var(--border);text-align:right;font-family:var(--font-mono);color:var(--text);white-space:nowrap;}
+  tbody tr:hover{background:var(--surface-2);}
+  tbody tr:last-child td{border-bottom:none;}
+  tfoot td{padding:10px 12px;font-family:var(--font-mono);font-weight:600;text-align:right;background:var(--surface-2);border-top:1px solid var(--border);color:var(--text);}
+  tfoot td.left{text-align:left;font-family:var(--font-body);}
+
+  td input, td select{
+    width:100%;min-width:80px;background:transparent;border:1px solid transparent;border-radius:5px;
+    color:var(--text);font-family:var(--font-mono);font-size:12.6px;padding:5px 6px;text-align:right;
+  }
+  td.left input, td.left select{text-align:left;font-family:var(--font-body);}
+  td input:hover, td select:hover{border-color:var(--border);}
+  td input:focus, td select:focus{border-color:var(--gold);outline:none;background:var(--surface-2);}
+  td input[type=date]{padding:5px 3px;font-size:11.8px;}
+
+  .pos{color:var(--positive);}
+  .neg{color:var(--negative);}
+  .muted{color:var(--text-faint);}
+
+  /* ---- Live market data: Day Change badge (Equity LTP cell, Stock
+     Analysis LTP cell/mobile card/detail panel) — one shared look. ---- */
+  .dc-badge{
+    display:inline-flex;align-items:center;gap:2px;
+    font-family:var(--font-mono);font-size:10.5px;font-weight:600;
+    white-space:nowrap;
+  }
+  .dc-badge.pos{color:var(--positive);}
+  .dc-badge.neg{color:var(--negative);}
+  .dc-badge.muted{color:var(--text-faint);font-weight:500;}
+  .dc-stale-dot{color:var(--warning);margin-left:2px;cursor:help;}
+
+  /* Equity tab: Day Chg % gets its own sortable column (instead of
+     living awkwardly under the LTP input) — a modern rounded "chip"
+     with a tinted background per direction, plus a small Prev Close
+     line underneath. Sortable via the column header / mobile sort
+     dropdown (see data-col="dayChangePct" in index.html/app.js). */
+  .dc-chip{
+    display:inline-flex;align-items:center;gap:4px;
+    font-family:var(--font-mono);font-size:11.5px;font-weight:600;
+    padding:3px 10px;border-radius:20px;white-space:nowrap;cursor:help;
+  }
+  .dc-chip.pos{background:var(--positive-soft);color:var(--positive);}
+  .dc-chip.neg{background:var(--negative-soft);color:var(--negative);}
+  .dc-chip.muted{background:var(--surface-2);color:var(--text-faint);font-weight:500;}
+
+  /* Equity tab toolbar: at-a-glance count of how many holdings are up
+     / down / flat today, computed from the same Day Change % each row
+     already shows — nothing recalculated differently, just tallied. */
+  .movers-strip{display:flex;align-items:center;gap:12px;font-family:var(--font-mono);font-size:12px;flex-wrap:wrap;}
+  .movers-strip .m-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;font-weight:600;}
+  .movers-strip .m-pill.up{background:var(--positive-soft);color:var(--positive);}
+  .movers-strip .m-pill.down{background:var(--negative-soft);color:var(--negative);}
+  .movers-strip .m-pill.flat{background:var(--surface-2);color:var(--text-faint);}
+  .sa-stale-tag{
+    font-family:var(--font-body);font-size:9.5px;font-weight:600;color:var(--warning);
+    background:var(--warning-soft);border-radius:5px;padding:1px 6px;margin-left:6px;cursor:help;
+  }
+
+  /* Equity tab: compact secondary line under the LTP input — Day Change
+     badge + Previous Close. Wraps within the existing fixed column width
+     instead of widening the table (OHLC/52W figures live in the title
+     tooltip on this same block, not inline, to stay compact). */
+  .eq-price-meta{
+    display:flex;align-items:center;gap:6px;flex-wrap:wrap;
+    margin-top:3px;cursor:help;white-space:normal;
+  }
+  .eq-prevclose{font-family:var(--font-mono);font-size:10px;color:var(--text-faint);}
+
+  /* Stock Analysis: LTP cell (desktop table) + mobile card */
+  .sa-ltp-cell{display:flex;flex-direction:column;align-items:flex-end;gap:2px;}
+  .sa-mobile-card-chg{text-align:right;margin-top:2px;}
+
+  /* ---- Market Snapshot (Dashboard) ---- */
+  .ms-snapshot-card{margin-bottom:16px;}
+  .ms-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;}
+  .ms-card{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow-xs);}
+  .ms-card.ms-stale{border-color:var(--warning);}
+  .ms-card-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;}
+  .ms-name{font-family:var(--font-display);font-size:12.5px;font-weight:600;color:var(--text);}
+  .ms-stale-badge{
+    font-family:var(--font-body);font-size:9.5px;font-weight:600;color:var(--warning);
+    background:var(--warning-soft);border-radius:5px;padding:1px 6px;cursor:help;
+  }
+  .ms-value{font-family:var(--font-mono);font-size:21px;font-weight:600;color:var(--text);line-height:1.1;}
+  .ms-chg{font-family:var(--font-mono);font-size:11.5px;font-weight:600;margin-top:3px;}
+  .ms-range-track{position:relative;height:5px;border-radius:3px;margin-top:11px;background:linear-gradient(90deg, var(--negative), var(--warning), var(--positive));opacity:.55;}
+  .ms-range-dot{position:absolute;top:50%;width:9px;height:9px;border-radius:50%;background:var(--text);border:2px solid var(--bg);transform:translate(-50%,-50%);}
+  .ms-range-labels{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:9.5px;color:var(--text-faint);margin-top:5px;}
+  .ms-range-pct{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10px;font-weight:600;margin-top:3px;}
+  .ms-empty{font-size:11px;color:var(--text-faint);margin-top:8px;}
+
+  @media (max-width:600px){
+    .ms-grid{grid-template-columns:1fr;}
+  }
+
+  /* Equity allocation-limit status — colors the existing Alloc % cell
+     rather than adding a new column, so the table's structure/colspans
+     stay untouched. ".alloc-within" is intentionally unstyled (default
+     text color); approaching/above borrow the same warning/negative
+     tokens the Debt maturity highlighting already uses. */
+  td.c-alloc.alloc-approaching{color:var(--warning);font-weight:600;}
+  td.c-alloc.alloc-above{color:var(--negative);font-weight:600;}
+  .alloc-limit-note{color:var(--text-faint);font-family:var(--font-mono);font-size:11.5px;margin-left:3px;}
+
+  /* Computed (read-only, non-input) cells: truncate with an ellipsis
+     instead of silently overflowing into the neighboring cell when a
+     value is wider than its column — most visible on large invested/
+     current-value/P&L figures. Column widths below are sized to fit
+     typical values, so this is a safety net, not the primary fix. */
+  .data-table td.c-avg, .data-table td.c-cv, .data-table td.c-pl,
+  .data-table td.c-plpct, .data-table td.c-alloc, .data-table td.c-profit,
+  .data-table td.c-years{
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+
+  .row-actions{text-align:center !important;}
+  .icon-btn{background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:15px;padding:2px 6px;border-radius:5px;}
+  .icon-btn:hover{color:var(--negative);background:var(--negative-soft);}
+
+  .table-toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;flex-wrap:wrap;}
+  .table-toolbar .left-group{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .status-tag{font-size:11px;color:var(--text-faint);font-family:var(--font-mono);}
+
+  .alloc-name{display:flex;align-items:center;gap:8px;}
+  .swatch{width:9px;height:9px;border-radius:2px;flex-shrink:0;}
+
+  th.sortable{cursor:pointer;user-select:none;position:relative;}
+  th.sortable:hover{color:var(--text);}
+  th.sortable::after{
+    content:"";
+    display:inline-block;
+    margin-left:5px;
+    width:0; height:0;
+    border-left:3px solid transparent;
+    border-right:3px solid transparent;
+    opacity:.35;
+  }
+  th.sortable.sort-asc::after{border-bottom:4px solid var(--gold);opacity:1;}
+  th.sortable.sort-desc::after{border-top:4px solid var(--gold);opacity:1;}
+  th.sortable:not(.sort-asc):not(.sort-desc)::after{border-top:4px solid var(--text-faint);}
+
+  th.resizable{position:relative;}
+  .col-resizer{
+    position:absolute;
+    top:0; right:0; bottom:0;
+    width:6px;
+    cursor:col-resize;
+    z-index:2;
+  }
+  .col-resizer:hover, .col-resizer.resizing{background:var(--gold-soft);}
+  table.data-table{table-layout:fixed;width:100%;}
+  /* Reduced from the old 12-column layout's 1430px along with the
+     Equity redesign below (same overflow bug the Mutual Funds table
+     had — this stale minimum was forcing horizontal scrolling on
+     most screens even after the column count came down). */
+  #panel-equity table.data-table{min-width:800px;}
+  #panel-debt table.data-table{min-width:1615px;}
+  /* Left over from the old 12-column layout before the redesign to 8
+     columns — that stale 1400px minimum was forcing this table wider
+     than the actual content area on most screens (sidebar + page
+     padding leaves less than that), which is why columns ran off the
+     right edge and needed horizontal dragging to reach. The 8-column
+     table now fits comfortably in far less width. */
+  #panel-mf table.data-table{min-width:760px;}
+  #panel-gold table.data-table{min-width:1295px;}
+  #panel-stockanalysis table.data-table{min-width:3240px;}
+
+  /* Stock Analysis: Buy recommendation badge + Financial-sector P/B
+     highlight bands (green < 1, yellow < 1.5, orange < 2 — strongest
+     applicable wins, checked in that order in JS). */
+  .buy-badge{
+    display:inline-block;font-family:var(--font-body);font-size:10.5px;font-weight:600;
+    padding:2px 7px;border-radius:5px;letter-spacing:.02em;
+  }
+  .buy-badge.buy{background:var(--positive-soft);color:var(--positive);}
+  .buy-badge.no{background:var(--surface-2);color:var(--text-faint);}
+
+  /* Sector-aware Fundamental View badge (Stock Analysis tab) */
+  .fv-badge{display:inline-block;font-family:var(--font-body);font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:5px;letter-spacing:.02em;white-space:nowrap;cursor:help;}
+  .fv-strong{background:var(--positive-soft);color:var(--positive);}
+  .fv-good{background:var(--gold-soft);color:var(--gold);}
+  .fv-neutral{background:var(--surface-2);color:var(--text-muted);}
+  .fv-weak{background:var(--negative-soft);color:var(--negative);}
+  .fv-insuff{background:var(--surface-2);color:var(--text-faint);}
+  td.pb-green{background:var(--positive-soft);color:var(--positive);font-weight:600;}
+  td.pb-yellow{background:var(--warning-soft);color:var(--warning);font-weight:600;}
+  td.pb-orange{background:#e0893322;color:#e08933;font-weight:600;}
+
+  /* ============================================================
+     STOCK ANALYSIS — redesigned summary cards, search/toolbar,
+     52-week range bar, pagination, row selection, detail panel and
+     a mobile swipe-card deck. Scoped entirely to #panel-stockanalysis
+     so no other tab's table/card styling is affected. Reuses existing
+     tokens (--surface, --gold, --positive/--negative, font vars)
+     and existing classes (.buy-badge, .pb-green/yellow/orange,
+     .stat-card pattern) rather than inventing a new visual system.
+     ============================================================ */
+
+  /* ---- Search bar ---- */
+  .sa-search-wrap{position:relative;flex:1;min-width:220px;max-width:420px;}
+  .sa-search-wrap::before{
+    content:"";position:absolute;left:12px;top:50%;width:13px;height:13px;
+    transform:translateY(-50%);
+    background:var(--text-faint);
+    -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E") center/contain no-repeat;
+    mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E") center/contain no-repeat;
+    pointer-events:none;
+  }
+  .sa-search-wrap .filter-input{width:100%;padding-left:32px;}
+
+  /* ---- Summary cards ---- */
+  .sa-summary-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(160px,1fr));
+    gap:12px;
+    margin-bottom:18px;
+  }
+  @media (max-width:700px){
+    .sa-summary-grid{grid-template-columns:1fr 1fr;}
+    .sa-summary-grid > :nth-child(5){grid-column:1 / -1;}
+  }
+  .sa-stat-card{
+    background:var(--surface);
+    border:1px solid var(--border);border-radius:var(--radius);
+    padding:14px 16px;position:relative;overflow:hidden;box-shadow:var(--shadow-xs);
+  }
+  .sa-stat-card::before{
+    content:"";position:absolute;top:0;left:0;right:0;height:2px;
+    background:var(--accent, var(--gold-soft));
+  }
+  .sa-stat-card.accent-gold::before{background:var(--gold);}
+  .sa-stat-card.accent-pos::before{background:var(--positive);}
+  .sa-stat-card.accent-blue::before{background:var(--blue);}
+  .sa-stat-card.accent-warn::before{background:var(--warning);}
+  .sa-stat-card .sa-stat-label{font-size:12px;font-weight:500;color:var(--text-muted);margin-bottom:8px;display:flex;align-items:center;gap:5px;}
+  .sa-stat-card .sa-stat-value{font-family:var(--font-mono);font-size:21px;font-weight:600;color:var(--text);}
+  .sa-stat-card .sa-stat-sub{font-family:var(--font-mono);font-size:11px;color:var(--text-faint);margin-left:5px;font-weight:500;}
+
+  #panel-stockanalysis .table-scroll{border-radius:var(--radius);}
+  #panel-stockanalysis tbody tr{cursor:pointer;transition:background .12s ease;}
+  #panel-stockanalysis tbody tr.sa-row-selected{background:var(--gold-soft);}
+  #panel-stockanalysis tbody tr.sa-row-selected td.sticky-col{background:var(--gold-soft);}
+  #panel-stockanalysis tbody tr.sa-row-selected:hover{background:var(--gold-soft);}
+  #panel-stockanalysis .stock-cell{display:flex;align-items:center;gap:9px;}
+  #panel-stockanalysis .stock-avatar{
+    width:28px;height:28px;border-radius:8px;flex:0 0 auto;
+    background:var(--surface-2);border:1px solid var(--border);
+    display:flex;align-items:center;justify-content:center;
+    font-family:var(--font-display);font-size:11px;font-weight:700;color:var(--gold);
+  }
+  #panel-stockanalysis .stock-cell-text{overflow:hidden;}
+  #panel-stockanalysis .stock-cell-name{font-family:var(--font-display);font-weight:600;font-size:12.6px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  #panel-stockanalysis .stock-cell-sector{font-size:10.5px;color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+  /* ---- 52-week range bar (built from existing low52/high52/ltp — no new data) ---- */
+  .sa-range-cell{display:flex;flex-direction:column;gap:3px;min-width:110px;}
+  .sa-range-track{position:relative;height:4px;border-radius:3px;background:linear-gradient(90deg, var(--negative), var(--warning), var(--positive));opacity:.55;}
+  .sa-range-dot{position:absolute;top:50%;width:8px;height:8px;border-radius:50%;background:var(--text);border:2px solid var(--bg);transform:translate(-50%,-50%);}
+  .sa-range-labels{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10px;color:var(--text-faint);}
+
+  /* ---- Pagination ---- */
+  .sa-pagination{
+    display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;
+    margin-top:14px;padding:2px 2px;
+  }
+  .sa-pagination-info{font-size:11.5px;color:var(--text-faint);font-family:var(--font-body);}
+  .sa-pagination-controls{display:flex;align-items:center;gap:4px;flex-wrap:wrap;}
+  .sa-page-btn{
+    min-width:30px;height:30px;padding:0 8px;
+    background:var(--surface-2);border:1px solid var(--border);border-radius:7px;
+    color:var(--text-muted);font-family:var(--font-mono);font-size:12px;font-weight:500;
+    cursor:pointer;transition:border-color .15s ease, color .15s ease;
+  }
+  .sa-page-btn:hover:not(:disabled){border-color:var(--gold);color:var(--text);}
+  .sa-page-btn:disabled{opacity:.35;cursor:default;}
+  .sa-page-btn.active{background:var(--gold);border-color:var(--gold);color:#1b1408;font-weight:600;}
+  .sa-page-ellipsis{color:var(--text-faint);padding:0 3px;font-size:12px;}
+  .sa-page-size-select{width:auto;min-width:0;margin-left:8px;padding:5px 9px;font-size:11.5px;}
+
+  /* ---- Detail panel ---- */
+  .sa-detail-panel{
+    background:linear-gradient(160deg, var(--surface-2), var(--surface));
+    border:1px solid var(--border);border-radius:var(--radius);
+    padding:20px 22px;margin-top:16px;
+  }
+  .sa-detail-empty{color:var(--text-faint);font-size:12.5px;text-align:center;padding:20px 0;}
+  .sa-detail-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:18px;flex-wrap:wrap;padding-bottom:16px;border-bottom:1px solid var(--border);}
+  .sa-detail-name{font-family:var(--font-display);font-size:18px;font-weight:600;color:var(--text);}
+  .sa-detail-meta{font-size:12px;color:var(--text-faint);margin-top:3px;}
+  .sa-detail-price{font-family:var(--font-mono);font-size:24px;font-weight:600;color:var(--gold);white-space:nowrap;}
+  .sa-detail-sections{display:grid;grid-template-columns:repeat(auto-fit, minmax(220px,1fr));gap:20px;}
+  .sa-detail-section{background:var(--bg);border:1px solid var(--border);border-radius:9px;padding:13px 15px;}
+  .sa-detail-section-title{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--gold);margin-bottom:9px;font-weight:600;}
+  .sa-detail-row{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;font-size:12.5px;padding:6px 0;border-bottom:1px solid var(--border);}
+  .sa-detail-row:last-child{border-bottom:none;}
+  .sa-detail-row .k{color:var(--text-muted);flex:1 1 auto;}
+  .sa-detail-row .v{font-family:var(--font-mono);color:var(--text);font-weight:500;white-space:nowrap;flex:0 0 auto;text-align:right;}
+  /* .sa-detail-row .v's own color (above) is two classes deep, so it
+     silently outranks a single-class color modifier like .pos/.neg/
+     .muted placed on the same element — restating them here at
+     matching specificity is what actually lets a drawer's P&L/Return
+     value render green or red instead of always the default text
+     color. (Pre-existing gap in the original Stock Analysis drawer,
+     surfaced now because the Equity redesign leans on it more.) */
+  .sa-detail-row .v.pos{color:var(--positive);}
+  .sa-detail-row .v.neg{color:var(--negative);}
+  .sa-detail-row .v.muted{color:var(--text-faint);}
+
+  @media (max-width:700px){
+    .sa-detail-sections{grid-template-columns:1fr;}
+    .sa-detail-panel{padding:16px 16px;}
+  }
+
+  /* Full fundamentals toggle — desktop always shows the sections
+     (no collapse UI at all, exactly as before); mobile gets a real
+     collapsed-by-default accordion so swiping between stocks doesn't
+     mean scrolling past six full sections per card. */
+  .sa-detail-toggle > summary{list-style:none;cursor:default;}
+  .sa-detail-toggle > summary::-webkit-details-marker{display:none;}
+  @media (min-width:701px){
+    .sa-detail-toggle > summary{display:none;}
+    .sa-detail-toggle:not([open]) > *:not(summary){display:block !important;}
+  }
+  @media (max-width:700px){
+    .sa-detail-toggle > summary{
+      cursor:pointer;padding:12px 2px;font-size:12.5px;font-weight:600;color:var(--gold);
+      display:flex;align-items:center;justify-content:space-between;
+    }
+    .sa-detail-toggle > summary::after{content:"▾";font-size:11px;color:var(--text-faint);}
+    .sa-detail-toggle[open] > summary::after{content:"▴";}
+    .sa-detail-toggle > summary:hover{color:var(--text);}
+  }
+
+  /* ============================================================
+     Stock Analysis — mobile/tablet swipeable card deck. Hidden on
+     desktop; replaces the generic stacked-card table treatment for
+     THIS tab only (the table itself is hidden below 700px and this
+     deck takes over) so it behaves like a native "swipe between
+     stocks" investment-app view rather than a shrunk table.
+     ============================================================ */
+  .sa-mobile-deck{display:none;}
+  @media (max-width:700px){
+    #panel-stockanalysis .table-scroll{display:none;}
+    #panel-stockanalysis .sa-pagination{display:none;}
+    .sa-mobile-deck{display:block;}
+  }
+  .sa-mobile-scroller{
+    display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;
+    padding:4px 4px 14px;margin:0 -4px;
+    -webkit-overflow-scrolling:touch;
+  }
+  .sa-mobile-scroller::-webkit-scrollbar{height:0;}
+  .sa-mobile-card{
+    flex:0 0 88%;scroll-snap-align:center;
+    background:linear-gradient(160deg, var(--surface-2), var(--surface));
+    border:1px solid var(--border);border-radius:14px;
+    padding:16px 17px;cursor:pointer;
+  }
+  .sa-mobile-card.sa-row-selected{border-color:var(--gold);}
+  .sa-mobile-card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:12px;}
+  .sa-mobile-card-name{font-family:var(--font-display);font-size:15px;font-weight:600;color:var(--text);}
+  .sa-mobile-card-sector{font-size:11px;color:var(--text-faint);margin-top:2px;}
+  .sa-mobile-card-price{font-family:var(--font-mono);font-size:19px;font-weight:600;color:var(--gold);text-align:right;}
+  .sa-mobile-card-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px;}
+  .sa-mobile-metric{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 9px;}
+  .sa-mobile-metric .l{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-faint);margin-bottom:3px;}
+  .sa-mobile-metric .v{font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--text);}
+  .sa-mobile-card-footer{display:flex;justify-content:space-between;align-items:center;}
+  .sa-mobile-dots{display:flex;justify-content:center;gap:6px;margin-top:2px;}
+  .sa-mobile-dot{width:6px;height:6px;border-radius:50%;background:var(--border);transition:background .15s ease, width .15s ease;}
+  .sa-mobile-dot.active{background:var(--gold);width:16px;border-radius:3px;}
+  .sa-mobile-hint{text-align:center;font-size:10.5px;color:var(--text-faint);margin:-6px 0 12px;}
+  .sa-mobile-pagination{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:8px;}
+
+  /* Frozen first column (Name/Symbol) — stays put while the rest of a
+     wide table scrolls horizontally. It's the leftmost column so its
+     sticky offset is always 0, no matter how it's resized. */
+  .data-table td.sticky-col{
+    position:sticky;
+    left:0;
+    z-index:1;
+    background:var(--surface);
+    box-shadow:2px 0 6px -2px #00000066;
+  }
+  .data-table tbody tr:hover td.sticky-col{background:var(--surface-2);}
+  .data-table th.sticky-col{
+    position:sticky;
+    left:0;
+    z-index:3;
+    box-shadow:2px 0 6px -2px #00000066;
+  }
+  .data-table tfoot td.sticky-col{
+    position:sticky;
+    left:0;
+    z-index:1;
+    box-shadow:2px 0 6px -2px #00000066;
+  }
+
+  /* Debt: maturity date highlighting, computed dynamically against
+     today's date at render time. */
+  td.maturity-overdue{background:var(--negative-soft);}
+  td.maturity-overdue input[type=date]{border-color:var(--negative);color:var(--negative);}
+  td.maturity-soon{background:var(--warning-soft);}
+  td.maturity-soon input[type=date]{border-color:var(--warning);color:var(--warning);}
+
+  .filter-input{
+    font-family:var(--font-body);
+    font-size:12.5px;
+    color:var(--text);
+    background:var(--surface-2);
+    border:1px solid var(--border);
+    border-radius:8px;
+    padding:7px 11px;
+    width:150px;
+  }
+  .filter-input::placeholder{color:var(--text-faint);}
+  .filter-input:focus{border-color:var(--gold);outline:none;}
+
+  /* Reusable "clear filter" (x) button — sits on any filter/search box
+     wrapped in .filter-clear-wrap (plain toolbar filters) or the
+     existing .sa-search-wrap (Stock Analysis's search box, which
+     already has a left-side icon). Hidden until that box has text,
+     wired generically by setupFilterClearButtons() in app.js so it
+     works the same way — clear + re-trigger the existing filter — on
+     every tab without touching each tab's own filter logic. */
+  .filter-clear-wrap{position:relative;display:inline-flex;}
+  .filter-clear-wrap .filter-input, .sa-search-wrap .filter-input{padding-right:26px;}
+  .filter-clear-btn{
+    display:none;position:absolute;right:5px;top:50%;transform:translateY(-50%);
+    width:18px;height:18px;padding:0;border:none;border-radius:50%;
+    background:var(--surface);color:var(--text-faint);
+    font-size:11px;line-height:1;cursor:pointer;align-items:center;justify-content:center;
+  }
+  .filter-clear-btn:hover{background:var(--border);color:var(--text);}
+  .filter-clear-wrap.has-value .filter-clear-btn,
+  .sa-search-wrap.has-value .filter-clear-btn{display:flex;}
+
+  .ideal-input{
+    width:56px;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;
+    color:var(--text);font-family:var(--font-mono);font-size:12px;padding:4px 6px;text-align:right;
+  }
+  .ideal-input:focus{border-color:var(--gold);outline:none;}
+
+  #btnLockPortfolio.locked{background:var(--negative-soft);border-color:var(--negative);color:var(--negative);}
+  #btnCloudSync.synced{background:var(--positive-soft);border-color:var(--positive);color:var(--positive);}
+
+  .price-cell{display:flex;align-items:center;gap:4px;}
+  .price-cell input{min-width:0;flex:1 1 auto;}
+  .pending-badge{
+    flex:0 0 auto;font-family:var(--font-body);font-size:9.5px;font-weight:600;
+    color:var(--gold);background:var(--gold-soft);border-radius:4px;padding:2px 5px;
+    letter-spacing:.02em;white-space:nowrap;
+  }
+
+  .fail-panel{
+    background:var(--surface);border:1px solid var(--negative);border-radius:var(--radius);
+    padding:12px 16px;margin-bottom:12px;font-size:12px;
+  }
+  .fail-panel h4{margin:0 0 8px;font-family:var(--font-display);font-size:12.5px;color:var(--negative);}
+  .fail-panel table{width:100%;font-size:11.5px;min-width:0;}
+  .fail-panel th{background:none;padding:4px 8px;font-size:10px;}
+  .fail-panel td{padding:4px 8px;font-family:var(--font-body);color:var(--text-muted);white-space:normal;}
+  .fail-panel td:first-child{color:var(--text);font-family:var(--font-mono);}
+
+  .modal-overlay{
+    display:none;position:fixed;inset:0;background:#0008;backdrop-filter:blur(2px);
+    z-index:200;align-items:center;justify-content:center;padding:20px;
+  }
+  .modal-overlay.open{display:flex;}
+  .modal-card{
+    background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+    max-width:640px;width:100%;max-height:86vh;display:flex;flex-direction:column;
+    box-shadow:0 20px 60px #0009;
+  }
+  .modal-card h3{font-family:var(--font-display);font-size:16px;margin:0;padding:18px 22px;border-bottom:1px solid var(--border);}
+  .modal-body{padding:18px 22px;overflow-y:auto;font-size:13px;color:var(--text-muted);line-height:1.6;}
+  .modal-body h4{color:var(--text);font-family:var(--font-display);font-size:13px;margin:14px 0 6px;}
+  .modal-body h4:first-child{margin-top:0;}
+  .modal-body ul{margin:4px 0;padding-left:20px;}
+  /* Preview/import tables inside modals (Screener import, Debt import,
+     Zerodha import summary, etc.) get their own scroll boundary rather
+     than relying on modal-body's vertical scroll to also handle
+     horizontal overflow — keeps a 4+ column table from clipping at
+     narrow widths instead of scrolling. */
+  .modal-body .table-scroll-wrap{overflow-x:auto;margin-top:6px;-webkit-overflow-scrolling:touch;}
+  .modal-body table{width:100%;min-width:420px;font-size:11.8px;margin-top:6px;}
+  .modal-body .table-scroll-wrap table{margin-top:0;}
+  .modal-body th{background:var(--surface-2);padding:5px 8px;font-size:10px;white-space:nowrap;}
+  .modal-body td{padding:5px 8px;font-family:var(--font-body);color:var(--text-muted);white-space:normal;}
+  .settings-field{margin-bottom:14px;}
+  .settings-field label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);margin-bottom:5px;}
+  .settings-field input[type=text]{
+    width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
+    color:var(--text);font-family:var(--font-mono);font-size:13px;padding:8px 10px;
+  }
+  .settings-field input[type=text]:focus{border-color:var(--gold);outline:none;}
+  .settings-actions{display:flex;gap:8px;flex-wrap:wrap;}
+
+  /* Reclaim a bit of width for the modal itself on the narrowest
+     phones — overlay/card/body padding otherwise eats a meaningful
+     share of a 360px viewport. Scoped tightly so tablet/desktop
+     modal spacing is completely untouched. */
+  @media (max-width:400px){
+    .modal-overlay{padding:10px;}
+    .modal-card h3{padding:14px 16px;font-size:15px;}
+    .modal-body{padding:14px 16px;}
+    .modal-footer{padding:12px 16px;}
+  }
+  .import-stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin:6px 0 14px;}
+  .import-stat{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;}
+  .import-stat .n{font-family:var(--font-mono);font-size:18px;font-weight:600;color:var(--text);}
+  .import-stat .l{font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;}
+  .import-stat.warn .n{color:var(--negative);}
+  .modal-footer{padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;}
+
+  footer.app-footer{text-align:center;color:var(--text-faint);font-size:11px;padding:20px;}
+  .settings-note{font-size:11.5px;color:var(--text-faint);margin-top:10px;line-height:1.6;}
+  .empty-row td{text-align:center;color:var(--text-faint);font-family:var(--font-body);padding:22px;}
+
+  @media (max-width:600px){
+    main{padding:16px 14px 40px;}
+  }
+
+  /* Readability floor for the smallest sub-10px labels, scoped to
+     phone widths (<=430px, covering common larger phones too) —
+     desktop/tablet are untouched. Purely a font-size bump, no
+     layout/logic change. */
+  @media (max-width:430px){
+    .ii-alloc-label, .mobile-totals .row, .ii-mobile-label,
+    .sa-mobile-metric .l, .ii-metric-chip .l,
+    .sa-stat-card .sa-stat-label, .ii-score-label, .ms-range-labels{
+      font-size:10px;
+    }
+  }
+
+  /* Touch-target comfort pass, mobile only (<=700px) — desktop keeps
+     its current compact density. Icon-only remove buttons and the
+     small text-chip controls (attention actions, filter chips, sort
+     shortcuts, calendar range toggle) get a slightly larger tap area
+     via padding, without changing font size or visual weight. */
+  @media (max-width:700px){
+    .dash-attn-action, .debt-cal-range-btn, .debt-sort-shortcut,
+    .ii-filter-tab, .btn-sm{
+      padding:8px 12px;
+    }
+    .debt-chip{padding:8px 14px;}
+  }
+
+  /* ============================================================
+     MOBILE CARD VIEW (<=700px)
+     Below this width, every data table's rows render as stacked
+     cards instead of horizontally-scrolling table rows — the
+     underlying <table> markup, sort/filter state, and every input's
+     event handlers are unchanged; this is a display-mode swap only.
+     ============================================================ */
+  .mobile-only{display:none;}
+  .fab-add{display:none;}
+
+  @media (max-width:700px){
+    .table-scroll{border:none;overflow:visible;}
+    /* Exception: the Mutual Fund Category Breakdown table (Insights)
+       is a plain <table>, not .data-table — it never gets the
+       stacked-card conversion below, so unlike every other table on
+       this page it still needs its own contained horizontal scroll
+       on narrow screens instead of inheriting the blanket
+       overflow:visible above (which was pushing it into full page
+       overflow). */
+    #panel-insights .table-scroll{overflow-x:auto;border:1px solid var(--border);}
+    #panel-insights .table-scroll table{min-width:0;width:100%;}
+    table.data-table{table-layout:auto;min-width:0 !important;width:100%;}
+    .data-table thead, .data-table tfoot{display:none;}
+    .data-table tbody{display:block;}
+    .data-table tbody tr{
+      display:block;position:relative;
+      background:var(--surface);border:1px solid var(--border);border-radius:12px;
+      padding:12px 14px;margin-bottom:10px;box-shadow:var(--shadow-xs);
+    }
+    .data-table tbody tr.empty-row{background:none;border:none;padding:22px 0;text-align:center;}
+    .data-table tbody tr.maturity-overdue{border-left:3px solid var(--negative);}
+    .data-table tbody tr.maturity-soon{border-left:3px solid var(--warning);}
+    .data-table td{
+      display:flex;align-items:center;justify-content:space-between;gap:10px;
+      border-bottom:none;padding:5px 0;white-space:normal;
+    }
+    .data-table td.sticky-col{
+      position:static;box-shadow:none;background:transparent;
+      display:block;padding:0 0 10px;margin-bottom:8px;border-bottom:1px solid var(--border);
+      max-width:100%;overflow:hidden;
+    }
+    .data-table td.sticky-col input{
+      font-size:15px;font-weight:600;padding:0;width:100%;max-width:100%;
+      overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    }
+    .data-table td[data-label]::before{
+      content:attr(data-label);color:var(--text-faint);font-size:10.5px;
+      text-transform:uppercase;letter-spacing:.04em;flex:0 0 auto;
+    }
+    .data-table td input, .data-table td select{
+      width:auto;max-width:60%;text-align:right;font-size:14px;padding:6px 4px;
+    }
+    .data-table td.left input, .data-table td.left select{text-align:right;}
+    .data-table td.row-actions{position:absolute;top:10px;right:12px;padding:0;}
+    .data-table .col-resizer{display:none;}
+
+    /* Live-price "not matched" panel — same card-list treatment as
+       the data tables, scoped separately since it's a plain table,
+       not .data-table. */
+    .fail-panel table, .fail-panel thead, .fail-panel tbody,
+    .fail-panel tr, .fail-panel th, .fail-panel td{display:block;width:100%;}
+    .fail-panel thead{display:none;}
+    .fail-panel tbody tr{
+      border:1px solid var(--border);border-radius:10px;
+      padding:10px 12px;margin-bottom:8px;background:var(--surface-2);
+    }
+    .fail-panel tbody tr:last-child{margin-bottom:0;}
+    .fail-panel td{padding:4px 0;white-space:normal;}
+    .fail-panel td[data-label]::before{
+      content:attr(data-label);display:block;color:var(--text-faint);
+      font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;margin-bottom:1px;
+    }
+  }
+
+  /* Sticky mobile totals strip — mirrors the desktop <tfoot> figures,
+     shown above the card list so key numbers stay visible without
+     scrolling through every card. */
+  .mobile-totals{
+    display:none;
+    justify-content:space-between;
+    gap:10px;
+    position:sticky;top:0;z-index:10;
+    background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
+    padding:8px 14px;margin-bottom:12px;
+  }
+  .mobile-totals > div{flex:1 1 0;min-width:0;}
+  .mobile-totals > div:nth-child(2){text-align:center;}
+  .mobile-totals > div:last-child{text-align:right;}
+  .mobile-totals .row{font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;}
+  .mobile-totals .vals{font-family:var(--font-mono);font-size:13.5px;font-weight:600;margin-top:2px;white-space:nowrap;}
+
+  .mobile-sort-row{display:none;align-items:center;gap:8px;margin-bottom:10px;}
+  .mobile-sort-row select{
+    flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
+    color:var(--text);font-family:var(--font-body);font-size:12.5px;padding:7px 9px;
+  }
+  .mobile-sort-dir{
+    background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
+    color:var(--text);width:34px;height:34px;flex:0 0 auto;cursor:pointer;font-size:13px;
+  }
+
+  .toolbar-secondary{display:contents;}
+  .toolbar-overflow-toggle{display:none;}
+
+  @media (max-width:700px){
+    .mobile-totals, .mobile-sort-row{display:flex;}
+    .table-toolbar{position:relative;}
+    .toolbar-overflow-toggle{display:inline-flex;align-items:center;justify-content:center;width:34px;padding:0;}
+    .toolbar-secondary{
+      display:none;width:100%;order:5;
+      flex-direction:column;align-items:stretch;gap:6px;
+      margin-top:8px;padding-top:8px;border-top:1px solid var(--border);
+    }
+    .toolbar-secondary.open{display:flex;}
+    .toolbar-secondary .btn, .toolbar-secondary label.btn{width:100%;text-align:center;}
+    .table-toolbar .filter-input{flex:1;min-width:0;width:auto;}
+  }
+
+  .fab-add{
+    position:fixed;bottom:22px;right:20px;z-index:40;
+    width:50px;height:50px;border-radius:50%;
+    background:var(--gold);color:#1b1408;border:none;
+    font-size:24px;line-height:1;cursor:pointer;
+    box-shadow:0 4px 14px #00000066;
+    align-items:center;justify-content:center;
+  }
+  @media (max-width:700px){
+    .panel.active .fab-add, .portfolio-subpanel.active .fab-add{display:flex;}
+  }
+
+  /* Dashboard's allocation table and Insights' MF Category Breakdown
+     table — same card-list treatment, scoped to these plain tables so
+     it never touches the fixed-width .data-table layout the four
+     asset-class tabs use. */
+  @media (max-width:700px){
+    #panel-dashboard .table-scroll table, #panel-insights .table-scroll table{table-layout:auto;}
+    #panel-dashboard table thead, #panel-dashboard table tfoot,
+    #panel-insights table thead, #panel-insights table tfoot{display:none;}
+    #panel-dashboard table tbody, #panel-insights table tbody{display:block;}
+    #panel-dashboard table tbody tr, #panel-insights table tbody tr{
+      display:block;background:var(--surface);border:1px solid var(--border);
+      border-radius:12px;padding:12px 14px;margin-bottom:10px;
+    }
+    #panel-dashboard table tbody td, #panel-insights table tbody td{
+      display:flex;align-items:center;justify-content:space-between;gap:10px;
+      border-bottom:none;padding:5px 0;
+    }
+    #panel-dashboard table tbody td:first-child, #panel-insights table tbody td:first-child{
+      padding:0 0 10px;margin-bottom:8px;border-bottom:1px solid var(--border);
+    }
+    #panel-dashboard table tbody td[data-label]::before, #panel-insights table tbody td[data-label]::before{
+      content:attr(data-label);color:var(--text-faint);font-size:10.5px;
+      text-transform:uppercase;letter-spacing:.04em;
+    }
+    #panel-dashboard table tbody td .ideal-input{width:70px;}
+  }
+
+  /* ============================================================
+     MUTUAL FUNDS — REDESIGN (2026)
+     Summary cards reuse .sa-summary-grid/.sa-stat-card (already
+     built for Stock Analysis) rather than a second copy of the same
+     card CSS. New pieces below: category color tokens (8 stable
+     slots, hashed for any category name so nothing needs
+     hardcoding), the fund avatar + name cell, category badges, the
+     allocation progress bar, a floating three-dot row menu, a
+     stacked mobile card list (same architectural pattern as Stock
+     Analysis's own mobile deck — the generic table-to-card CSS is
+     switched off for this tab and this replaces it), and the app's
+     first right-side/bottom-sheet drawer (existing dialogs are all
+     centered modals; the drawer body content still reuses the
+     Stock Analysis detail panel's .sa-detail-section/.sa-detail-row
+     classes so its look matches the rest of the app for free).
+     ============================================================ */
+
+  :root{
+    --mf-cat-0:#3f6ea5; --mf-cat-0-soft:#3f6ea51f;
+    --mf-cat-1:#1a8a5f; --mf-cat-1-soft:#1a8a5f1a;
+    --mf-cat-2:#a3742f; --mf-cat-2-soft:#a3742f22;
+    --mf-cat-3:#8a4fb0; --mf-cat-3-soft:#8a4fb020;
+    --mf-cat-4:#c23c4e; --mf-cat-4-soft:#c23c4e1a;
+    --mf-cat-5:#2f9aa3; --mf-cat-5-soft:#2f9aa320;
+    --mf-cat-6:#b07a1c; --mf-cat-6-soft:#b07a1c20;
+    --mf-cat-7:#5f6f8a; --mf-cat-7-soft:#5f6f8a20;
+  }
+  :root[data-theme="dark"]{
+    --mf-cat-0:#7099cf; --mf-cat-0-soft:#7099cf26;
+    --mf-cat-1:#4cbf8f; --mf-cat-1-soft:#4cbf8f24;
+    --mf-cat-2:#d4a24e; --mf-cat-2-soft:#d4a24e2a;
+    --mf-cat-3:#b183dd; --mf-cat-3-soft:#b183dd28;
+    --mf-cat-4:#e2707f; --mf-cat-4-soft:#e2707f26;
+    --mf-cat-5:#5fc2cc; --mf-cat-5-soft:#5fc2cc28;
+    --mf-cat-6:#e0ac4c; --mf-cat-6-soft:#e0ac4c2a;
+    --mf-cat-7:#8b9ab3; --mf-cat-7-soft:#8b9ab328;
+  }
+  .sa-stat-card.accent-neg::before{background:var(--negative);}
+
+  #panel-mf .sa-summary-grid{margin-bottom:16px;}
+  #panel-mf .sa-stat-label svg{flex:0 0 auto;}
+
+  /* Toolbar: category + sort dropdowns share the existing
+     .attn-filter-select look used elsewhere in the app. */
+  #panel-mf .table-toolbar{margin-bottom:10px;}
+  #panel-mf .mf-toolbar-select{min-width:172px;}
+  /* Match the search box's own vertical padding exactly (it was 1px
+     off, which showed up as the two dropdowns sitting a touch taller
+     than the search box in the same toolbar row). */
+  #panel-mf .attn-filter-select{padding-top:7px;padding-bottom:7px;}
+  @media (max-width:700px){
+    #panel-mf .table-toolbar .attn-filter-wrap{flex:1 1 150px;}
+    #panel-mf .table-toolbar .attn-filter-select{width:100%;}
+  }
+
+  #panel-mf tbody tr.mf-row{cursor:pointer;transition:background .12s ease;}
+  #panel-mf tbody tr.mf-row:hover{background:var(--surface-2);}
+  #panel-mf tbody tr.mf-row:hover td.sticky-col{background:var(--surface-2);}
+
+  .mf-fund-cell{display:flex;align-items:center;gap:10px;min-width:0;}
+  .mf-avatar{
+    position:relative;overflow:hidden;
+    flex:0 0 auto;width:34px;height:34px;border-radius:10px;color:#fff;
+    display:flex;align-items:center;justify-content:center;
+    font-family:var(--font-display);font-size:13px;font-weight:700;letter-spacing:.02em;
+  }
+  .mf-avatar.mf-cat-0{background:var(--mf-cat-0);} .mf-avatar.mf-cat-1{background:var(--mf-cat-1);}
+  .mf-avatar.mf-cat-2{background:var(--mf-cat-2);} .mf-avatar.mf-cat-3{background:var(--mf-cat-3);}
+  .mf-avatar.mf-cat-4{background:var(--mf-cat-4);} .mf-avatar.mf-cat-5{background:var(--mf-cat-5);}
+  .mf-avatar.mf-cat-6{background:var(--mf-cat-6);} .mf-avatar.mf-cat-7{background:var(--mf-cat-7);}
+  .eq-logo-img{
+    position:absolute;inset:0;width:100%;height:100%;
+    object-fit:contain;object-position:center;background:#fff;padding:5px;
+    box-sizing:border-box;border-radius:10px;
+  }
+  .mf-fund-name-wrap{min-width:0;}
+  .mf-fund-name{font-family:var(--font-display);font-weight:600;font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:230px;}
+
+  .mf-cat-badge{
+    display:inline-flex;align-items:center;font-size:10.5px;font-weight:600;
+    padding:3px 10px;border-radius:20px;white-space:nowrap;letter-spacing:.01em;
+  }
+  .mf-cat-badge.mf-cat-0{background:var(--mf-cat-0-soft);color:var(--mf-cat-0);}
+  .mf-cat-badge.mf-cat-1{background:var(--mf-cat-1-soft);color:var(--mf-cat-1);}
+  .mf-cat-badge.mf-cat-2{background:var(--mf-cat-2-soft);color:var(--mf-cat-2);}
+  .mf-cat-badge.mf-cat-3{background:var(--mf-cat-3-soft);color:var(--mf-cat-3);}
+  .mf-cat-badge.mf-cat-4{background:var(--mf-cat-4-soft);color:var(--mf-cat-4);}
+  .mf-cat-badge.mf-cat-5{background:var(--mf-cat-5-soft);color:var(--mf-cat-5);}
+  .mf-cat-badge.mf-cat-6{background:var(--mf-cat-6-soft);color:var(--mf-cat-6);}
+  .mf-cat-badge.mf-cat-7{background:var(--mf-cat-7-soft);color:var(--mf-cat-7);}
+
+  .mf-alloc-cell{display:flex;flex-direction:column;gap:6px;min-width:90px;}
+  .mf-alloc-track{width:100%;height:6px;border-radius:3px;background:var(--surface-2);overflow:hidden;}
+  .mf-alloc-fill{height:100%;border-radius:3px;background:var(--gold);}
+  /* Bumped up from 11.5px/text-muted — at that size/weight this read
+     as noticeably smaller and lower-contrast than the P&L/Return %
+     values right next to it in the same row. Matching their size and
+     giving it var(--text) instead of the muted tone puts Allocation
+     on equal visual footing, with the amber/red .limit-* colors above
+     still taking over for a stock that's approaching/over its cap. */
+  .mf-alloc-pct{font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--text);}
+
+  /* Floating three-dot row menu — a single reusable element is
+     appended to <body> and positioned in JS (fixed, from the
+     trigger button's own bounding rect), which sidesteps every
+     scroll-container clipping issue an absolutely-positioned
+     in-row dropdown would otherwise have inside .table-scroll's
+     horizontal scroller. */
+  .mf-menu-wrap{position:relative;display:inline-flex;}
+  .mf-menu-btn{
+    background:none;border:none;color:var(--text-faint);cursor:pointer;
+    padding:5px 8px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;
+  }
+  .mf-menu-btn:hover{background:var(--surface-2);color:var(--text);}
+  .mf-menu-dropdown{
+    display:none;position:fixed;z-index:250;
+    background:var(--surface);border:1px solid var(--border);border-radius:10px;
+    box-shadow:var(--shadow-md);min-width:190px;padding:6px;
+  }
+  .mf-menu-dropdown.open{display:block;}
+  .mf-menu-item{
+    display:flex;align-items:center;gap:9px;width:100%;text-align:left;
+    background:none;border:none;color:var(--text);font-family:var(--font-body);
+    font-size:12.5px;padding:8px 10px;border-radius:7px;cursor:pointer;
+  }
+  .mf-menu-item:hover{background:var(--surface-2);}
+  .mf-menu-item svg{flex:0 0 auto;color:var(--text-faint);}
+  .mf-menu-item.danger{color:var(--negative);}
+  .mf-menu-item.danger svg{color:var(--negative);}
+
+  /* ---- Mobile card list (<=700px) — replaces the generic
+     table-to-stacked-card treatment for this tab only, same
+     precedent as Stock Analysis's own mobile deck. ---- */
+  .mf-mobile-list{display:none;flex-direction:column;gap:10px;}
+  @media (max-width:700px){
+    #panel-mf .table-scroll{display:none;}
+    .mf-mobile-list{display:flex;}
+  }
+  .mf-mobile-card{
+    background:var(--surface);border:1px solid var(--border);border-radius:12px;
+    padding:14px 15px;box-shadow:var(--shadow-xs);cursor:pointer;
+  }
+  .mf-mobile-card-top{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
+  .mf-mobile-card-top .mf-fund-name{max-width:none;white-space:normal;}
+  .mf-mobile-card-top .mf-fund-name-wrap{flex:1 1 auto;display:flex;flex-direction:column;gap:4px;align-items:flex-start;}
+  .mf-mobile-card-menu{flex:0 0 auto;}
+  .mf-mobile-card-values{display:flex;justify-content:space-between;gap:10px;margin-bottom:10px;}
+  .mf-mobile-card-value{flex:1 1 0;}
+  .mf-mobile-card-value.align-r{text-align:right;}
+  .mf-mobile-card-value .l{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-faint);margin-bottom:3px;}
+  .mf-mobile-card-value .v{font-family:var(--font-mono);font-size:13.5px;font-weight:600;color:var(--text);}
+  .mf-mobile-card-alloc{display:flex;align-items:center;gap:8px;}
+  .mf-mobile-card-alloc .mf-alloc-track{flex:1 1 auto;}
+
+  /* ---- Detail drawer: right-side panel on desktop/tablet, bottom
+     sheet on mobile. First drawer in the app (existing dialogs are
+     all centered .modal-overlay/.modal-card). ---- */
+  .drawer-overlay{
+    display:none;position:fixed;inset:0;background:#0008;backdrop-filter:blur(2px);z-index:210;
+  }
+  .drawer-overlay.open{display:block;}
+  .drawer-panel{
+    position:fixed;top:0;right:0;height:100%;width:440px;max-width:92vw;
+    background:var(--surface);border-left:1px solid var(--border);
+    box-shadow:-12px 0 32px rgba(0,0,0,.25);
+    display:flex;flex-direction:column;
+    transform:translateX(100%);transition:transform .22s ease;
+  }
+  .drawer-overlay.open .drawer-panel{transform:translateX(0);}
+  .drawer-header{
+    padding:16px 20px;border-bottom:1px solid var(--border);
+    display:flex;align-items:center;justify-content:space-between;gap:12px;flex:0 0 auto;
+  }
+  .drawer-header-title{font-family:var(--font-display);font-size:15px;font-weight:600;color:var(--text);}
+  .drawer-close{
+    background:none;border:none;color:var(--text-faint);cursor:pointer;
+    padding:5px 9px;border-radius:7px;font-size:15px;line-height:1;
+  }
+  .drawer-close:hover{color:var(--text);background:var(--surface-2);}
+  .drawer-body{padding:18px 20px;overflow-y:auto;flex:1 1 auto;}
+  .drawer-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;}
+  .mf-viz-row{display:flex;align-items:center;gap:10px;margin-top:9px;}
+  .mf-viz-row:first-of-type{margin-top:2px;}
+  .mf-viz-label{flex:0 0 62px;font-size:11px;color:var(--text-muted);}
+  .mf-viz-row .mf-alloc-track{flex:1 1 auto;height:7px;}
+  .mf-viz-value{flex:0 0 auto;font-family:var(--font-mono);font-size:11.5px;color:var(--text);min-width:64px;text-align:right;}
+
+  @media (max-width:700px){
+    .drawer-panel{
+      top:auto;bottom:0;left:0;right:0;width:100%;max-width:100%;height:auto;max-height:88vh;
+      border-left:none;border-top:1px solid var(--border);border-radius:18px 18px 0 0;
+      transform:translateY(100%);
+    }
+    .drawer-overlay.open .drawer-panel{transform:translateY(0);}
+  }
+
+  /* ============================================================
+     EQUITY — REDESIGN (2026)
+     Same treatment as Mutual Funds above, reusing almost all of its
+     component CSS as-is rather than duplicating it: summary cards
+     (.sa-summary-grid/.sa-stat-card), the avatar + colored badge
+     (.mf-avatar/.mf-cat-badge/.mf-cat-N), the allocation bar
+     (.mf-alloc-*), the floating three-dot menu (.mf-menu-*), the
+     stacked mobile card internals (.mf-mobile-card and its
+     children), and the drawer shell (.drawer-*) are all generic —
+     built for Mutual Funds first, but with no MF-specific styling
+     baked in, so Equity's markup just uses the same classes. Only
+     genuinely new pieces are below: the per-tab hover rule, the
+     mobile-list show/hide pairing (a separate element from MF's own
+     mobile list), and two modifier classes for Equity's allocation
+     LIMIT feature (approaching/above a stock's cap-category cap),
+     which Mutual Funds has no equivalent of.
+     ============================================================ */
+  #panel-equity .sa-summary-grid{margin-bottom:16px;}
+  #panel-equity .table-toolbar{margin-bottom:10px;}
+  #panel-equity .eq-toolbar-select{min-width:172px;}
+  #panel-equity .attn-filter-select{padding-top:7px;padding-bottom:7px;}
+  @media (max-width:700px){
+    #panel-equity .table-toolbar .attn-filter-wrap{flex:1 1 150px;}
+    #panel-equity .table-toolbar .attn-filter-select{width:100%;}
+  }
+
+  #panel-equity tbody tr.eq-row{cursor:pointer;transition:background .12s ease;}
+  #panel-equity tbody tr.eq-row:hover{background:var(--surface-2);}
+  #panel-equity tbody tr.eq-row:hover td.sticky-col{background:var(--surface-2);}
+
+  /* Day-change chip as a subtitle under the stock name (LTP/Units/
+     Avg Price/full OHLC detail all moved to the drawer) — reuses the
+     existing .dc-chip the old Day Chg % column used, just smaller. */
+  .eq-fund-daychg{margin-top:3px;}
+  .eq-fund-daychg .dc-chip{font-size:10px;padding:1px 6px;}
+
+  /* Allocation-limit coloring — a modifier Mutual Funds never uses
+     (a fund has no "cap category" ceiling the way a stock's
+     Large/Mid/Small Cap classification does). .limit-approaching/
+     .limit-above are plain color classes usable on any text (the
+     table cell, a mobile card, or a plain row in the drawer); the
+     two .mf-alloc-fill rules additionally recolor the progress bar
+     itself when it's used on that specific element. */
+  .limit-approaching{color:var(--warning);font-weight:600;}
+  .limit-above{color:var(--negative);font-weight:600;}
+  .mf-alloc-fill.limit-approaching{background:var(--warning);}
+  .mf-alloc-fill.limit-above{background:var(--negative);}
+  /* .sa-detail-row .v's own color rule is two classes deep and would
+     otherwise outrank the single-class .limit-* rules above wherever
+     the allocation-limit color is used inside the drawer's Overview
+     row — these two restate the same colors at matching specificity
+     so the drawer's Allocation row still goes amber/red like the
+     table and mobile card do. */
+  .sa-detail-row .v.limit-approaching{color:var(--warning);}
+  .sa-detail-row .v.limit-above{color:var(--negative);}
+
+  .eq-mobile-list{display:none;flex-direction:column;gap:10px;}
+  @media (max-width:700px){
+    #panel-equity .table-scroll{display:none;}
+    .eq-mobile-list{display:flex;}
+  }
+
+  /* Cap Category (Large/Mid/Small) shown as a small "L/M/S" chip right
+     next to the stock name instead of its own table column. Uses the
+     same soft-tinted-background language as the Sector badge
+     (.mf-cat-badge) rather than a solid full-strength border/text
+     color — the earlier solid-border version read as too bright/loud
+     sitting directly next to the stock name; a pale fill with the
+     same hue keeps it identifiable at a glance without shouting.
+     Unknown cap category (no Screener match yet) renders no chip at
+     all — see eqCapChipHTML(). */
+  .eq-cap-chip{
+    display:inline-flex;align-items:center;justify-content:center;
+    min-width:16px;height:16px;padding:0 1px;margin-left:6px;vertical-align:middle;
+    border-radius:4px;border:none;
+    font-family:var(--font-mono);font-size:9.5px;font-weight:700;line-height:1;
+  }
+  .eq-cap-chip.cap-large{color:var(--blue);background:var(--blue-soft);}
+  .eq-cap-chip.cap-mid{color:var(--gold);background:var(--gold-soft);}
+  .eq-cap-chip.cap-small{color:var(--warning);background:var(--warning-soft);}
+</style>
+</head>
+<body>
+
+<div class="app-shell">
+  <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="sidebar-logo">₹</div>
+      <div class="sidebar-brand-text">
+        <div class="sidebar-brand-name">InvestTrack</div>
+        <div class="sidebar-brand-sub">Ganesh's portfolio</div>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav" role="tablist">
+      <button class="tab-btn active" data-tab="dashboard"><span class="nav-icon">⌂</span><span class="nav-label">Dashboard</span></button>
+      <button class="tab-btn" data-tab="portfolio"><span class="nav-icon">◧</span><span class="nav-label">Portfolio</span></button>
+      <button class="tab-btn" data-tab="insights"><span class="nav-icon">✦</span><span class="nav-label">Insights</span></button>
+      <button class="tab-btn" data-tab="stockanalysis"><span class="nav-icon">▤</span><span class="nav-label">Stock Analysis</span></button>
+
+      <div class="sidebar-divider"></div>
+      <div class="sidebar-section-label">Decide</div>
+      <button class="sidebar-nav-item" id="navRebalance"><span class="nav-icon">⇄</span><span class="nav-label">Rebalance</span></button>
+      <button class="sidebar-nav-item" id="navOpportunities"><span class="nav-icon">◎</span><span class="nav-label">Opportunities</span></button>
+
+      <div class="sidebar-divider"></div>
+      <button class="sidebar-nav-item" id="btnSettings"><span class="nav-icon">⚙</span><span class="nav-label">Settings</span></button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <span class="status-tag" id="lastUpdatedTag">Not saved yet</span>
+      <span class="status-tag" id="offlineTag" style="display:none;color:var(--warning)">⚠️ Offline — read-only until reconnected</span>
+    </div>
+  </aside>
+
+  <div class="main-col">
+    <header class="app-header">
+      <button class="hamburger-btn" id="hamburgerBtn" aria-label="Open menu" title="Menu">☰</button>
+      <div class="header-search">
+        <input type="text" id="globalSearch" placeholder="Search stocks, funds, FDs…" autocomplete="off">
+      </div>
+      <div class="header-spacer"></div>
+      <div class="header-actions">
+        <div class="header-market-pill">
+          <span class="dash-market-dot" id="headerMarketDot"></span>
+          <span id="headerMarketLabel">Market closed</span>
+        </div>
+        <button class="header-icon-btn" id="btnLoadDemo" title="Preview the app with sample data (your data is saved locally first so you can restore it)">🧪</button>
+        <button class="header-pill-btn" id="btnExitDemo" style="display:none" title="Exit demo mode and restore your real data">🚪 Exit demo</button>
+        <button class="header-pill-btn" id="btnCloudSync" title="Sign in to sync your data across devices">☁️ Sign in</button>
+        <button class="header-pill-btn" id="btnLockPortfolio" title="When locked, Quantity and Average Price can only change via Import Holdings">🔓 Unlocked</button>
+        <button class="header-icon-btn" id="notifBtn" title="What needs your attention">
+          🔔<span class="notif-badge" id="notifBadge" style="display:none">0</span>
+        </button>
+        <div class="theme-toggle" id="themeToggle" role="group" aria-label="Theme">
+          <button type="button" class="theme-toggle-btn" data-theme-choice="light" title="Light mode" aria-label="Light mode">☀️</button>
+          <button type="button" class="theme-toggle-btn" data-theme-choice="dark" title="Dark mode" aria-label="Dark mode">🌙</button>
+          <button type="button" class="theme-toggle-btn" data-theme-choice="auto" title="Match system" aria-label="Match system">🖥️</button>
+        </div>
+        <div class="header-profile" title="Ganesh">G</div>
+      </div>
+    </header>
+
+    <input type="file" id="importFile" accept="application/json" style="display:none">
+    <input type="file" id="importInvestmentsFile" accept=".xlsx,.xls" multiple style="display:none">
+
+    <main>
+
+  <!-- ============ DASHBOARD ============ -->
+  <section class="panel active" id="panel-dashboard">
+
+    <div class="dash-header">
+      <div>
+        <h2 class="dash-header-title" id="dashGreetingTitle">Dashboard</h2>
+        <p class="dash-header-sub" id="dashGreetingSub">Your portfolio at a glance</p>
+      </div>
+      <div class="dash-header-right">
+        <div id="dashLastUpdated">Last updated: —</div>
+        <div>Market: <span id="dashMarketLabel">—</span><span class="dash-market-dot" id="dashMarketDot"></span></div>
+      </div>
+    </div>
+
+    <div class="dash-kpi-grid">
+      <div class="dash-kpi-card hero">
+        <div class="dash-kpi-label">Portfolio value</div>
+        <div class="dash-kpi-value" id="statNetWorth">₹0</div>
+        <div class="dash-cash-row">
+          <label for="cashInput">Cash on hand</label>
+          <input type="text" inputmode="decimal" id="cashInput" placeholder="0">
+        </div>
+      </div>
+      <div class="dash-kpi-card">
+        <div class="dash-kpi-label">Invested amount</div>
+        <div class="dash-kpi-value" id="statTotalInvested">₹0</div>
+      </div>
+      <div class="dash-kpi-card">
+        <div class="dash-kpi-label">Overall P&amp;L</div>
+        <div class="dash-kpi-value" id="statOverallPL">₹0</div>
+        <div class="dash-kpi-sub" id="statOverallPLPct">0%</div>
+      </div>
+      <div class="dash-kpi-card">
+        <div class="dash-kpi-label">Today's P&amp;L <span class="hint">(Equity)</span></div>
+        <div class="dash-kpi-value" id="statTodayPL">₹0</div>
+        <div class="dash-kpi-sub" id="statTodayPLPct">0%</div>
+      </div>
+    </div>
+
+    <div class="dash-section card attn-card" id="dashAttnCard">
+      <div class="attn-card-header">
+        <button type="button" class="attn-toggle-btn" id="dashAttnToggle" aria-expanded="false" aria-controls="dashAttentionList" title="Show/hide">
+          <span class="attn-toggle-chevron">▸</span>
+          <span class="attn-toggle-label">What needs your attention</span>
+          <span class="attn-count-badge" id="dashAttnCount" style="display:none">0</span>
+        </button>
+        <span class="attn-filter-wrap">
+          <select class="attn-filter-select" id="dashAttnFilter">
+            <option value="all">All</option>
+            <option value="allocation">Allocation</option>
+            <option value="maturity">Maturity</option>
+            <option value="opportunity">Opportunities</option>
+          </select>
+        </span>
+      </div>
+      <div id="dashAttentionList"></div>
+    </div>
+
+    <div class="dash-grid dash-section">
+      <div class="card" id="dashAllocCard">
+        <div class="dash-alloc-card-header">
+          <h3>Asset Allocation <span class="dash-alloc-info" title="Target % is editable — used only to compute the drift shown here. Debt is valued at amount invested (FDs don't fluctuate day-to-day); Equity, Mutual Fund, and Gold values use live prices where available.">ⓘ</span></h3>
+          <button class="dash-alloc-edit-link" id="btnEditTargets">Edit targets</button>
+        </div>
+        <div class="dash-alloc-layout">
+          <div class="dash-alloc-donut-wrap">
+            <canvas id="dashAllocDonut"></canvas>
+            <div class="dash-alloc-donut-center">
+              <div class="dash-alloc-donut-total" id="dashAllocDonutTotal">₹0</div>
+              <div class="dash-alloc-donut-label">Total Value</div>
+            </div>
+          </div>
+          <div class="dash-alloc-table-wrap">
+            <table class="dash-alloc-table">
+              <thead>
+                <tr><th class="left">Asset Class</th><th>Invested</th><th>Current</th><th>Target</th><th>Variance</th><th>Amount</th></tr>
+              </thead>
+              <tbody id="dashAllocTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="dash-alloc-alert" id="dashAllocAlert" style="display:none">
+          <span id="dashAllocAlertText"></span>
+          <button class="btn btn-ghost btn-sm" id="dashAllocAlertBtn">View Rebalance Plan</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Portfolio health</h3>
+        <div id="dashHealthBody"></div>
+      </div>
+    </div>
+
+    <div class="dash-section card dash-perf-chart-card">
+      <div class="dash-alloc-card-header">
+        <h3>Portfolio performance <span class="hint">invested capital vs a Nifty 50 equivalent, using your real trade dates</span></h3>
+        <div class="dash-perf-period-group" id="dashPerfPeriodGroup" aria-disabled="true">
+          <button type="button" data-period="1M" disabled>1M</button>
+          <button type="button" data-period="6M" disabled>6M</button>
+          <button type="button" class="active" data-period="1Y" disabled>1Y</button>
+          <button type="button" data-period="3Y" disabled>3Y</button>
+          <button type="button" data-period="5Y" disabled>5Y</button>
+          <button type="button" data-period="All" disabled>All</button>
+        </div>
+      </div>
+      <div class="dash-perf-chart-placeholder" id="dashPerfPlaceholder">
+        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
+        <div class="dash-perf-chart-placeholder-title" id="dashPerfPlaceholderTitle">No trade book synced yet</div>
+        <p id="dashPerfPlaceholderText">Connect your trade book (Settings → Trade Book) and add a Nifty History API URL (Settings) to enable this chart — once connected it re-syncs from Google Drive automatically and compares your actual invested capital against a Nifty 50 equivalent computed from your real trade dates. Full P&amp;L and allocation numbers above are unaffected either way.</p>
+      </div>
+      <div class="dash-perf-chart-wrap" id="dashPerfChartWrap" style="display:none">
+        <div class="chart-wrap" style="height:260px;"><canvas id="dashPerfChart"></canvas></div>
+        <div class="dash-perf-summary" id="dashPerfSummary"></div>
+      </div>
+    </div>
+
+    <div class="dash-grid dash-section">
+      <div class="card">
+        <h3>Investment opportunities <span class="hint">top picks from Intelligent Insights</span></h3>
+        <div id="dashOpportunitiesList"></div>
+        <div class="dash-alloc-footer">
+          <button class="btn btn-ghost" id="btnViewAllOpportunities">View all opportunities</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Portfolio movers <span class="hint">by absolute P&amp;L</span></h3>
+        <div class="dash-perf-grid">
+          <div>
+            <div class="dash-kpi-label" style="margin-bottom:8px;">Top contributors</div>
+            <div id="dashTopContributors"></div>
+          </div>
+          <div>
+            <div class="dash-kpi-label" style="margin-bottom:8px;">Biggest losers</div>
+            <div id="dashBiggestLosers"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="dash-actions-row">
+      <button class="btn btn-ghost" id="btnDashViewOpportunities">View opportunities</button>
+      <button class="btn btn-ghost" id="btnDashRebalance">Rebalance portfolio</button>
+      <button class="btn btn-ghost" id="btnDashAddMoney">Add new money</button>
+    </div>
+
+    <div class="dash-section card ms-snapshot-card">
+      <h3>Market Position <span class="hint">Nifty Bank · NIFTY 50 · SENSEX</span></h3>
+      <div class="ms-grid" id="marketSnapshotGrid"></div>
+    </div>
+
+    <div class="dash-section card">
+      <h3>Quick portfolio breakdown</h3>
+      <div class="dash-breakdown-grid" id="dashBreakdownGrid"></div>
+      <div class="dash-breakdown-total">
+        <span>Total portfolio value</span>
+        <b id="dashBreakdownTotal">₹0</b>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ============ PORTFOLIO ============ -->
+  <section class="panel" id="panel-portfolio">
+    <div class="portfolio-header">
+      <div>
+        <h2 class="portfolio-header-title">Portfolio</h2>
+        <p class="portfolio-header-sub">Overview of your entire portfolio</p>
+      </div>
+      <div class="portfolio-selector" id="portfolioSelector" role="tablist">
+        <button class="portfolio-selector-btn active" data-subtab="equity">Equity</button>
+        <button class="portfolio-selector-btn" data-subtab="debt">Debt</button>
+        <button class="portfolio-selector-btn" data-subtab="mf">Mutual Funds</button>
+        <button class="portfolio-selector-btn" data-subtab="gold">Gold</button>
+      </div>
+    </div>
+
+    <!-- ============ EQUITY ============ -->
+    <section class="portfolio-subpanel active" id="panel-equity">
+    <h2 class="section-title">Equity — Stocks</h2>
+    <p class="section-sub">Track individual stock holdings. Units, Avg Price and LTP are driven by Zerodha Holdings import and an automatic live-price refresh every 30 seconds — open a stock's details to edit its Sector. Cap (Large/Mid/Small) is derived from the Market Cap you import via "Import Screener Data" on the Stock Analysis tab, matched by Symbol.</p>
+
+    <div class="sa-summary-grid" id="eqSummaryGrid"></div>
+
+    <div class="dash-section card attn-card" id="eqAttnCard">
+      <div class="attn-card-header">
+        <button type="button" class="attn-toggle-btn" id="eqAttnToggle" aria-expanded="false" aria-controls="eqAttentionList" title="Show/hide">
+          <span class="attn-toggle-chevron">▸</span>
+          <span class="attn-toggle-label">What needs your attention</span>
+          <span class="attn-count-badge" id="eqAttnCount" style="display:none">0</span>
+        </button>
+        <span class="attn-filter-wrap">
+          <select class="attn-filter-select" id="eqAttnFilter">
+            <option value="all">All</option>
+            <option value="add">Consider Adding</option>
+            <option value="reduce">Reduce / Sell</option>
+          </select>
+        </span>
+      </div>
+      <div id="eqAttentionList"></div>
+    </div>
+
+    <div class="table-toolbar">
+      <div class="left-group">
+        <div class="filter-clear-wrap">
+          <input type="text" class="filter-input" id="equityFilter" placeholder="Search stocks...">
+          <button type="button" class="filter-clear-btn" data-clear-target="equityFilter" title="Clear filter" aria-label="Clear filter">✕</button>
+        </div>
+        <div class="attn-filter-wrap">
+          <select class="attn-filter-select eq-toolbar-select" id="equitySectorFilter">
+            <option value="">All Sectors</option>
+          </select>
+        </div>
+        <div class="attn-filter-wrap">
+          <select class="attn-filter-select eq-toolbar-select" id="equityCapFilter">
+            <option value="">All Caps</option>
+            <option value="Large Cap">Large Cap</option>
+            <option value="Mid Cap">Mid Cap</option>
+            <option value="Small Cap">Small Cap</option>
+          </select>
+        </div>
+        <div class="attn-filter-wrap">
+          <select class="attn-filter-select eq-toolbar-select" id="equitySortSelect">
+            <option value="allocPct:-1">Allocation: High to Low</option>
+            <option value="allocPct:1">Allocation: Low to High</option>
+            <option value="pl:-1">P&amp;L: High to Low</option>
+            <option value="pl:1">P&amp;L: Low to High</option>
+            <option value="currentValue:-1">Current Value: High to Low</option>
+            <option value="currentValue:1">Current Value: Low to High</option>
+            <option value="dayChangePct:-1">Day Change %: High to Low</option>
+            <option value="dayChangePct:1">Day Change %: Low to High</option>
+            <option value="name:1">Name: A to Z</option>
+            <option value="name:-1">Name: Z to A</option>
+          </select>
+        </div>
+        <span class="status-tag" id="equityFetchStatus"></span>
+        <div class="movers-strip" id="equityMoversStrip"></div>
+      </div>
+    </div>
+    <div class="fail-panel" id="equityFailPanel" style="display:none"></div>
+
+    <div class="table-scroll">
+      <table class="data-table">
+        <colgroup>
+          <col id="col-eq-name" style="width:230px">
+          <col style="width:130px">
+          <col style="width:120px">
+          <col style="width:130px">
+          <col style="width:110px">
+          <col style="width:90px">
+          <col style="width:150px">
+          <col style="width:50px">
+        </colgroup>
+        <thead>
+          <tr>
+            <th class="left sortable resizable sticky-col" data-col="name">Stock<span class="col-resizer"></span></th>
+            <th class="left sortable" data-col="sector">Sector</th>
+            <th class="sortable" data-col="invested">Invested Amt</th>
+            <th class="sortable" data-col="currentValue">Current Value</th>
+            <th class="sortable" data-col="pl">P&amp;L</th>
+            <th class="sortable" data-col="plPct">Return %</th>
+            <th class="sortable" data-col="allocPct">Allocation</th>
+            <th class="row-actions">—</th>
+          </tr>
+        </thead>
+        <tbody id="equityTableBody"></tbody>
+        <tfoot>
+          <tr>
+            <td class="left sticky-col" id="eqTotalLabel">Total</td>
+            <td></td>
+            <td id="eqTotalInvested">₹0</td>
+            <td id="eqTotalCurrent">₹0</td>
+            <td id="eqTotalPL">₹0</td>
+            <td id="eqTotalPLPct">0%</td>
+            <td id="eqTotalAlloc">100%</td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <div class="eq-mobile-list" id="equityMobileList"></div>
+  </section>
+
+  <!-- ============ DEBT ============ -->
+    <section class="portfolio-subpanel" id="panel-debt">
+
+
+    <div class="debt-header">
+      <div>
+        <h2 class="debt-header-title">Debt &amp; Fixed Income</h2>
+        <p class="debt-header-sub">Track your fixed-income investments, maturity schedule, interest income and reinvestment opportunities.</p>
+      </div>
+      <div class="debt-header-actions">
+        <button class="btn btn-primary" id="btnAddDebt">+ Add Investment</button>
+        <label class="btn btn-ghost" for="importDebtFile" title="Overwrites all existing Debt entries with the contents of the file">Import from Excel</label>
+        <input type="file" id="importDebtFile" accept=".xlsx,.xls">
+        <button class="btn btn-ghost" id="btnImportDebtSheet" title="Overwrites all existing Debt entries with the Debt tab of your Google Sheet">Import from Google Sheet</button>
+        <span class="status-tag" id="debtImportStatus"></span>
+        <div class="debt-last-updated" id="debtLastUpdated">Last updated: —</div>
+      </div>
+    </div>
+
+    <div class="debt-kpi-grid">
+      <div class="debt-kpi-card hero">
+        <div class="debt-kpi-label">Debt value</div>
+        <div class="debt-kpi-value" id="debtKpiValue">₹0</div>
+        <div class="debt-kpi-sub" id="debtKpiValuePct">0% of total portfolio</div>
+        <div class="debt-kpi-target-row" id="debtKpiTargetRow" style="display:none"></div>
+        <button class="btn btn-ghost btn-sm debt-kpi-rebalance-btn" id="debtKpiRebalanceBtn">Rebalance</button>
+      </div>
+      <div class="debt-kpi-card">
+        <div class="debt-kpi-label">Invested amount</div>
+        <div class="debt-kpi-value" id="debtKpiInvested">₹0</div>
+      </div>
+      <div class="debt-kpi-card">
+        <div class="debt-kpi-label">Interest rate <span class="hint">wtd. avg</span></div>
+        <div class="debt-kpi-value" id="debtKpiRate">0%</div>
+      </div>
+      <div class="debt-kpi-card">
+        <div class="debt-kpi-label">Expected interest / year</div>
+        <div class="debt-kpi-value" id="debtKpiExpectedInterest">₹0</div>
+      </div>
+      <div class="debt-kpi-card">
+        <div class="debt-kpi-label">Portfolio allocation</div>
+        <div class="debt-kpi-value" id="debtKpiAllocPct">0%</div>
+      </div>
+    </div>
+
+    <div class="dash-section card attn-card" id="debtAttnCard">
+      <div class="attn-card-header">
+        <button type="button" class="attn-toggle-btn" id="debtAttnToggle" aria-expanded="false" aria-controls="debtAttentionList" title="Show/hide">
+          <span class="attn-toggle-chevron">▸</span>
+          <span class="attn-toggle-label">What needs your attention</span>
+          <span class="attn-count-badge" id="debtAttnCount" style="display:none">0</span>
+        </button>
+        <span class="attn-filter-wrap">
+          <select class="attn-filter-select" id="debtAttnFilter">
+            <option value="all">All</option>
+            <option value="maturity">Maturity</option>
+            <option value="allocation">Allocation</option>
+            <option value="income">Income</option>
+          </select>
+        </span>
+      </div>
+      <div id="debtAttentionList"></div>
+    </div>
+
+    <div class="dash-grid dash-section">
+      <div class="card">
+        <h3>Maturity overview</h3>
+        <div class="debt-maturity-grid" id="debtMaturityGrid"></div>
+      </div>
+      <div class="card">
+        <h3>Debt allocation <span class="hint">by category</span></h3>
+        <div id="debtAllocBars"></div>
+        <p class="settings-note" style="margin-bottom:0">Total: <span id="debtAllocTotal">₹0</span></p>
+      </div>
+    </div>
+
+    <div class="dash-section card" id="debtCalendarCard">
+      <h3>Maturity calendar</h3>
+      <div class="debt-cal-controls">
+        <button class="debt-cal-range-btn" data-months="6">6 Months</button>
+        <button class="debt-cal-range-btn active" data-months="12">12 Months</button>
+        <button class="debt-cal-range-btn" data-months="24">24 Months</button>
+      </div>
+      <div class="debt-cal-bars" id="debtCalendarBars"></div>
+      <div class="debt-cal-detail" id="debtCalendarDetail" style="display:none"></div>
+    </div>
+
+    <div class="dash-section card" id="debtHoldingsCard">
+      <h3>Debt holdings</h3>
+      <div class="debt-filters-row">
+        <div class="filter-clear-wrap debt-holdings-search-wrap">
+          <input type="text" class="filter-input debt-holdings-search" id="debtHoldingsSearch" placeholder="Search institution or investment...">
+          <button type="button" class="filter-clear-btn" data-clear-target="debtHoldingsSearch" title="Clear search" aria-label="Clear search">✕</button>
+        </div>
+        <div class="debt-chip-group" id="debtCategoryChips"></div>
+        <div class="debt-chip-group" id="debtStatusChips"></div>
+        <div class="debt-sort-shortcuts">
+          <button class="debt-sort-shortcut" data-sort-col="maturityDate" data-sort-dir="1">Maturity Date</button>
+          <button class="debt-sort-shortcut" data-sort-col="roi" data-sort-dir="-1">Highest Rate</button>
+          <button class="debt-sort-shortcut" data-sort-col="roi" data-sort-dir="1">Lowest Rate</button>
+          <button class="debt-sort-shortcut" data-sort-col="invested" data-sort-dir="-1">Highest Amount</button>
+        </div>
+      </div>
+      <div class="debt-bucket-note" id="debtBucketFilterNote" style="display:none"></div>
+      <div id="debtHoldingsList"></div>
+      <p class="settings-note">Need account number, tenure, or notes columns? Use <button class="debt-chip-clear" id="btnDebtColumns" style="font-size:11.5px">Edit holdings (all fields) ↓</button> below for the full spreadsheet view.</p>
+    </div>
+
+    <div class="dash-grid dash-section">
+      <div class="card">
+        <h3>How much money becomes available?</h3>
+        <div id="debtLiquidityList"></div>
+      </div>
+      <div class="card" id="debtReinvestCard" style="display:none">
+        <h3>Upcoming reinvestment</h3>
+        <div class="debt-reinvest-amount" id="debtReinvestAmount"></div>
+        <div class="debt-reinvest-rate-row">Current rate on this investment: <b id="debtReinvestRate">0%</b></div>
+        <div id="debtReinvestRows"></div>
+        <p class="debt-reinvest-note">Consider redirecting some or all maturity proceeds toward underweight asset classes rather than automatically renewing — this is portfolio guidance, not financial advice.</p>
+        <div class="debt-reinvest-actions">
+          <button class="btn btn-ghost btn-sm" id="debtReinvestViewRebalance">View Rebalance Plan</button>
+          <button class="btn btn-ghost btn-sm" id="debtReinvestRenew">Renew FD</button>
+          <button class="btn btn-ghost btn-sm" id="debtReinvestDecideLater">Decide Later</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="dash-section card">
+      <h3>Debt health</h3>
+      <div class="debt-health-placeholder">Debt health scoring isn't implemented yet — once finalized, this will combine allocation, rate quality, diversification, liquidity spread and maturity concentration into a single score, the same way Portfolio Health works on the Dashboard.</div>
+    </div>
+
+    <details class="debt-classic-details" id="debtClassicTableDetails">
+      <summary class="debt-classic-summary">Edit holdings (all fields) — sub-category, account number, tenure, notes, and per-field editing</summary>
+
+      <div class="table-toolbar">
+        <div class="left-group">
+          <button class="btn toolbar-overflow-toggle" id="debtOverflowToggle" title="More actions" style="display:none">⋯</button>
+          <div class="toolbar-secondary" id="debtToolbarSecondary"></div>
+          <div class="filter-clear-wrap">
+            <input type="text" class="filter-input" id="debtFilter" placeholder="Filter...">
+            <button type="button" class="filter-clear-btn" data-clear-target="debtFilter" title="Clear filter" aria-label="Clear filter">✕</button>
+          </div>
+        </div>
+      </div>
+      <div class="mobile-totals" id="debtMobileTotals">
+        <div>
+          <div class="row"><span>Invested</span></div>
+          <div class="vals"><span id="debtMobTotalInvested">₹0</span></div>
+        </div>
+        <div>
+          <div class="row"><span>Maturity</span></div>
+          <div class="vals"><span id="debtMobTotalMaturity">₹0</span></div>
+        </div>
+        <div>
+          <div class="row"><span>Profit</span></div>
+          <div class="vals"><span id="debtMobTotalProfit">₹0</span></div>
+        </div>
+      </div>
+      <div class="mobile-sort-row">
+        <select id="debtMobileSort">
+          <option value="">Sort: default</option>
+          <option value="name">Name</option>
+          <option value="category">Category</option>
+          <option value="invested">Invested Amt</option>
+          <option value="roi">ROI %</option>
+          <option value="maturityAmount">Maturity Amt</option>
+          <option value="profit">Profit</option>
+          <option value="investedDate">Invested Date</option>
+          <option value="maturityDate" selected>Maturity Date</option>
+        </select>
+        <button class="mobile-sort-dir" id="debtMobileSortDir" title="Toggle ascending/descending">↑</button>
+      </div>
+
+      <div class="table-scroll">
+        <table class="data-table">
+          <colgroup>
+            <col id="col-debt-name" style="width:160px">
+            <col style="width:110px"><col style="width:130px"><col style="width:120px">
+            <col style="width:110px"><col style="width:75px"><col style="width:115px">
+            <col style="width:100px"><col style="width:155px"><col style="width:155px">
+            <col style="width:95px"><col style="width:85px"><col style="width:160px"><col style="width:45px">
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="left sortable resizable sticky-col" data-col="name">Name<span class="col-resizer"></span></th>
+              <th class="left sortable" data-col="category">Category</th>
+              <th class="left sortable" data-col="subcategory">Sub-category</th>
+              <th class="left sortable" data-col="account">Account No.</th>
+              <th class="sortable" data-col="invested">Invested Amt</th>
+              <th class="sortable" data-col="roi">ROI %</th>
+              <th class="sortable" data-col="maturityAmount">Maturity Amt</th>
+              <th class="sortable" data-col="profit">Profit</th>
+              <th class="sortable" data-col="investedDate">Invested Date</th>
+              <th class="sortable" data-col="maturityDate">Maturity Date</th>
+              <th class="sortable" data-col="tenureMonths">Tenure (Mo)</th>
+              <th class="sortable" data-col="tenureYears">Tenure (Yr)</th>
+              <th class="left sortable" data-col="notes">Notes</th>
+              <th class="row-actions">—</th>
+            </tr>
+          </thead>
+          <tbody id="debtTableBody"></tbody>
+          <tfoot>
+            <tr>
+              <td class="left sticky-col">Total</td>
+              <td></td><td></td><td></td>
+              <td id="debtTotalInvested">₹0</td>
+              <td></td>
+              <td id="debtTotalMaturity">₹0</td>
+              <td id="debtTotalProfit">₹0</td>
+              <td colspan="6"></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </details>
+
+    <button class="fab-add" id="fabAddDebt" title="Add entry" aria-label="Add entry">+</button>
+  </section>
+
+  <!-- ============ MUTUAL FUNDS ============ -->
+    <section class="portfolio-subpanel" id="panel-mf">
+    <h2 class="section-title">Mutual Funds</h2>
+    <p class="section-sub">Equity mutual fund holdings. Units, Category and NAV are driven by Zerodha Holdings import and an automatic live-NAV refresh every 30 seconds — open a fund's details to edit its Remarks.</p>
+
+    <div class="sa-summary-grid" id="mfSummaryGrid"></div>
+
+    <div class="table-toolbar">
+      <div class="left-group">
+        <div class="filter-clear-wrap">
+          <input type="text" class="filter-input" id="mfFilter" placeholder="Search funds...">
+          <button type="button" class="filter-clear-btn" data-clear-target="mfFilter" title="Clear filter" aria-label="Clear filter">✕</button>
+        </div>
+        <div class="attn-filter-wrap">
+          <select class="attn-filter-select mf-toolbar-select" id="mfCategoryFilter">
+            <option value="">All Categories</option>
+          </select>
+        </div>
+        <div class="attn-filter-wrap">
+          <select class="attn-filter-select mf-toolbar-select" id="mfSortSelect">
+            <option value="allocPct:-1">Allocation: High to Low</option>
+            <option value="allocPct:1">Allocation: Low to High</option>
+            <option value="pl:-1">P&amp;L: High to Low</option>
+            <option value="pl:1">P&amp;L: Low to High</option>
+            <option value="currentValue:-1">Current Value: High to Low</option>
+            <option value="currentValue:1">Current Value: Low to High</option>
+            <option value="name:1">Name: A to Z</option>
+            <option value="name:-1">Name: Z to A</option>
+          </select>
+        </div>
+        <span class="status-tag" id="mfFetchStatus"></span>
+      </div>
+    </div>
+    <div class="fail-panel" id="mfFailPanel" style="display:none"></div>
+
+    <div class="table-scroll">
+      <table class="data-table">
+        <colgroup>
+          <col id="col-mf-name" style="width:240px">
+          <col style="width:130px">
+          <col style="width:130px">
+          <col style="width:140px">
+          <col style="width:120px">
+          <col style="width:100px">
+          <col style="width:150px">
+          <col style="width:50px">
+        </colgroup>
+        <thead>
+          <tr>
+            <th class="left sortable resizable sticky-col" data-col="name">Fund<span class="col-resizer"></span></th>
+            <th class="left sortable" data-col="category">Category</th>
+            <th class="sortable" data-col="invested">Invested Amt</th>
+            <th class="sortable" data-col="currentValue">Current Value</th>
+            <th class="sortable" data-col="pl">P&amp;L</th>
+            <th class="sortable" data-col="plPct">Return %</th>
+            <th class="sortable" data-col="allocPct">Allocation</th>
+            <th class="row-actions">—</th>
+          </tr>
+        </thead>
+        <tbody id="mfTableBody"></tbody>
+        <tfoot>
+          <tr>
+            <td class="left sticky-col" id="mfTotalLabel">Total</td>
+            <td></td>
+            <td id="mfTotalInvested">₹0</td>
+            <td id="mfTotalCurrent">₹0</td>
+            <td id="mfTotalPL">₹0</td>
+            <td id="mfTotalPLPct">0%</td>
+            <td id="mfTotalAlloc">100%</td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <div class="mf-mobile-list" id="mfMobileList"></div>
+  </section>
+
+  <!-- ============ GOLD ============ -->
+    <section class="portfolio-subpanel" id="panel-gold">
+    <h2 class="section-title">Gold</h2>
+    <p class="section-sub">Gold ETF holdings. Weight, Purchase Rate, Invested Amt and Current Rate are driven by Zerodha Holdings import and an automatic live-price refresh every 30 seconds — only Notes can be edited by hand.</p>
+
+    <div class="table-toolbar">
+      <div class="left-group">
+        <div class="filter-clear-wrap">
+          <input type="text" class="filter-input" id="goldFilter" placeholder="Filter...">
+          <button type="button" class="filter-clear-btn" data-clear-target="goldFilter" title="Clear filter" aria-label="Clear filter">✕</button>
+        </div>
+        <span class="status-tag" id="goldFetchStatus"></span>
+      </div>
+    </div>
+    <div class="mobile-totals" id="goldMobileTotals">
+      <div>
+        <div class="row"><span>Invested</span></div>
+        <div class="vals"><span id="goldMobTotalInvested">₹0</span></div>
+      </div>
+      <div>
+        <div class="row"><span>Current</span></div>
+        <div class="vals"><span id="goldMobTotalCurrent">₹0</span></div>
+      </div>
+      <div>
+        <div class="row"><span>P&amp;L</span></div>
+        <div class="vals"><span id="goldMobTotalPL">₹0</span></div>
+      </div>
+    </div>
+    <div class="mobile-sort-row">
+      <select id="goldMobileSort">
+        <option value="">Sort: default</option>
+        <option value="name">Name</option>
+        <option value="form">Form</option>
+        <option value="weight">Weight/Units</option>
+        <option value="purchaseRate">Purchase Rate</option>
+        <option value="invested">Invested Amt</option>
+        <option value="currentRate">Current Rate</option>
+        <option value="currentValue">Current Value</option>
+        <option value="pl">P&amp;L</option>
+        <option value="plPct">P&amp;L %</option>
+      </select>
+      <button class="mobile-sort-dir" id="goldMobileSortDir" title="Toggle ascending/descending">↑</button>
+    </div>
+    <div class="fail-panel" id="goldFailPanel" style="display:none"></div>
+
+    <div class="table-scroll">
+      <table class="data-table">
+        <colgroup>
+          <col id="col-gold-name" style="width:190px">
+          <col style="width:90px"><col style="width:110px"><col style="width:110px">
+          <col style="width:130px"><col style="width:120px"><col style="width:140px">
+          <col style="width:120px"><col style="width:90px"><col style="width:150px"><col style="width:45px">
+        </colgroup>
+        <thead>
+          <tr>
+            <th class="left sortable resizable sticky-col" data-col="name">Name / Symbol<span class="col-resizer"></span></th>
+            <th class="left sortable" data-col="form">Form</th>
+            <th class="sortable" data-col="weight">Weight / Units</th>
+            <th class="sortable" data-col="purchaseRate">Purchase Rate</th>
+            <th class="sortable" data-col="invested">Invested Amt</th>
+            <th class="sortable" data-col="currentRate">Current Rate</th>
+            <th class="sortable" data-col="currentValue">Current Value</th>
+            <th class="sortable" data-col="pl">P&amp;L</th>
+            <th class="sortable" data-col="plPct">P&amp;L %</th>
+            <th class="left sortable" data-col="notes">Notes</th>
+            <th class="row-actions">—</th>
+          </tr>
+        </thead>
+        <tbody id="goldTableBody"></tbody>
+        <tfoot>
+          <tr>
+            <td class="left sticky-col">Total</td><td></td><td></td><td></td>
+            <td id="goldTotalInvested">₹0</td>
+            <td></td>
+            <td id="goldTotalCurrent">₹0</td>
+            <td id="goldTotalPL">₹0</td>
+            <td id="goldTotalPLPct">0%</td>
+            <td></td><td></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    </section>
+  </section>
+
+  <!-- ============ INSIGHTS ============ -->
+  <section class="panel" id="panel-insights">
+    <h2 class="section-title">Insights</h2>
+    <p class="section-sub">A closer look at what's driving your Equity and Mutual Fund allocations — computed from the same figures as their tabs, nothing recalculated differently.</p>
+
+    <div class="insights-grid">
+      <div class="card">
+        <h3>Top Performers <span class="hint">Equity, by P&amp;L</span></h3>
+        <div id="insightsTopPerformers"></div>
+      </div>
+      <div class="card">
+        <h3>Worst Performers <span class="hint">Equity, by P&amp;L</span></h3>
+        <div id="insightsWorstPerformers"></div>
+      </div>
+    </div>
+
+    <div class="insights-grid" style="margin-top:16px;">
+      <div class="card">
+        <h3>Sector Allocation <span class="hint">Equity, current value</span></h3>
+        <div class="chart-wrap" id="sectorAllocChartWrap"><canvas id="sectorAllocPie"></canvas></div>
+        <div class="insights-empty" id="sectorAllocEmpty" style="display:none">No Equity holdings yet — add stocks (with a Sector) to see this breakdown.</div>
+      </div>
+      <div class="card">
+        <h3>Mutual Fund Category Allocation <span class="hint">current value</span></h3>
+        <div class="chart-wrap" id="mfCategoryChartWrap"><canvas id="mfCategoryPie"></canvas></div>
+        <div class="insights-empty" id="mfCategoryEmpty" style="display:none">No Mutual Fund holdings yet — import holdings to see this breakdown.</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <h3>Mutual Fund Category Breakdown</h3>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th class="left">Category</th>
+              <th>Investment Value</th>
+              <th>Investment %</th>
+            </tr>
+          </thead>
+          <tbody id="mfCategoryTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ STOCK ANALYSIS ============ -->
+  <section class="panel" id="panel-stockanalysis">
+    <h2 class="section-title">Stock Analysis</h2>
+    <p class="section-sub">Fundamentals for your Equity holdings — Stock/Symbol, Sector and LTP come straight from the Equity tab; everything else is joined in from imported Screener data by Symbol. PE, P/B and Yield are always calculated here, never taken pre-computed from the source file. ROA is shown for Financial-sector stocks only. Market Cap Category (Large/Mid/Small) is derived from the imported Market Cap: Large ≥ ₹20,000 Cr, Mid ₹5,000–20,000 Cr, Small &lt; ₹5,000 Cr.</p>
+
+    <div class="sa-summary-grid" id="saSummaryGrid"></div>
+
+    <div class="table-toolbar">
+      <div class="left-group">
+        <div class="sa-search-wrap">
+          <input type="text" class="filter-input" id="stockAnalysisFilter" placeholder="Search by name, sector, buy/hold...">
+          <button type="button" class="filter-clear-btn" data-clear-target="stockAnalysisFilter" title="Clear search" aria-label="Clear search">✕</button>
+        </div>
+        <button class="btn" id="btnStockAnalysisColumns" title="Choose which columns are shown">☰ Columns</button>
+        <button class="btn btn-ghost" id="btnStockAnalysisHidden" title="Show/restore stocks you've removed from this tab" style="display:none">Hidden (0)</button>
+        <button class="btn" id="btnImportScreener">Import Screener Data</button>
+        <input type="file" id="importScreenerFile" accept=".xlsx,.xls">
+        <span class="status-tag" id="screenerImportStatus"></span>
+        <button class="btn" id="btnBankingMetrics" title="For Financial-sector holdings: generates a research prompt to paste into your Claude chat, then saves the reply you paste back — no API key or cost involved.">🏦 Banking Metrics</button>
+      </div>
+    </div>
+    <div class="mobile-sort-row">
+      <select id="stockAnalysisMobileSort">
+        <option value="">Sort: default</option>
+        <option value="name">Name</option>
+        <option value="sector">Sector</option>
+        <option value="capCategory">Market Cap Category</option>
+        <option value="ltp">LTP</option>
+        <option value="pe">PE</option>
+        <option value="industryPe">Industry PE</option>
+        <option value="pb">P/B</option>
+        <option value="roe">ROE %</option>
+        <option value="roce">ROCE %</option>
+      </select>
+      <button class="mobile-sort-dir" id="stockAnalysisMobileSortDir" title="Toggle ascending/descending">↑</button>
+    </div>
+
+    <div class="table-scroll">
+      <table class="data-table">
+        <colgroup>
+          <col id="col-sa-name" style="width:190px">
+          <col id="col-sa-col-sector" style="width:120px"><col id="col-sa-col-capCategory" style="width:100px"><col id="col-sa-col-ltp" style="width:90px">
+          <col id="col-sa-col-range52" style="width:140px"><col id="col-sa-col-gainFromLow" style="width:95px"><col id="col-sa-col-dropFromHigh" style="width:95px">
+          <col id="col-sa-col-eps" style="width:80px"><col id="col-sa-col-pe" style="width:80px"><col id="col-sa-col-industryPe" style="width:95px"><col id="col-sa-col-buyReco" style="width:90px"><col id="col-sa-col-fundamentalView" style="width:130px">
+          <col id="col-sa-col-bookValue" style="width:90px"><col id="col-sa-col-pb" style="width:80px"><col id="col-sa-col-industryPbv" style="width:95px"><col id="col-sa-col-yieldPct" style="width:90px">
+          <col id="col-sa-col-dividendYield" style="width:80px"><col id="col-sa-col-roe" style="width:75px"><col id="col-sa-col-roce" style="width:75px"><col id="col-sa-col-roa" style="width:75px"><col id="col-sa-col-debtToEquity" style="width:110px">
+          <col id="col-sa-col-promoterHolding" style="width:105px"><col id="col-sa-col-epsGrowth3y" style="width:100px"><col id="col-sa-col-epsGrowth5y" style="width:100px"><col id="col-sa-col-salesGrowth5y" style="width:100px">
+          <col id="col-sa-col-qtrProfitVar" style="width:105px"><col id="col-sa-col-qtrSalesVar" style="width:125px">
+          <col id="col-sa-col-faceValue" style="width:90px"><col id="col-sa-col-marketCap" style="width:110px"><col id="col-sa-col-marketCap5y" style="width:120px">
+          <col id="col-sa-col-intCoverage" style="width:110px"><col id="col-sa-col-fcfPrevAnn" style="width:130px">
+          <col id="col-sa-col-profitVar3y" style="width:115px"><col id="col-sa-col-profitVar5y" style="width:115px">
+          <col style="width:45px">
+        </colgroup>
+        <thead>
+          <tr>
+            <th class="left sortable resizable sticky-col" data-col="name">Stock / Symbol<span class="col-resizer"></span></th>
+            <th class="left sortable" data-col="sector">Sector</th>
+            <th class="left sortable" data-col="capCategory">Market Cap Category</th>
+            <th class="sortable" data-col="ltp">LTP</th>
+            <th class="left sortable" data-col="range52">52W Low / High</th>
+            <th class="sortable" data-col="gainFromLow">Gain from Low %</th>
+            <th class="sortable" data-col="dropFromHigh">Drop from High %</th>
+            <th class="sortable" data-col="eps">EPS</th>
+            <th class="sortable" data-col="pe">PE</th>
+            <th class="sortable" data-col="industryPe">Industry PE</th>
+            <th class="left sortable" data-col="buyReco">Buy Reco</th>
+            <th class="left sortable" data-col="fundamentalView">Fundamental View</th>
+            <th class="sortable" data-col="bookValue">Book Value</th>
+            <th class="sortable" data-col="pb">P/B</th>
+            <th class="sortable" data-col="industryPbv">Industry P/B</th>
+            <th class="sortable" data-col="yieldPct">Yield %</th>
+            <th class="sortable" data-col="dividendYield">Dividend Yield</th>
+            <th class="sortable" data-col="roe">ROE</th>
+            <th class="sortable" data-col="roce">ROCE</th>
+            <th class="sortable" data-col="roa">ROA</th>
+            <th class="sortable" data-col="debtToEquity">Debt to Equity</th>
+            <th class="sortable" data-col="promoterHolding">Promoter Holding</th>
+            <th class="sortable" data-col="epsGrowth3y">EPS Growth (3Y)</th>
+            <th class="sortable" data-col="epsGrowth5y">EPS Growth (5Y)</th>
+            <th class="sortable" data-col="salesGrowth5y">Sales Growth (5Y)</th>
+            <th class="sortable" data-col="qtrProfitVar">Quarterly Profit Growth</th>
+            <th class="sortable" data-col="qtrSalesVar">Quarterly Sales Growth</th>
+            <th class="sortable" data-col="faceValue">Face Value</th>
+            <th class="sortable" data-col="marketCap">Market Cap</th>
+            <th class="sortable" data-col="marketCap5y">Market Cap (5Y Ago)</th>
+            <th class="sortable" data-col="intCoverage">Interest Coverage</th>
+            <th class="sortable" data-col="fcfPrevAnn">Free Cash Flow (Previous FY)</th>
+            <th class="sortable" data-col="profitVar3y">Profit Growth (3Y)</th>
+            <th class="sortable" data-col="profitVar5y">Profit Growth (5Y)</th>
+            <th class="row-actions">—</th>
+          </tr>
+        </thead>
+        <tbody id="stockAnalysisTableBody"></tbody>
+      </table>
+    </div>
+
+    <div class="sa-pagination" id="saPagination"></div>
+
+    <!-- Mobile/tablet: horizontal swipe-card deck, one stock per card.
+         Same underlying rows/data as the desktop table above — see
+         renderStockAnalysisMobileDeck() in app.js. Desktop table and
+         this deck are mutually exclusive via the max-width:700px CSS
+         rule, never both rendered visibly at once. -->
+    <div class="sa-mobile-deck">
+      <div class="sa-mobile-scroller" id="saMobileScroller"></div>
+      <div class="sa-mobile-dots" id="saMobileDots"></div>
+      <p class="sa-mobile-hint">Swipe to browse holdings</p>
+      <div class="sa-mobile-pagination" id="saMobilePagination"></div>
+    </div>
+
+    <div class="sa-detail-panel" id="saDetailPanel"></div>
+
+    <div class="card" style="margin-top:16px;" id="intelligentInsightsCard">
+      <div class="ii-card-head">
+        <div class="ii-card-title"><span class="spark">✦</span> Intelligent Insights</div>
+        <div class="ii-card-badge">Equity = allocation + fundamentals</div>
+      </div>
+      <p class="section-sub" style="margin:6px 0 2px;">Combines each stock's current allocation (vs. your configured limit under Settings → Equity Allocation Limits) with the fundamentals above. Low allocation alone is never treated as a Buy signal, and high allocation alone is never treated as a Sell signal — click "Why?" on any stock for the full reasoning.</p>
+
+      <div id="iiAllocGrid" class="ii-alloc-grid"></div>
+      <div id="iiPortfolioSummary" class="ii-portfolio-summary"></div>
+
+      <div class="ii-filters-row">
+        <div id="iiFilterTabs" class="ii-filter-tabs"></div>
+        <div class="ii-filter-controls">
+          <select id="iiMarketCapFilter" class="filter-input">
+            <option value="">All Market Caps</option>
+            <option value="Large Cap">Large Cap</option>
+            <option value="Mid Cap">Mid Cap</option>
+            <option value="Small Cap">Small Cap</option>
+            <option value="Unclassified">Unclassified</option>
+          </select>
+          <select id="iiSortBy" class="filter-input">
+            <option value="score">Sort by: Score</option>
+            <option value="alloc">Sort by: Allocation vs Limit</option>
+            <option value="name">Sort by: Name</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="intelligentInsightsBody"></div>
+    </div>
+
+    <p class="settings-note">"Import Screener Data" reads an .xlsx with a header row (symbol, book_value, eps, industry_pe, roe, roce, etc. — same column names your Screener export uses) and matches each row to an Equity holding by Symbol. Re-importing replaces the whole Screener dataset. Click any row in the table above to see its full breakdown here.</p>
+  </section>
+
+    </main>
+
+    <footer class="app-footer">All data stays in this browser (localStorage) unless you export it or sign in to sync via Google. Nothing is sent to any server except live price lookups and, if signed in, your own Firestore document.</footer>
+  </div>
+</div>
+
+<nav class="mobile-bottom-nav" id="mobileBottomNav">
+  <button class="mobile-bottom-nav-item active" data-tab="dashboard"><span class="nav-icon">⌂</span>Dashboard</button>
+  <button class="mobile-bottom-nav-item" data-tab="portfolio"><span class="nav-icon">◧</span>Portfolio</button>
+  <button class="mobile-bottom-nav-item" data-tab="insights"><span class="nav-icon">✦</span>Insights</button>
+  <button class="mobile-bottom-nav-item" data-tab="stockanalysis"><span class="nav-icon">▤</span>Stocks</button>
+  <button class="mobile-bottom-nav-item" id="mobileMoreBtn"><span class="nav-icon">☰</span>More</button>
+</nav>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal-card">
+    <h3 id="modalTitle">Title</h3>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-footer" id="modalFooter"></div>
+  </div>
+</div>
+
+<!-- Mutual Fund detail drawer — right-side panel on desktop/tablet,
+     bottom sheet on mobile (see .drawer-overlay/.drawer-panel CSS).
+     Content is injected by openMFDrawer() in app.js. -->
+<div class="drawer-overlay" id="mfDrawerOverlay">
+  <div class="drawer-panel">
+    <div class="drawer-header">
+      <div class="drawer-header-title">Fund Details</div>
+      <button class="drawer-close" id="mfDrawerClose" title="Close" aria-label="Close">✕</button>
+    </div>
+    <div class="drawer-body" id="mfDrawerBody"></div>
+  </div>
+</div>
+
+<!-- Equity detail drawer — same shell as the Mutual Fund drawer
+     above (shared .drawer-overlay/.drawer-panel CSS), separate
+     element/id since the two tabs' drawers can't be open at once
+     but are otherwise independent. Content is injected by
+     openEqDrawer() in app.js. -->
+<div class="drawer-overlay" id="eqDrawerOverlay">
+  <div class="drawer-panel">
+    <div class="drawer-header">
+      <div class="drawer-header-title">Stock Details</div>
+      <button class="drawer-close" id="eqDrawerClose" title="Close" aria-label="Close">✕</button>
+    </div>
+    <div class="drawer-body" id="eqDrawerBody"></div>
+  </div>
+</div>
+
+<script src="app.js?v=2026-09-05-eq-redesign"></script>
+</body>
+</html>
