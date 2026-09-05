@@ -1105,7 +1105,7 @@
      table now fits comfortably in far less width. */
   #panel-mf table.data-table{min-width:760px;}
   #panel-gold table.data-table{min-width:1295px;}
-  #panel-stockanalysis table.data-table{min-width:3240px;}
+  #panel-stockanalysis table.data-table{min-width:860px;}
 
   /* Stock Analysis: Buy recommendation badge + Financial-sector P/B
      highlight bands (green < 1, yellow < 1.5, orange < 2 — strongest
@@ -1153,13 +1153,12 @@
   /* ---- Summary cards ---- */
   .sa-summary-grid{
     display:grid;
-    grid-template-columns:repeat(auto-fit, minmax(160px,1fr));
+    grid-template-columns:repeat(4, 1fr);
     gap:12px;
-    margin-bottom:18px;
+    margin-bottom:16px;
   }
   @media (max-width:700px){
     .sa-summary-grid{grid-template-columns:1fr 1fr;}
-    .sa-summary-grid > :nth-child(5){grid-column:1 / -1;}
   }
   .sa-stat-card{
     background:var(--surface);
@@ -1176,7 +1175,23 @@
   .sa-stat-card.accent-warn::before{background:var(--warning);}
   .sa-stat-card .sa-stat-label{font-size:12px;font-weight:500;color:var(--text-muted);margin-bottom:8px;display:flex;align-items:center;gap:5px;}
   .sa-stat-card .sa-stat-value{font-family:var(--font-mono);font-size:21px;font-weight:600;color:var(--text);}
+  .sa-stat-card .sa-stat-value.pos{color:var(--positive);}
+  .sa-stat-card .sa-stat-value.neg{color:var(--negative);}
   .sa-stat-card .sa-stat-sub{font-family:var(--font-mono);font-size:11px;color:var(--text-faint);margin-left:5px;font-weight:500;}
+
+  /* ---- Freshness line ---- */
+  .sa-freshness{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-faint);margin:-6px 0 14px;}
+  .sa-fresh-dot{width:6px;height:6px;border-radius:50%;background:var(--positive);flex:0 0 auto;}
+
+  /* ---- Filter chips + Market Cap / Sort dropdowns ---- */
+  .sa-filter-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;}
+  .sa-filter-chips{display:flex;gap:8px;flex-wrap:wrap;flex:1 1 auto;min-width:0;}
+  @media (max-width:700px){
+    .sa-filter-chips{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:2px;margin:0 -2px;padding-left:2px;}
+    .sa-filter-chips::-webkit-scrollbar{height:0;}
+    .sa-filter-chips .ii-filter-tab{flex:0 0 auto;}
+  }
+  .sa-filter-controls{display:flex;gap:8px;flex:0 0 auto;}
 
   #panel-stockanalysis .table-scroll{border-radius:var(--radius);}
   #panel-stockanalysis tbody tr{cursor:pointer;transition:background .12s ease;}
@@ -1193,6 +1208,18 @@
   #panel-stockanalysis .stock-cell-text{overflow:hidden;}
   #panel-stockanalysis .stock-cell-name{font-family:var(--font-display);font-weight:600;font-size:12.6px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   #panel-stockanalysis .stock-cell-sector{font-size:10.5px;color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  #panel-stockanalysis .sa-row-num{color:var(--text-faint);font-family:var(--font-mono);font-size:11.5px;text-align:center;}
+  #panel-stockanalysis .sa-sector-cell{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  #panel-stockanalysis td.row-actions{display:flex;align-items:center;justify-content:flex-end;gap:4px;border-bottom:none;}
+  #panel-stockanalysis .sa-row-open-btn{
+    background:none;border:none;color:var(--text-faint);cursor:pointer;
+    display:flex;align-items:center;justify-content:center;padding:4px;border-radius:6px;
+  }
+  #panel-stockanalysis .sa-row-open-btn:hover{color:var(--text);background:var(--surface-2);}
+  #panel-stockanalysis tbody tr:focus-visible{outline:2px solid var(--gold);outline-offset:-2px;}
+  .ii-score-ring.sa-score-ring-sm{width:34px;height:34px;}
+  .ii-score-ring.sa-score-ring-sm::before{inset:3px;}
+  .ii-score-ring.sa-score-ring-sm span{font-size:11px;}
 
   /* ---- 52-week range bar (built from existing low52/high52/ltp — no new data) ---- */
   .sa-range-cell{display:flex;flex-direction:column;gap:3px;min-width:110px;}
@@ -1274,45 +1301,65 @@
   }
 
   /* ============================================================
-     Stock Analysis — mobile/tablet swipeable card deck. Hidden on
-     desktop; replaces the generic stacked-card table treatment for
-     THIS tab only (the table itself is hidden below 700px and this
-     deck takes over) so it behaves like a native "swipe between
-     stocks" investment-app view rather than a shrunk table.
+     Stock Analysis — mobile/tablet stacked card list. Hidden on
+     desktop; a plain vertical stack (NOT the old horizontal swipe
+     deck, and NOT a shrunk table) so nothing ever scrolls sideways.
+     Shares the same #saPagination bar as the desktop table.
      ============================================================ */
-  .sa-mobile-deck{display:none;}
+  .sa-mobile-cards{display:none;flex-direction:column;gap:10px;}
   @media (max-width:700px){
     #panel-stockanalysis .table-scroll{display:none;}
-    #panel-stockanalysis .sa-pagination{display:none;}
-    .sa-mobile-deck{display:block;}
+    .sa-mobile-cards{display:flex;}
   }
-  .sa-mobile-scroller{
-    display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x mandatory;
-    padding:4px 4px 14px;margin:0 -4px;
-    -webkit-overflow-scrolling:touch;
-  }
-  .sa-mobile-scroller::-webkit-scrollbar{height:0;}
-  .sa-mobile-card{
-    flex:0 0 88%;scroll-snap-align:center;
+  .sa-mobile-cards .sa-mobile-card{
     background:linear-gradient(160deg, var(--surface-2), var(--surface));
     border:1px solid var(--border);border-radius:14px;
-    padding:16px 17px;cursor:pointer;
+    padding:14px 16px;cursor:pointer;
   }
-  .sa-mobile-card.sa-row-selected{border-color:var(--gold);}
-  .sa-mobile-card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:12px;}
-  .sa-mobile-card-name{font-family:var(--font-display);font-size:15px;font-weight:600;color:var(--text);}
-  .sa-mobile-card-sector{font-size:11px;color:var(--text-faint);margin-top:2px;}
-  .sa-mobile-card-price{font-family:var(--font-mono);font-size:19px;font-weight:600;color:var(--gold);text-align:right;}
-  .sa-mobile-card-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px;}
-  .sa-mobile-metric{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 9px;}
-  .sa-mobile-metric .l{font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-faint);margin-bottom:3px;}
-  .sa-mobile-metric .v{font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--text);}
-  .sa-mobile-card-footer{display:flex;justify-content:space-between;align-items:center;}
-  .sa-mobile-dots{display:flex;justify-content:center;gap:6px;margin-top:2px;}
-  .sa-mobile-dot{width:6px;height:6px;border-radius:50%;background:var(--border);transition:background .15s ease, width .15s ease;}
-  .sa-mobile-dot.active{background:var(--gold);width:16px;border-radius:3px;}
-  .sa-mobile-hint{text-align:center;font-size:10.5px;color:var(--text-faint);margin:-6px 0 12px;}
-  .sa-mobile-pagination{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:8px;}
+  .sa-mobile-cards .sa-mobile-card:focus-visible{outline:2px solid var(--gold);outline-offset:1px;}
+  .sa-mobile-card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px;}
+  .sa-mobile-card-top .stock-cell{flex:1 1 auto;min-width:0;}
+  .sa-mobile-card-name{font-family:var(--font-display);font-size:14.5px;font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .sa-mobile-card-sector{font-size:11px;color:var(--text-faint);margin-top:2px;display:flex;align-items:center;gap:6px;}
+  .sa-mobile-card-values{display:flex;justify-content:space-between;gap:10px;margin-bottom:10px;}
+  .sa-mobile-card-footer{display:flex;justify-content:space-between;align-items:center;margin-top:10px;}
+
+  /* ---- Drawer tabs (Overview / Financials / Growth / Ownership) ---- */
+  .sa-drawer-head-badges{display:flex;align-items:center;gap:10px;margin-bottom:16px;}
+  .sa-drawer-tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:16px;}
+  .sa-drawer-tab{
+    font-family:var(--font-body);font-size:12.5px;font-weight:600;color:var(--text-faint);
+    background:none;border:none;border-bottom:2px solid transparent;
+    padding:8px 4px;margin-bottom:-1px;cursor:pointer;
+  }
+  .sa-drawer-tab:hover{color:var(--text);}
+  .sa-drawer-tab.active{color:var(--gold);border-bottom-color:var(--gold);}
+  .sa-drawer-tab-body .sa-detail-section{margin-bottom:14px;}
+  .sa-drawer-tab-body .sa-detail-sections{margin-bottom:0;}
+
+  /* ---- "Why this recommendation?" + Fundamental Signals (drawer only) ---- */
+  .sa-reason-box{font-size:12.5px;line-height:1.55;color:var(--text-muted);}
+  .sa-signals-row{display:flex;gap:18px;flex-wrap:wrap;}
+  .sa-signal{display:flex;align-items:center;gap:7px;}
+  .sa-signal .l{font-size:11.5px;color:var(--text-muted);}
+  .sa-signal .v{font-size:12px;font-weight:600;color:var(--text);}
+  .sa-signal .dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto;}
+  .sa-signal .dot-pos{background:var(--positive);}
+  .sa-signal .dot-neu{background:var(--text-faint);}
+  .sa-signal .dot-neg{background:var(--negative);}
+  .sa-signal .dot-none{background:var(--border);}
+
+  .sa-range-cell-lg .sa-range-cell{min-width:0;}
+  .sa-range-cell-lg .sa-range-track{height:6px;}
+  .sa-range-cell-lg .sa-range-dot{width:11px;height:11px;}
+
+  .sa-ath-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .sa-ath-row input{
+    width:120px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
+    color:var(--text);font-family:var(--font-mono);font-size:12.5px;padding:7px 9px;
+  }
+  .sa-ath-row input:focus{border-color:var(--gold);outline:none;}
+  .sa-ath-note{font-size:11.5px;}
 
   /* Frozen first column (Name/Symbol) — stays put while the rest of a
      wide table scrolls horizontally. It's the leftmost column so its
@@ -2707,92 +2754,66 @@
   <!-- ============ STOCK ANALYSIS ============ -->
   <section class="panel" id="panel-stockanalysis">
     <h2 class="section-title">Stock Analysis</h2>
-    <p class="section-sub">Fundamentals for your Equity holdings — Stock/Symbol, Sector and LTP come straight from the Equity tab; everything else is joined in from imported Screener data by Symbol. PE, P/B and Yield are always calculated here, never taken pre-computed from the source file. ROA is shown for Financial-sector stocks only. Market Cap Category (Large/Mid/Small) is derived from the imported Market Cap: Large ≥ ₹20,000 Cr, Mid ₹5,000–20,000 Cr, Small &lt; ₹5,000 Cr.</p>
+    <p class="section-sub">Simple insights to track the quality and valuation of your equity holdings.</p>
+    <div class="sa-freshness" id="saFreshness"></div>
 
     <div class="sa-summary-grid" id="saSummaryGrid"></div>
 
-    <div class="table-toolbar">
+    <div class="table-toolbar" id="intelligentInsightsCard">
       <div class="left-group">
         <div class="sa-search-wrap">
-          <input type="text" class="filter-input" id="stockAnalysisFilter" placeholder="Search by name, sector, buy/hold...">
+          <input type="text" class="filter-input" id="stockAnalysisFilter" placeholder="Search stocks...">
           <button type="button" class="filter-clear-btn" data-clear-target="stockAnalysisFilter" title="Clear search" aria-label="Clear search">✕</button>
         </div>
-        <button class="btn" id="btnStockAnalysisColumns" title="Choose which columns are shown">☰ Columns</button>
         <button class="btn btn-ghost" id="btnStockAnalysisHidden" title="Show/restore stocks you've removed from this tab" style="display:none">Hidden (0)</button>
         <button class="btn" id="btnImportScreener">Import Screener Data</button>
         <input type="file" id="importScreenerFile" accept=".xlsx,.xls">
         <span class="status-tag" id="screenerImportStatus"></span>
-        <button class="btn" id="btnBankingMetrics" title="For Financial-sector holdings: generates a research prompt to paste into your Claude chat, then saves the reply you paste back — no API key or cost involved.">🏦 Banking Metrics</button>
+        <button class="btn" id="btnBankingMetrics" title="For Financial-sector holdings: generates a research prompt to paste into your Claude chat, then saves the reply you paste back — no API key or cost involved.">Banking Metrics</button>
       </div>
     </div>
-    <div class="mobile-sort-row">
-      <select id="stockAnalysisMobileSort">
-        <option value="">Sort: default</option>
-        <option value="name">Name</option>
-        <option value="sector">Sector</option>
-        <option value="capCategory">Market Cap Category</option>
-        <option value="ltp">LTP</option>
-        <option value="pe">PE</option>
-        <option value="industryPe">Industry PE</option>
-        <option value="pb">P/B</option>
-        <option value="roe">ROE %</option>
-        <option value="roce">ROCE %</option>
-      </select>
-      <button class="mobile-sort-dir" id="stockAnalysisMobileSortDir" title="Toggle ascending/descending">↑</button>
+
+    <div class="sa-filter-row">
+      <div class="sa-filter-chips" id="saFilterChips"></div>
+      <div class="sa-filter-controls">
+        <select id="saCapFilter" class="filter-input">
+          <option value="">All Market Caps</option>
+          <option value="Large Cap">Large Cap</option>
+          <option value="Mid Cap">Mid Cap</option>
+          <option value="Small Cap">Small Cap</option>
+          <option value="Unclassified">Unclassified</option>
+        </select>
+        <select id="saSortBy" class="filter-input">
+          <option value="score">Sort by: Score</option>
+          <option value="priceChange">Sort by: Today's Change</option>
+          <option value="name">Sort by: Name</option>
+        </select>
+      </div>
     </div>
 
     <div class="table-scroll">
-      <table class="data-table">
+      <table class="data-table sa-table">
         <colgroup>
+          <col style="width:34px">
           <col id="col-sa-name" style="width:190px">
-          <col id="col-sa-col-sector" style="width:120px"><col id="col-sa-col-capCategory" style="width:100px"><col id="col-sa-col-ltp" style="width:90px">
-          <col id="col-sa-col-range52" style="width:140px"><col id="col-sa-col-gainFromLow" style="width:95px"><col id="col-sa-col-dropFromHigh" style="width:95px">
-          <col id="col-sa-col-eps" style="width:80px"><col id="col-sa-col-pe" style="width:80px"><col id="col-sa-col-industryPe" style="width:95px"><col id="col-sa-col-buyReco" style="width:90px"><col id="col-sa-col-fundamentalView" style="width:130px">
-          <col id="col-sa-col-bookValue" style="width:90px"><col id="col-sa-col-pb" style="width:80px"><col id="col-sa-col-industryPbv" style="width:95px"><col id="col-sa-col-yieldPct" style="width:90px">
-          <col id="col-sa-col-dividendYield" style="width:80px"><col id="col-sa-col-roe" style="width:75px"><col id="col-sa-col-roce" style="width:75px"><col id="col-sa-col-roa" style="width:75px"><col id="col-sa-col-debtToEquity" style="width:110px">
-          <col id="col-sa-col-promoterHolding" style="width:105px"><col id="col-sa-col-epsGrowth3y" style="width:100px"><col id="col-sa-col-epsGrowth5y" style="width:100px"><col id="col-sa-col-salesGrowth5y" style="width:100px">
-          <col id="col-sa-col-qtrProfitVar" style="width:105px"><col id="col-sa-col-qtrSalesVar" style="width:125px">
-          <col id="col-sa-col-faceValue" style="width:90px"><col id="col-sa-col-marketCap" style="width:110px"><col id="col-sa-col-marketCap5y" style="width:120px">
-          <col id="col-sa-col-intCoverage" style="width:110px"><col id="col-sa-col-fcfPrevAnn" style="width:130px">
-          <col id="col-sa-col-profitVar3y" style="width:115px"><col id="col-sa-col-profitVar5y" style="width:115px">
-          <col style="width:45px">
+          <col style="width:150px">
+          <col style="width:90px">
+          <col style="width:100px">
+          <col style="width:140px">
+          <col style="width:150px">
+          <col style="width:64px">
+          <col style="width:64px">
         </colgroup>
         <thead>
           <tr>
-            <th class="left sortable resizable sticky-col" data-col="name">Stock / Symbol<span class="col-resizer"></span></th>
-            <th class="left sortable" data-col="sector">Sector</th>
-            <th class="left sortable" data-col="capCategory">Market Cap Category</th>
-            <th class="sortable" data-col="ltp">LTP</th>
-            <th class="left sortable" data-col="range52">52W Low / High</th>
-            <th class="sortable" data-col="gainFromLow">Gain from Low %</th>
-            <th class="sortable" data-col="dropFromHigh">Drop from High %</th>
-            <th class="sortable" data-col="eps">EPS</th>
-            <th class="sortable" data-col="pe">PE</th>
-            <th class="sortable" data-col="industryPe">Industry PE</th>
-            <th class="left sortable" data-col="buyReco">Buy Reco</th>
-            <th class="left sortable" data-col="fundamentalView">Fundamental View</th>
-            <th class="sortable" data-col="bookValue">Book Value</th>
-            <th class="sortable" data-col="pb">P/B</th>
-            <th class="sortable" data-col="industryPbv">Industry P/B</th>
-            <th class="sortable" data-col="yieldPct">Yield %</th>
-            <th class="sortable" data-col="dividendYield">Dividend Yield</th>
-            <th class="sortable" data-col="roe">ROE</th>
-            <th class="sortable" data-col="roce">ROCE</th>
-            <th class="sortable" data-col="roa">ROA</th>
-            <th class="sortable" data-col="debtToEquity">Debt to Equity</th>
-            <th class="sortable" data-col="promoterHolding">Promoter Holding</th>
-            <th class="sortable" data-col="epsGrowth3y">EPS Growth (3Y)</th>
-            <th class="sortable" data-col="epsGrowth5y">EPS Growth (5Y)</th>
-            <th class="sortable" data-col="salesGrowth5y">Sales Growth (5Y)</th>
-            <th class="sortable" data-col="qtrProfitVar">Quarterly Profit Growth</th>
-            <th class="sortable" data-col="qtrSalesVar">Quarterly Sales Growth</th>
-            <th class="sortable" data-col="faceValue">Face Value</th>
-            <th class="sortable" data-col="marketCap">Market Cap</th>
-            <th class="sortable" data-col="marketCap5y">Market Cap (5Y Ago)</th>
-            <th class="sortable" data-col="intCoverage">Interest Coverage</th>
-            <th class="sortable" data-col="fcfPrevAnn">Free Cash Flow (Previous FY)</th>
-            <th class="sortable" data-col="profitVar3y">Profit Growth (3Y)</th>
-            <th class="sortable" data-col="profitVar5y">Profit Growth (5Y)</th>
+            <th>#</th>
+            <th class="left sticky-col">Stock</th>
+            <th class="left">Sector</th>
+            <th>Price</th>
+            <th>Today</th>
+            <th class="left">52W Range</th>
+            <th class="left">Recommendation</th>
+            <th>Score</th>
             <th class="row-actions">—</th>
           </tr>
         </thead>
@@ -2800,54 +2821,16 @@
       </table>
     </div>
 
+    <!-- Mobile/tablet: a plain stacked list of cards, one per holding —
+         NOT a shrunk table, and NOT the old horizontal swipe deck. Same
+         underlying insights as the desktop table above (see
+         renderStockAnalysisMobileCards() in app.js); the two are
+         mutually exclusive via the max-width:700px CSS rule. -->
+    <div class="sa-mobile-cards" id="saMobileCards"></div>
+
     <div class="sa-pagination" id="saPagination"></div>
 
-    <!-- Mobile/tablet: horizontal swipe-card deck, one stock per card.
-         Same underlying rows/data as the desktop table above — see
-         renderStockAnalysisMobileDeck() in app.js. Desktop table and
-         this deck are mutually exclusive via the max-width:700px CSS
-         rule, never both rendered visibly at once. -->
-    <div class="sa-mobile-deck">
-      <div class="sa-mobile-scroller" id="saMobileScroller"></div>
-      <div class="sa-mobile-dots" id="saMobileDots"></div>
-      <p class="sa-mobile-hint">Swipe to browse holdings</p>
-      <div class="sa-mobile-pagination" id="saMobilePagination"></div>
-    </div>
-
-    <div class="sa-detail-panel" id="saDetailPanel"></div>
-
-    <div class="card" style="margin-top:16px;" id="intelligentInsightsCard">
-      <div class="ii-card-head">
-        <div class="ii-card-title"><span class="spark">✦</span> Intelligent Insights</div>
-        <div class="ii-card-badge">Equity = allocation + fundamentals</div>
-      </div>
-      <p class="section-sub" style="margin:6px 0 2px;">Combines each stock's current allocation (vs. your configured limit under Settings → Equity Allocation Limits) with the fundamentals above. Low allocation alone is never treated as a Buy signal, and high allocation alone is never treated as a Sell signal — click "Why?" on any stock for the full reasoning.</p>
-
-      <div id="iiAllocGrid" class="ii-alloc-grid"></div>
-      <div id="iiPortfolioSummary" class="ii-portfolio-summary"></div>
-
-      <div class="ii-filters-row">
-        <div id="iiFilterTabs" class="ii-filter-tabs"></div>
-        <div class="ii-filter-controls">
-          <select id="iiMarketCapFilter" class="filter-input">
-            <option value="">All Market Caps</option>
-            <option value="Large Cap">Large Cap</option>
-            <option value="Mid Cap">Mid Cap</option>
-            <option value="Small Cap">Small Cap</option>
-            <option value="Unclassified">Unclassified</option>
-          </select>
-          <select id="iiSortBy" class="filter-input">
-            <option value="score">Sort by: Score</option>
-            <option value="alloc">Sort by: Allocation vs Limit</option>
-            <option value="name">Sort by: Name</option>
-          </select>
-        </div>
-      </div>
-
-      <div id="intelligentInsightsBody"></div>
-    </div>
-
-    <p class="settings-note">"Import Screener Data" reads an .xlsx with a header row (symbol, book_value, eps, industry_pe, roe, roce, etc. — same column names your Screener export uses) and matches each row to an Equity holding by Symbol. Re-importing replaces the whole Screener dataset. Click any row in the table above to see its full breakdown here.</p>
+    <p class="settings-note">"Import Screener Data" reads an .xlsx with a header row (symbol, book_value, eps, industry_pe, roe, roce, etc. — same column names your Screener export uses) and matches each row to an Equity holding by Symbol. Re-importing replaces the whole Screener dataset. Click any row (or tap a card) to see its full breakdown — valuation, health, growth, and everything else — in the detail panel.</p>
   </section>
 
     </main>
@@ -2900,6 +2883,20 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-09-05-eq-redesign"></script>
+<!-- Stock Analysis detail drawer — same shell as the Equity/Mutual
+     Fund drawers above (shared .drawer-overlay/.drawer-panel CSS).
+     Content (Overview/Financials/Growth/Ownership tabs) is injected
+     by renderSaDrawerBody() in app.js. -->
+<div class="drawer-overlay" id="saDrawerOverlay">
+  <div class="drawer-panel" role="dialog" aria-modal="true" aria-label="Stock details">
+    <div class="drawer-header">
+      <div class="drawer-header-title">Stock Details</div>
+      <button class="drawer-close" id="saDrawerClose" title="Close" aria-label="Close">✕</button>
+    </div>
+    <div class="drawer-body" id="saDrawerBody"></div>
+  </div>
+</div>
+
+<script src="app.js?v=2026-09-05-sa-redesign"></script>
 </body>
 </html>

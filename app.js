@@ -452,6 +452,25 @@ function fmtINRCompactSigned(n, decimals) {
   return base;
 }
 
+// Plain "updated N days/hours ago" phrasing for a stored ISO timestamp
+// — used by Stock Analysis's freshness line (fundamentals import date,
+// live price refresh time). Returns null when there's no timestamp yet
+// (e.g. Screener data has never been imported) so the caller can show
+// its own "not yet" wording instead of a broken date.
+function formatRelativeAgo(iso) {
+  if (!iso) return null;
+  const then = new Date(iso).getTime();
+  if (isNaN(then)) return null;
+  const diffMs = Date.now() - then;
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} minute${mins === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
 function plClass(n) {
   return n > 0 ? "pos" : n < 0 ? "neg" : "muted";
 }
@@ -473,7 +492,15 @@ const ICON_PATHS = {
   "wallet": '<path d="M20 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-3"/><path d="M20 12a2 2 0 0 0 0 4h1a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1Z"/>',
   "trending-up": '<path d="M22 7 13.5 15.5 8.5 10.5 2 17"/><path d="M16 7h6v6"/>',
   "trending-down": '<path d="M22 17 13.5 8.5 8.5 13.5 2 7"/><path d="M16 17h6v-6"/>',
-  "percent": '<path d="M19 5 5 19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>'
+  "percent": '<path d="M19 5 5 19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>',
+  "search": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  "layers": '<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>',
+  "sliders-horizontal": '<line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/>',
+  "arrow-up-down": '<path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/>',
+  "chevron-right": '<path d="m9 18 6-6-6-6"/>',
+  "x": '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  "users": '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  "activity": '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>'
 };
 function icon(name, size, cls) {
   size = size || 16;
@@ -2168,6 +2195,12 @@ async function refreshEquityPrices() {
       row.marketDataStale = true;
     }
   });
+  // Distinct from state.lastSaved (which just tracks the last write to
+  // localStorage/Firestore for ANY reason) — this specifically marks
+  // when live prices last actually refreshed, so the Stock Analysis
+  // "Prices updated ..." freshness line reflects a real cycle rather
+  // than a hardcoded "just now" that would keep saying that forever.
+  state.lastPriceRefreshAt = new Date().toISOString();
   saveState();
   return { ok, fail: failedRows.length, failedRows };
 }
@@ -5267,15 +5300,28 @@ function fundamentalHealthVerdict(d, bankingLatest) {
   return "neutral";
 }
 
+// Multi-year trend signals (EPS growth 3Y/5Y, Sales growth 5Y, Profit
+// variance 3Y) are a far more reliable read on genuine business growth
+// than a single quarter's profit number, which can swing on one-off
+// write-offs, a high/low base a year ago, or timing of orders — so
+// qtrProfitVar is weighted at half of every multi-year signal rather
+// than counting equally in the average. No signal is dropped and no
+// new data is introduced; this only changes how the existing five
+// figures are combined into Strong/Neutral/Weak.
 function fundamentalGrowthVerdict(d) {
-  const signals = [];
-  if (d.epsGrowth3y !== null) signals.push(d.epsGrowth3y >= 12 ? 1 : d.epsGrowth3y >= 0 ? 0 : -1);
-  if (d.epsGrowth5y !== null) signals.push(d.epsGrowth5y >= 12 ? 1 : d.epsGrowth5y >= 0 ? 0 : -1);
-  if (d.profitVar3y !== null) signals.push(d.profitVar3y >= 12 ? 1 : d.profitVar3y >= 0 ? 0 : -1);
-  if (d.salesGrowth5y !== null) signals.push(d.salesGrowth5y >= 10 ? 1 : d.salesGrowth5y >= 0 ? 0 : -1);
-  if (d.qtrProfitVar !== null) signals.push(d.qtrProfitVar >= 10 ? 1 : d.qtrProfitVar >= 0 ? 0 : -1);
-  if (signals.length === 0) return "unknown";
-  const avg = signals.reduce((a, b) => a + b, 0) / signals.length;
+  const weighted = [];
+  const push = (val, threshold, weight) => {
+    if (val === null) return;
+    weighted.push({ signal: val >= threshold ? 1 : val >= 0 ? 0 : -1, weight });
+  };
+  push(d.epsGrowth3y, 12, 1);
+  push(d.epsGrowth5y, 12, 1);
+  push(d.profitVar3y, 12, 1);
+  push(d.salesGrowth5y, 10, 1);
+  push(d.qtrProfitVar, 10, 0.5);
+  if (weighted.length === 0) return "unknown";
+  const totalWeight = weighted.reduce((s, w) => s + w.weight, 0);
+  const avg = weighted.reduce((s, w) => s + w.signal * w.weight, 0) / totalWeight;
   if (avg >= 0.4) return "strong";
   if (avg <= -0.4) return "weak";
   return "neutral";
@@ -5349,7 +5395,18 @@ function computeStockInsight(row, screenerMap) {
   }
 
   const negatives = [valuation === "unattractive", health === "weak", growth === "weak"].filter(Boolean).length;
-  const positives = [valuation === "attractive", health === "strong", growth === "strong"].filter(Boolean).length;
+  let positives = [valuation === "attractive", health === "strong", growth === "strong"].filter(Boolean).length;
+
+  // All-time-high drawdown: a stock trading 15%+ below its (manually
+  // recorded) all-time high is a buying-opportunity signal in its own
+  // right, independent of the Valuation/Health/Growth engine above.
+  // It never manufactures a recommendation out of nothing — it only
+  // nudges an already-clean read (no negatives, at least 2 of the 3
+  // lenses known) a step further toward Consider Adding — and is
+  // always called out in the reason text whenever the final call is
+  // Consider Adding or Watch (see the end of this function).
+  const athDrawdownPct = (d.dropFromATH !== null && d.dropFromATH >= 15) ? d.dropFromATH : null;
+  if (athDrawdownPct !== null && negatives === 0 && knownCount >= 2) positives += 1;
 
   let category, categoryClass, reason;
 
@@ -5405,7 +5462,15 @@ function computeStockInsight(row, screenerMap) {
     }
   }
 
-  return { row, category, categoryClass, allocPct, allocMax, allocStatus, reason, d, screener, valuation, health, growth, bankingLatest, capCategory };
+  // Any stock actually recommended to add to or keep watching gets its
+  // all-time-high drawdown (when it qualifies) mentioned in plain
+  // language, per the requirement that every Buy/Watch suggestion
+  // somewhere states how far the stock has fallen from its high.
+  if (athDrawdownPct !== null && (category === "Consider Adding" || category === "Watch")) {
+    reason += ` Also trading ${fmtNum(athDrawdownPct, 1)}% below its recorded all-time high of ₹${fmtNum(d.athPrice, 2)} — a level some investors treat as an added buying opportunity.`;
+  }
+
+  return { row, category, categoryClass, allocPct, allocMax, allocStatus, reason, d, screener, valuation, health, growth, bankingLatest, capCategory, athDrawdownPct };
 }
 
 // Six DISPLAY buckets shown as collapsible sections/filter tabs.
@@ -5946,12 +6011,20 @@ function stockAnalysisDerived(equityRow, screener) {
   const gainFromLow = (low52 !== null && low52 > 0 && ltp > 0) ? ((ltp - low52) / low52) * 100 : null;
   const dropFromHigh = (high52 !== null && high52 > 0 && ltp > 0) ? ((high52 - ltp) / high52) * 100 : null;
 
+  // All-Time High: no automated source exists for this anywhere in the
+  // app (Screener's file has no ATH column, and the live-price feed
+  // only carries 52-week High/Low) — it's a manually-entered figure per
+  // stock (see the Stock Analysis detail drawer's "All-Time High"
+  // field), used only to compute how far the price has fallen from it.
+  const athPrice = (equityRow.athPrice !== undefined && equityRow.athPrice !== null && equityRow.athPrice !== "") ? Number(equityRow.athPrice) : null;
+  const dropFromATH = (athPrice !== null && athPrice > 0 && ltp > 0) ? ((athPrice - ltp) / athPrice) * 100 : null;
+
   const marketCap = screener ? screener.market_cap : null;
   const capCategory = marketCapCategory(marketCap);
 
   return {
     ltp, sector, isFinancial,
-    low52, high52, gainFromLow, dropFromHigh,
+    low52, high52, gainFromLow, dropFromHigh, athPrice, dropFromATH,
     // Live OHLC/Prev Close, read straight off the Equity row that this
     // Stock Analysis row is joined from (same live-price refresh, no
     // separate fetch). Day Change % is always derived from LTP/Prev
@@ -6299,72 +6372,15 @@ const STOCK_ANALYSIS_COLUMNS = [
 // Shows/hides whole columns by toggling `visibility: collapse` on
 // each <col> in the Stock Analysis <colgroup> — this keeps table
 // structure/widths intact for the columns that stay visible, unlike
-// `display:none` on individual cells which would misalign every row.
-// Shows/hides whole columns. Earlier this toggled `visibility: collapse`
-// on each <col>, but that CSS value is unreliably implemented for table
-// columns across browsers (Chrome in particular often fails to actually
-// reclaim the column's width, leaving a blank gap where the "hidden"
-// column used to be) — so instead this injects real `display: none`
-// rules targeting the exact <th data-col="..."> and <td data-label="...">
-// elements for each hidden column, which every browser handles
-// correctly and which also fully reclaims the width even under
-// table-layout:fixed.
-let stockAnalysisColStyleEl = null;
-function applyStockAnalysisColumnVisibility() {
-  if (!stockAnalysisColStyleEl) {
-    stockAnalysisColStyleEl = document.createElement("style");
-    stockAnalysisColStyleEl.id = "stockAnalysisColStyle";
-    document.head.appendChild(stockAnalysisColStyleEl);
-  }
-  const hidden = new Set(state.stockAnalysisHiddenCols || []);
-  const rules = STOCK_ANALYSIS_COLUMNS
-    .filter(col => hidden.has(col.key))
-    .map(col => `#panel-stockanalysis table.data-table th[data-col="${col.key}"], #panel-stockanalysis table.data-table td[data-label="${col.label}"] { display: none !important; }`)
-    .join("\n");
-  stockAnalysisColStyleEl.textContent = rules;
-}
-
-function openStockAnalysisColumnsModal() {
-  const hidden = new Set(state.stockAnalysisHiddenCols || []);
-  const checkboxesHTML = STOCK_ANALYSIS_COLUMNS.map(col => `
-    <label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;">
-      <input type="checkbox" data-col-key="${col.key}" ${hidden.has(col.key) ? "" : "checked"}>
-      <span>${escapeAttr(col.label)}</span>
-    </label>
-  `).join("");
-  const html = `
-    <p class="settings-note" style="margin-top:0">Choose which columns to show on the Stock Analysis table. "Stock / Symbol" is always shown.</p>
-    <div class="settings-actions" style="margin-bottom:10px;">
-      <button class="btn btn-sm" id="saColsSelectAll">Select all</button>
-      <button class="btn btn-sm" id="saColsSelectNone">Select none</button>
-    </div>
-    <div id="saColsList">${checkboxesHTML}</div>
-  `;
-  openModal("Stock Analysis — Columns", html, [
-    { label: "Cancel", onClick: closeModal },
-    {
-      label: "Apply", primary: true, onClick: () => {
-        const checked = new Set(
-          Array.from(document.querySelectorAll('#saColsList input[type=checkbox]:checked')).map(i => i.dataset.colKey)
-        );
-        state.stockAnalysisHiddenCols = STOCK_ANALYSIS_COLUMNS
-          .map(c => c.key)
-          .filter(k => !checked.has(k));
-        saveState();
-        applyStockAnalysisColumnVisibility();
-        closeModal();
-      }
-    }
-  ]);
-  document.getElementById("saColsSelectAll").addEventListener("click", () => {
-    document.querySelectorAll('#saColsList input[type=checkbox]').forEach(i => i.checked = true);
-  });
-  document.getElementById("saColsSelectNone").addEventListener("click", () => {
-    document.querySelectorAll('#saColsList input[type=checkbox]').forEach(i => i.checked = false);
-  });
-}
-
-document.getElementById("btnStockAnalysisColumns").addEventListener("click", openStockAnalysisColumnsModal);
+// The redesigned Stock Analysis table has a fixed, deliberately small
+// column set (see renderStockAnalysis() below) — a "choose which
+// columns to show" feature no longer makes sense once there are only
+// 8 of them, so the old per-column visibility toggle (which injected
+// display:none rules for whichever of the previous 30+ columns were
+// hidden) has been retired along with the "☰ Columns" toolbar button.
+// state.stockAnalysisHiddenCols itself is left untouched in case it's
+// ever needed again — nothing here deletes portfolio data, only this
+// one display feature.
 
 // Shows/hides the "Hidden (N)" toolbar button and keeps its count
 // current — called on every renderStockAnalysis() so it can never go
@@ -6900,173 +6916,311 @@ function renderBankingMetricsSectionHTML(row, d) {
   `;
 }
 
+/* ============================================================
+   STOCK ANALYSIS — redesigned main render (simple/modern brokerage-
+   style list + detail drawer). Every number here still comes from
+   computeStockInsight()/stockAnalysisDerived() — the actual
+   Valuation/Health/Growth/Allocation → Recommendation logic is
+   completely untouched by this redesign; only how it's presented
+   changes. Replaces the old 34-column table + separate "Intelligent
+   Insights" card with one unified, filterable list, a compact 8-field
+   row, and everything else moved into the per-stock detail drawer.
+   ============================================================ */
+
+// Pure view state for the new toolbar — never persisted, never fed
+// back into any calculation. Category/cap filters + search box narrow
+// which rows are shown; sort changes only their order.
+let saUI = { catFilter: "All", capFilter: "", sort: "score" };
+
+// Reuses the exact same six display buckets (and colors/icons)
+// Intelligent Insights already used — see INSIGHT_CATEGORY_ORDER —
+// since the new Recommendation pill needs the identical vocabulary.
+const SA_CATEGORY_ORDER = INSIGHT_CATEGORY_ORDER;
+
+function renderStockAnalysisFreshness() {
+  const el = document.getElementById("saFreshness");
+  if (!el) return;
+  const fundAgo = formatRelativeAgo(state.screenerImportedAt);
+  const priceAgo = formatRelativeAgo(state.lastPriceRefreshAt);
+  const fundText = fundAgo ? `Fundamentals updated ${fundAgo}` : "Fundamentals not imported yet";
+  // Fundamentals only change on a Screener re-import — never implied to
+  // be live — while price freshness reflects the real 30-second refresh
+  // cycle (state.lastPriceRefreshAt), not a hardcoded "just now".
+  const priceText = state.equity.length > 0 && priceAgo ? ` · Prices updated ${priceAgo}` : "";
+  el.innerHTML = `<span class="sa-fresh-dot"></span>${escapeAttr(fundText)}${escapeAttr(priceText)}`;
+}
+
+// Four summary cards (real counts, never hardcoded) — Stocks Analysed,
+// Consider Adding, Watch, Reduce/Sell — computed over every INSIGHT
+// currently passing the excluded-stocks filter (search/category/cap
+// filters don't shrink these, so the cards don't jump around as
+// someone types or picks a chip).
+function renderStockAnalysisSummaryV2(insights) {
+  const el = document.getElementById("saSummaryGrid");
+  if (!el) return;
+  const total = insights.length;
+  const countOf = (cat) => insights.filter(ins => (ins.insufficientData ? "Insufficient Data" : ins.category) === cat).length;
+  const addN = countOf("Consider Adding"), watchN = countOf("Watch"), reduceN = countOf("Reduce / Sell");
+  const pct = (n) => total > 0 ? fmtNum((n / total) * 100, 0) + "%" : "0%";
+  el.innerHTML = `
+    <div class="sa-stat-card accent-blue">
+      <div class="sa-stat-label">${icon("layers", 14)} Stocks Analysed</div>
+      <div class="sa-stat-value">${total}</div>
+    </div>
+    <div class="sa-stat-card accent-pos">
+      <div class="sa-stat-label">${icon("trending-up", 14)} Consider Adding</div>
+      <div class="sa-stat-value pos">${addN}<span class="sa-stat-sub">${pct(addN)}</span></div>
+    </div>
+    <div class="sa-stat-card accent-warn">
+      <div class="sa-stat-label">${icon("eye", 14)} Watch</div>
+      <div class="sa-stat-value">${watchN}<span class="sa-stat-sub">${pct(watchN)}</span></div>
+    </div>
+    <div class="sa-stat-card ${reduceN > 0 ? "accent-neg" : "accent-blue"}">
+      <div class="sa-stat-label">${icon("trending-down", 14)} Reduce / Sell</div>
+      <div class="sa-stat-value${reduceN > 0 ? " neg" : ""}">${reduceN}<span class="sa-stat-sub">${pct(reduceN)}</span></div>
+    </div>
+  `;
+}
+
+// Filter chips — "All (N)" plus the six categories, gold-accented when
+// selected. Counts are real (computed from the current insight list),
+// never mock data.
+function renderStockAnalysisFilterChips(insights) {
+  const el = document.getElementById("saFilterChips");
+  if (!el) return;
+  const counts = { All: insights.length };
+  SA_CATEGORY_ORDER.forEach(c => { counts[c.key] = 0; });
+  insights.forEach(ins => {
+    const k = ins.insufficientData ? "Insufficient Data" : ins.category;
+    counts[k] = (counts[k] || 0) + 1;
+  });
+  const chips = [{ key: "All", label: "All" }, ...SA_CATEGORY_ORDER.map(c => ({ key: c.key, label: c.key }))];
+  el.innerHTML = chips.map(c => `
+    <button type="button" class="ii-filter-tab${saUI.catFilter === c.key ? " active" : ""}" data-sa-filter-cat="${escapeAttr(c.key)}">
+      ${escapeAttr(c.label)} (${counts[c.key] || 0})
+    </button>
+  `).join("");
+  el.querySelectorAll("[data-sa-filter-cat]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      saUI.catFilter = btn.dataset.saFilterCat;
+      tableUI.stockanalysis.page = 1;
+      renderStockAnalysis();
+    });
+  });
+}
+
+// Wires the two persistent toolbar <select> controls once at startup —
+// same pattern/reasoning as setupIntelligentInsightsControls() before
+// it (kept out of the innerHTML-rebuilt parts of the render so a
+// listener is never re-added on every 30-second auto-refresh).
+function setupStockAnalysisControls() {
+  const capSelect = document.getElementById("saCapFilter");
+  const sortSelect = document.getElementById("saSortBy");
+  if (capSelect) capSelect.addEventListener("change", () => { saUI.capFilter = capSelect.value; tableUI.stockanalysis.page = 1; renderStockAnalysis(); });
+  if (sortSelect) sortSelect.addEventListener("change", () => { saUI.sort = sortSelect.value; renderStockAnalysis(); });
+}
+
+// Recommendation pill — reuses the exact same .ii-cat-* badge classes/
+// colors Intelligent Insights already used (green/blue/amber/red/muted
+// for Consider Adding/Hold/Watch/Reduce-Sell/No Action/Insufficient
+// Data), so no new color language is introduced for this redesign.
+function saCategoryPillHTML(ins) {
+  const key = ins.insufficientData ? "Insufficient Data" : ins.category;
+  const cfg = SA_CATEGORY_ORDER.find(c => c.key === key) || { cls: ins.categoryClass || "none" };
+  return `<span class="ii-cat-badge ii-cat-${cfg.cls}">${escapeAttr(key)}</span>`;
+}
+
+// Score ring — the same 0-100 gauge/coloring computeInsightScoreDisplay()
+// already produced for Intelligent Insights, just shown smaller inline
+// in the row instead of a whole grid cell. Nothing recalculated.
+function saScoreRingHTML(ins, small) {
+  const score = ins.insufficientData ? { score: null, label: "—", cls: "none" } : computeInsightScoreDisplay(ins.valuation, ins.health, ins.growth);
+  const ringColor = II_SCORE_RING_COLOR[score.cls] || II_SCORE_RING_COLOR.none;
+  return `<div class="ii-score-ring${small ? " sa-score-ring-sm" : ""}" style="--pct:${score.score ?? 0};--ring-color:${ringColor}" title="Fundamental score: ${escapeAttr(score.label)}"><span>${score.score ?? "—"}</span></div>`;
+}
+
+function saTableRowHTML(ins, rowNumber) {
+  const { row, d, capCategory } = ins;
+  return `
+    <td class="sa-row-num" data-label="#">${rowNumber}</td>
+    <td class="left sticky-col" data-label="Stock">
+      <div class="stock-cell">
+        ${eqAvatarHTML(row)}
+        <span class="stock-cell-text"><span class="stock-cell-name">${escapeAttr(row.name || "")}</span></span>
+      </div>
+    </td>
+    <td class="left" data-label="Sector">
+      <div class="sa-sector-cell">${eqSectorBadgeHTML(d.sector)}${eqCapChipHTML(capCategory)}</div>
+    </td>
+    <td data-label="Price">${fmtNum(d.ltp)}</td>
+    <td data-label="Today">${renderDayChangeBadgeHTML(d.ltp, d.prevClose, d.marketDataStale)}</td>
+    <td class="left" data-label="52W Range">${renderRangeBarHTML(d)}</td>
+    <td class="left" data-label="Recommendation">${saCategoryPillHTML(ins)}</td>
+    <td data-label="Score">${saScoreRingHTML(ins, true)}</td>
+    <td class="row-actions">
+      <div class="mf-menu-wrap"><button type="button" class="mf-menu-btn" title="Actions" aria-label="More actions for ${escapeAttr(row.name || "this stock")}">${icon("more-vertical", 16)}</button></div>
+      <button type="button" class="sa-row-open-btn" title="View details" aria-label="View details for ${escapeAttr(row.name || "this stock")}">${icon("chevron-right", 18)}</button>
+    </td>
+  `;
+}
+
+/* ---- floating three-dot row menu — same CSS/behavior as Mutual
+   Funds' and Equity's own menus (.mf-menu-*). ---- */
+let saMenuOpenRowId = null;
+function saMenuOutsideHandler(e) {
+  const el = document.getElementById("saRowMenu");
+  if (el && !el.contains(e.target)) closeSaRowMenu();
+}
+function closeSaRowMenu() {
+  const el = document.getElementById("saRowMenu");
+  if (el) el.remove();
+  saMenuOpenRowId = null;
+  document.removeEventListener("click", saMenuOutsideHandler, true);
+  window.removeEventListener("resize", closeSaRowMenu);
+  window.removeEventListener("scroll", closeSaRowMenu, true);
+}
+function openSaRowMenu(btn, rowKey) {
+  if (saMenuOpenRowId === rowKey) { closeSaRowMenu(); return; }
+  closeSaRowMenu();
+  if (!rowKey) return;
+  saMenuOpenRowId = rowKey;
+
+  const menu = document.createElement("div");
+  menu.id = "saRowMenu";
+  menu.className = "mf-menu-dropdown open";
+  menu.innerHTML = `
+    <button type="button" class="mf-menu-item" data-act="view">${icon("eye", 15)} View Details</button>
+    <button type="button" class="mf-menu-item danger" data-act="remove">${icon("trash-2", 15)} Remove from Stock Analysis</button>
+  `;
+  document.body.appendChild(menu);
+
+  const r = btn.getBoundingClientRect();
+  const menuW = menu.offsetWidth || 220;
+  let left = Math.max(8, Math.min(r.right - menuW, window.innerWidth - menuW - 8));
+  menu.style.left = left + "px";
+  menu.style.top = (r.bottom + 6) + "px";
+  requestAnimationFrame(() => {
+    const mh = menu.getBoundingClientRect().height;
+    if (r.bottom + 6 + mh > window.innerHeight - 8) menu.style.top = Math.max(8, r.top - mh - 6) + "px";
+  });
+
+  menu.querySelector('[data-act="view"]').addEventListener("click", () => { closeSaRowMenu(); openSaDrawer(rowKey); });
+  menu.querySelector('[data-act="remove"]').addEventListener("click", () => {
+    closeSaRowMenu();
+    // Preserves the exact same "hide from Stock Analysis without
+    // touching the Equity holding" feature the old ✕ button offered —
+    // see updateStockAnalysisHiddenButton()/openStockAnalysisHiddenModal()
+    // for the restore side of this, unchanged.
+    if (!state.stockAnalysisExcludedNames) state.stockAnalysisExcludedNames = [];
+    if (!state.stockAnalysisExcludedNames.includes(rowKey)) {
+      state.stockAnalysisExcludedNames.push(rowKey);
+      saveState();
+      renderStockAnalysis();
+    }
+  });
+
+  setTimeout(() => document.addEventListener("click", saMenuOutsideHandler, true), 0);
+  window.addEventListener("resize", closeSaRowMenu);
+  window.addEventListener("scroll", closeSaRowMenu, true);
+}
+
+function wireSaRowActions(tr, ins) {
+  const rowKey = (ins.row.name || "").trim().toUpperCase();
+  const menuBtn = tr.querySelector(".mf-menu-btn");
+  if (menuBtn) menuBtn.addEventListener("click", (e) => { e.stopPropagation(); openSaRowMenu(menuBtn, rowKey); });
+  const openBtn = tr.querySelector(".sa-row-open-btn");
+  if (openBtn) openBtn.addEventListener("click", (e) => { e.stopPropagation(); openSaDrawer(rowKey); });
+  tr.setAttribute("tabindex", "0");
+  tr.setAttribute("role", "button");
+  tr.setAttribute("aria-label", `View details for ${ins.row.name || "this stock"}`);
+  tr.addEventListener("click", (e) => { if (!e.target.closest(".mf-menu-wrap")) openSaDrawer(rowKey); });
+  tr.addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === " ") && !e.target.closest(".mf-menu-wrap")) { e.preventDefault(); openSaDrawer(rowKey); }
+  });
+}
+
 function renderStockAnalysis() {
   const tbody = document.getElementById("stockAnalysisTableBody");
   if (!tbody) return;
-  applyStockAnalysisColumnVisibility();
-  const screenerMap = buildScreenerMap();
 
-  let rows = state.equity.map(row => {
-    const screener = screenerMap.get((row.name || "").trim().toUpperCase());
-    const d = stockAnalysisDerived(row, screener);
-    d._name = row.name || "";
-    const fv = computeFundamentalView(row, screener, d);
-    d.fundamentalView = fv.view;
-    d.fundamentalViewCls = fv.cls;
-    d.fundamentalViewReason = fv.reason;
-    d.fundamentalSectorLabel = fv.sectorLabel;
-    return { row, screener, d };
-  });
-
-  // Rows the person has explicitly removed from this tab (see the
-  // ✕ button below and the "Hidden (N)" restore control) — filtered
-  // out here, after the join/derive step above, so a later restore
-  // doesn't need to recompute anything.
-  const excluded = new Set(state.stockAnalysisExcludedNames || []);
-  rows = rows.filter(({ row }) => !excluded.has((row.name || "").trim().toUpperCase()));
+  renderStockAnalysisFreshness();
   updateStockAnalysisHiddenButton();
 
-  // Summary cards and the detail panel always describe this full
-  // (excluded-stocks-removed, but NOT search-filtered) set — so
-  // typing in the filter box narrows the table without the cards
-  // above it jumping around, and the detail panel can keep showing
-  // whatever's selected even if a search term would hide its row.
-  renderStockAnalysisSummary(rows);
-  renderStockAnalysisDetailPanel(rows);
-  renderIntelligentInsights();
+  const screenerMap = buildScreenerMap();
+  const excluded = new Set(state.stockAnalysisExcludedNames || []);
+  // Unlike the old Intelligent Insights section, ETFs (NIFTYBEES etc.)
+  // are NOT excluded here — the redesigned list is meant to show every
+  // tracked Equity holding, with ETFs simply degrading to "Insufficient
+  // Data" the same way any other no-Screener-match stock already does
+  // (computeStockInsight() needs no new logic for this).
+  const insights = state.equity
+    .filter(row => !excluded.has((row.name || "").trim().toUpperCase()))
+    .map(row => computeStockInsight(row, screenerMap));
+
+  renderStockAnalysisSummaryV2(insights);
+  renderStockAnalysisFilterChips(insights);
 
   const ui = tableUI.stockanalysis;
+  let filtered = insights;
   if (ui.filter) {
     const q = ui.filter.toLowerCase();
-    rows = rows.filter(({ row, screener, d }) => stockAnalysisGetSearchText(row, screener, d).toLowerCase().includes(q));
+    filtered = filtered.filter(ins => stockAnalysisGetSearchText(ins.row, ins.screener, ins.d).toLowerCase().includes(q));
   }
-  if (ui.sortCol) {
-    rows = [...rows].sort((a, b) => {
-      let va = stockAnalysisGetSortValue(a.d, ui.sortCol);
-      let vb = stockAnalysisGetSortValue(b.d, ui.sortCol);
-      if (typeof va === "string" || typeof vb === "string") {
-        va = String(va ?? "").toLowerCase();
-        vb = String(vb ?? "").toLowerCase();
-        return va < vb ? -ui.sortDir : va > vb ? ui.sortDir : 0;
-      }
-      return ((va || 0) - (vb || 0)) * ui.sortDir;
-    });
+  if (saUI.catFilter !== "All") {
+    filtered = filtered.filter(ins => (ins.insufficientData ? "Insufficient Data" : ins.category) === saUI.catFilter);
   }
+  if (saUI.capFilter) {
+    filtered = filtered.filter(ins => (ins.capCategory || "Unclassified") === saUI.capFilter);
+  }
+
+  filtered = [...filtered].sort((a, b) => {
+    if (saUI.sort === "name") return (a.row.name || "").localeCompare(b.row.name || "");
+    if (saUI.sort === "priceChange") {
+      const ca = dayChangePct(a.d.ltp, a.d.prevClose) ?? -Infinity;
+      const cb = dayChangePct(b.d.ltp, b.d.prevClose) ?? -Infinity;
+      return cb - ca;
+    }
+    // "score" (default): highest fundamental score first; Insufficient
+    // Data rows (score null) always sort last.
+    const sa = a.insufficientData ? -1 : (computeInsightScoreDisplay(a.valuation, a.health, a.growth).score ?? -1);
+    const sb = b.insufficientData ? -1 : (computeInsightScoreDisplay(b.valuation, b.health, b.growth).score ?? -1);
+    return sb - sa;
+  });
 
   tbody.innerHTML = "";
   if (state.equity.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="35">No Equity holdings yet — add stocks on the Equity tab first.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="9">No Equity holdings yet — add stocks on the Equity tab first.</td></tr>';
     document.getElementById("saPagination").innerHTML = "";
-    renderStockAnalysisMobileDeck([]);
+    renderStockAnalysisMobileCards([]);
     return;
   }
-  if (rows.length === 0) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="35">${excluded.size > 0 ? 'No holdings match this filter (some may be hidden — see "Hidden" above).' : 'No holdings match this filter.'}</td></tr>`;
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="9">${excluded.size > 0 ? 'No holdings match this filter (some may be hidden — see "Hidden" above).' : 'No holdings match this filter.'}</td></tr>`;
     document.getElementById("saPagination").innerHTML = "";
-    renderStockAnalysisMobileDeck([]);
+    renderStockAnalysisMobileCards([]);
     return;
   }
 
-  // Pagination: person-selectable holdings per page (see the dropdown
-  // rendered in renderStockAnalysisPagination()). Clamp the stored page
-  // against the current filtered/sorted result count so e.g. narrowing
-  // a search doesn't leave the view stuck on a page number that no
-  // longer exists. "All" (pageSize === Infinity) is handled specially
-  // since (page-1) * Infinity would otherwise be NaN when page is 1.
+  // Pagination: unchanged mechanism from before this redesign — same
+  // person-selectable page size, same clamping logic.
   const pageSize = getStockAnalysisPageSize();
-  const totalPages = pageSize === Infinity ? 1 : Math.max(1, Math.ceil(rows.length / pageSize));
+  const totalPages = pageSize === Infinity ? 1 : Math.max(1, Math.ceil(filtered.length / pageSize));
   if (ui.page > totalPages) ui.page = totalPages;
   if (ui.page < 1) ui.page = 1;
   const startIdx = pageSize === Infinity ? 0 : (ui.page - 1) * pageSize;
-  const pageRows = pageSize === Infinity ? rows.slice() : rows.slice(startIdx, startIdx + pageSize);
+  const pageInsights = pageSize === Infinity ? filtered.slice() : filtered.slice(startIdx, startIdx + pageSize);
 
-  pageRows.forEach(({ row, d }) => {
+  pageInsights.forEach((ins, i) => {
     const tr = document.createElement("tr");
-    const rowKey = (row.name || "").trim().toUpperCase();
+    const rowKey = (ins.row.name || "").trim().toUpperCase();
     tr.dataset.rowKey = rowKey;
-    if (rowKey && rowKey === stockAnalysisSelectedKey) tr.classList.add("sa-row-selected");
-    const buyHTML = d.buyReco === null
-      ? '<span class="muted">—</span>'
-      : d.buyReco
-        ? '<span class="buy-badge buy">Buy</span>'
-        : '<span class="buy-badge no">Hold</span>';
-    tr.innerHTML = `
-      <td class="left sticky-col" data-label="Stock / Symbol">
-        <div class="stock-cell">
-          <span class="stock-avatar">${escapeAttr(stockMonogram(row.name))}</span>
-          <span class="stock-cell-text"><span class="stock-cell-name">${escapeAttr(row.name || "")}</span></span>
-        </div>
-      </td>
-      <td class="left" data-label="Sector">${escapeAttr(d.sector || "—")}</td>
-      <td class="left" data-label="Market Cap Category">${d.capCategory ? escapeAttr(d.capCategory) : '<span class="muted">—</span>'}</td>
-      <td data-label="LTP"><div class="sa-ltp-cell"><span>${fmtNum(d.ltp)}</span>${renderDayChangeBadgeHTML(d.ltp, d.prevClose, d.marketDataStale)}</div></td>
-      <td class="left" data-label="52W Low / High">${renderRangeBarHTML(d)}</td>
-      <td class="${d.gainFromLow > 0 ? 'pos' : ''}" data-label="Gain from Low %">${fmtOrDash(d.gainFromLow, 1, "%")}</td>
-      <td class="${d.dropFromHigh > 0 ? 'neg' : ''}" data-label="Drop from High %">${fmtOrDash(d.dropFromHigh, 1, "%")}</td>
-      <td data-label="EPS">${fmtOrDash(d.eps)}</td>
-      <td data-label="PE">${fmtOrDash(d.pe)}</td>
-      <td data-label="Industry PE">${fmtOrDash(d.industryPe)}</td>
-      <td class="left" data-label="Buy Reco">${buyHTML}</td>
-      <td class="left" data-label="Fundamental View"><span class="fv-badge fv-${d.fundamentalViewCls}" title="${escapeAttr(d.fundamentalViewReason || "")}">${escapeAttr(d.fundamentalView)}</span></td>
-      <td data-label="Book Value">${fmtOrDash(d.bookValue)}</td>
-      <td class="${d.pbClass}" data-label="P/B">${fmtOrDash(d.pb)}</td>
-      <td data-label="Industry P/B">${fmtOrDash(d.industryPbv)}</td>
-      <td data-label="Yield %">${fmtOrDash(d.yieldPct, 2, "%")}</td>
-      <td data-label="Dividend Yield">${fmtOrDash(d.dividendYield, 2, "%")}</td>
-      <td data-label="ROE">${fmtOrDash(d.roe, 1, "%")}</td>
-      <td data-label="ROCE">${fmtOrDash(d.roce, 1, "%")}</td>
-      <td data-label="ROA">${d.isFinancial ? fmtOrDash(d.roa, 1, "%") : '<span class="muted">—</span>'}</td>
-      <td data-label="Debt to Equity">${fmtOrDash(d.debtToEquity)}</td>
-      <td data-label="Promoter Holding">${fmtOrDash(d.promoterHolding, 1, "%")}</td>
-      <td data-label="EPS Growth (3Y)">${fmtOrDash(d.epsGrowth3y, 1, "%")}</td>
-      <td data-label="EPS Growth (5Y)">${fmtOrDash(d.epsGrowth5y, 1, "%")}</td>
-      <td data-label="Sales Growth (5Y)">${fmtOrDash(d.salesGrowth5y, 1, "%")}</td>
-      <td data-label="Quarterly Profit Growth">${fmtOrDash(d.qtrProfitVar, 1, "%")}</td>
-      <td data-label="Quarterly Sales Growth">${fmtOrDash(d.qtrSalesVar, 1, "%")}</td>
-      <td data-label="Face Value">${fmtOrDash(d.faceValue)}</td>
-      <td data-label="Market Cap">${fmtOrDash(d.marketCap, 0)}</td>
-      <td data-label="Market Cap (5Y Ago)">${fmtOrDash(d.marketCap5y, 0)}</td>
-      <td data-label="Interest Coverage">${fmtOrDash(d.intCoverage)}</td>
-      <td data-label="Free Cash Flow (Previous FY)">${fmtOrDash(d.fcfPrevAnn, 0)}</td>
-      <td data-label="Profit Growth (3Y)">${fmtOrDash(d.profitVar3y, 1, "%")}</td>
-      <td data-label="Profit Growth (5Y)">${fmtOrDash(d.profitVar5y, 1, "%")}</td>
-      <td class="row-actions"><button class="icon-btn" title="Remove from Stock Analysis (keeps the Equity holding)">✕</button></td>
-    `;
-    tr.querySelector(".icon-btn").addEventListener("click", (e) => {
-      e.stopPropagation();
-      const key = (row.name || "").trim().toUpperCase();
-      if (!key) return;
-      if (!state.stockAnalysisExcludedNames) state.stockAnalysisExcludedNames = [];
-      if (!state.stockAnalysisExcludedNames.includes(key)) {
-        state.stockAnalysisExcludedNames.push(key);
-        saveState();
-        renderStockAnalysis();
-      }
-    });
-    tr.addEventListener("click", () => {
-      if (!rowKey) return;
-      selectStockAnalysisRow(rowKey, rows);
-    });
+    tr.innerHTML = saTableRowHTML(ins, startIdx + i + 1);
+    wireSaRowActions(tr, ins);
     tbody.appendChild(tr);
   });
 
-  renderStockAnalysisPagination(rows.length, ui.page, totalPages, pageSize);
-  renderStockAnalysisMobileDeck(pageRows, rows);
-}
-
-// Shared row-selection logic used by both the desktop table's row
-// click and the mobile deck's card tap — keeps the two views'
-// highlighted/selected holding in sync since they render from the
-// same underlying page slice.
-function selectStockAnalysisRow(rowKey, fullFilteredRows) {
-  if (!rowKey || stockAnalysisSelectedKey === rowKey) return;
-  stockAnalysisSelectedKey = rowKey;
-  document.querySelectorAll("#stockAnalysisTableBody tr.sa-row-selected, .sa-mobile-card.sa-row-selected").forEach(el => el.classList.remove("sa-row-selected"));
-  const matchingTr = Array.from(document.querySelectorAll("#stockAnalysisTableBody tr")).find(r => r.dataset.rowKey === rowKey);
-  if (matchingTr) matchingTr.classList.add("sa-row-selected");
-  const matchingCard = Array.from(document.querySelectorAll(".sa-mobile-card")).find(c => c.dataset.rowKey === rowKey);
-  if (matchingCard) matchingCard.classList.add("sa-row-selected");
-  renderStockAnalysisDetailPanel(fullFilteredRows);
+  renderStockAnalysisPagination(filtered.length, ui.page, totalPages, pageSize);
+  renderStockAnalysisMobileCards(pageInsights);
 }
 
 // Renders the Prev/Next + numbered pagination bar under the desktop
@@ -7127,90 +7281,275 @@ function renderStockAnalysisPagination(totalCount, page, totalPages, pageSize) {
   });
 }
 
-// Mobile/tablet swipe-card deck — one card per holding, same page
-// slice (pageRows) the desktop table just rendered, so both views
-// always show the same 7 holdings and the same pagination position.
-// Uses horizontal scroll-snap rather than a JS carousel library, so
-// it works with native touch swipe with no added dependency.
-function renderStockAnalysisMobileDeck(pageRows, fullFilteredRows) {
-  const scroller = document.getElementById("saMobileScroller");
-  const dotsEl = document.getElementById("saMobileDots");
-  const paginationEl = document.getElementById("saMobilePagination");
-  if (!scroller || !dotsEl || !paginationEl) return;
+// Mobile/tablet: a plain vertical stack of cards, one per holding,
+// same page slice the desktop table just rendered — NOT a shrunk
+// table and NOT the old horizontal swipe-to-browse deck, per the
+// redesign's explicit "no horizontal page scrolling on mobile"
+// requirement. Shares the same Prev/Next pagination bar as the
+// desktop table (#saPagination) rather than a separate mobile-only
+// pager, so the two views can never disagree on which page is shown.
+function renderStockAnalysisMobileCards(pageInsights) {
+  const container = document.getElementById("saMobileCards");
+  if (!container) return;
 
-  if (!pageRows || pageRows.length === 0) {
-    scroller.innerHTML = '<div class="sa-detail-empty" style="min-width:100%">No holdings to show.</div>';
-    dotsEl.innerHTML = "";
-    paginationEl.innerHTML = "";
+  if (!pageInsights || pageInsights.length === 0) {
+    container.innerHTML = '<div class="sa-detail-empty">No holdings to show.</div>';
     return;
   }
 
-  scroller.innerHTML = pageRows.map(({ row, d }) => {
+  container.innerHTML = pageInsights.map(ins => {
+    const { row, d, capCategory } = ins;
     const rowKey = (row.name || "").trim().toUpperCase();
-    const selected = rowKey === stockAnalysisSelectedKey;
-    const buyHTML = d.buyReco === null
-      ? '<span class="muted">—</span>'
-      : d.buyReco
-        ? '<span class="buy-badge buy">Buy</span>'
-        : '<span class="buy-badge no">Hold</span>';
     return `
-      <div class="sa-mobile-card${selected ? " sa-row-selected" : ""}" data-row-key="${escapeAttr(rowKey)}">
+      <div class="sa-mobile-card" data-row-key="${escapeAttr(rowKey)}" tabindex="0" role="button" aria-label="View details for ${escapeAttr(row.name || "this stock")}">
         <div class="sa-mobile-card-top">
-          <div>
-            <div class="sa-mobile-card-name">${escapeAttr(row.name || "")}</div>
-            <div class="sa-mobile-card-sector">${escapeAttr(d.sector || "Sector not set")}${d.capCategory ? " · " + escapeAttr(d.capCategory) : ""}</div>
+          <div class="stock-cell">
+            ${eqAvatarHTML(row)}
+            <div>
+              <div class="sa-mobile-card-name">${escapeAttr(row.name || "")}</div>
+              <div class="sa-mobile-card-sector">${escapeAttr(d.sector || "Sector not set")}${eqCapChipHTML(capCategory)}</div>
+            </div>
           </div>
-          <div>
-            <div class="sa-mobile-card-price">${fmtNum(d.ltp)}</div>
-            <div class="sa-mobile-card-chg">${renderDayChangeBadgeHTML(d.ltp, d.prevClose, d.marketDataStale)}</div>
+          <div class="mf-menu-wrap mf-mobile-card-menu">
+            <button type="button" class="mf-menu-btn" title="Actions" aria-label="More actions for ${escapeAttr(row.name || "this stock")}">${icon("more-vertical", 18)}</button>
           </div>
         </div>
-        <div class="sa-mobile-card-grid">
-          <div class="sa-mobile-metric"><div class="l">PE</div><div class="v">${fmtOrDash(d.pe)}</div></div>
-          <div class="sa-mobile-metric"><div class="l">P/B</div><div class="v">${fmtOrDash(d.pb)}</div></div>
-          <div class="sa-mobile-metric"><div class="l">ROE</div><div class="v">${fmtOrDash(d.roe, 1, "%")}</div></div>
+        <div class="sa-mobile-card-values">
+          <div class="mf-mobile-card-value"><div class="l">Price</div><div class="v">${fmtNum(d.ltp)}</div></div>
+          <div class="mf-mobile-card-value align-r"><div class="l">Today</div><div class="v">${renderDayChangeBadgeHTML(d.ltp, d.prevClose, d.marketDataStale)}</div></div>
         </div>
+        ${renderRangeBarHTML(d)}
         <div class="sa-mobile-card-footer">
-          ${renderRangeBarHTML(d)}
-          <span class="fv-badge fv-${d.fundamentalViewCls}" title="${escapeAttr(d.fundamentalViewReason || "")}">${escapeAttr(d.fundamentalView)}</span>
-          ${buyHTML}
+          ${saCategoryPillHTML(ins)}
+          ${saScoreRingHTML(ins, true)}
         </div>
       </div>
     `;
   }).join("");
 
-  scroller.querySelectorAll(".sa-mobile-card").forEach(card => {
-    card.addEventListener("click", () => selectStockAnalysisRow(card.dataset.rowKey, fullFilteredRows || pageRows));
+  container.querySelectorAll(".sa-mobile-card").forEach(card => {
+    const rowKey = card.dataset.rowKey;
+    card.addEventListener("click", (e) => { if (!e.target.closest(".mf-menu-wrap")) openSaDrawer(rowKey); });
+    card.addEventListener("keydown", (e) => {
+      if ((e.key === "Enter" || e.key === " ") && !e.target.closest(".mf-menu-wrap")) { e.preventDefault(); openSaDrawer(rowKey); }
+    });
+    const menuBtn = card.querySelector(".mf-menu-btn");
+    if (menuBtn) menuBtn.addEventListener("click", (e) => { e.stopPropagation(); openSaRowMenu(menuBtn, rowKey); });
   });
-
-  dotsEl.innerHTML = pageRows.map((_, i) => `<span class="sa-mobile-dot${i === 0 ? " active" : ""}"></span>`).join("");
-  const dots = dotsEl.querySelectorAll(".sa-mobile-dot");
-  let scrollTimer = null;
-  scroller.addEventListener("scroll", () => {
-    clearTimeout(scrollTimer);
-    scrollTimer = setTimeout(() => {
-      const cardWidth = scroller.firstElementChild ? scroller.firstElementChild.getBoundingClientRect().width + 12 : 1;
-      const idx = Math.round(scroller.scrollLeft / cardWidth);
-      dots.forEach((d, i) => d.classList.toggle("active", i === idx));
-    }, 80);
-  });
-
-  // Reuses the exact same Prev/Next page state as the desktop table
-  // (tableUI.stockanalysis.page) so switching between mobile and
-  // desktop widths never disagrees on which page is showing.
-  const ui = tableUI.stockanalysis;
-  const mobilePageSize = getStockAnalysisPageSize();
-  const totalPages = mobilePageSize === Infinity ? 1 : Math.max(1, Math.ceil((fullFilteredRows || pageRows).length / mobilePageSize));
-  paginationEl.innerHTML = `
-    <button class="sa-page-btn" id="saMobilePagePrev" ${ui.page <= 1 ? "disabled" : ""}>‹ Prev</button>
-    <span class="sa-pagination-info">Page ${ui.page} of ${totalPages}</span>
-    <button class="sa-page-btn" id="saMobilePageNext" ${ui.page >= totalPages ? "disabled" : ""}>Next ›</button>
-  `;
-  const mPrev = document.getElementById("saMobilePagePrev");
-  const mNext = document.getElementById("saMobilePageNext");
-  if (mPrev) mPrev.addEventListener("click", () => { ui.page = Math.max(1, ui.page - 1); renderStockAnalysis(); });
-  if (mNext) mNext.addEventListener("click", () => { ui.page = Math.min(totalPages, ui.page + 1); renderStockAnalysis(); });
 }
+
+/* ============================================================
+   STOCK ANALYSIS — detail drawer (Overview / Financials / Growth /
+   Ownership tabs). Reuses the same .drawer-overlay/.drawer-panel/
+   .sa-detail-section CSS the Equity and Mutual Fund drawers already
+   use. Every figure here is read straight from computeStockInsight()/
+   stockAnalysisDerived() — nothing recalculated differently for the
+   drawer than for the row it was opened from.
+   ============================================================ */
+
+const SA_DRAWER_TABS = [
+  { key: "overview", label: "Overview" },
+  { key: "financials", label: "Financials" },
+  { key: "growth", label: "Growth" },
+  { key: "ownership", label: "Ownership" }
+];
+let saDrawerRowKey = null;
+let saDrawerTab = "overview";
+
+function saFindInsightByKey(rowKey) {
+  const row = state.equity.find(r => (r.name || "").trim().toUpperCase() === rowKey);
+  if (!row) return null;
+  return computeStockInsight(row, buildScreenerMap());
+}
+
+function saMetricRow(label, valueText, cls) {
+  return `<div class="sa-detail-row"><span class="k">${escapeAttr(label)}</span><span class="v${cls ? " " + cls : ""}">${valueText}</span></div>`;
+}
+
+// Compact dot + label for each of the three fundamental lenses — shown
+// ONLY in the drawer, never as a main-table column, per the redesign's
+// explicit "no Signal column on the main list" requirement.
+function saSignalDotHTML(label, verdict, goodVal, badVal) {
+  const cls = verdict === goodVal ? "dot-pos" : verdict === badVal ? "dot-neg" : (verdict && verdict !== "unknown") ? "dot-neu" : "dot-none";
+  const text = !verdict || verdict === "unknown" ? "—" : verdict.charAt(0).toUpperCase() + verdict.slice(1);
+  return `<div class="sa-signal"><span class="dot ${cls}"></span><span class="l">${escapeAttr(label)}</span><span class="v">${escapeAttr(text)}</span></div>`;
+}
+
+function saDrawerOverviewHTML(ins) {
+  const { d, valuation, health, growth, reason, insufficientData } = ins;
+  const signalsHTML = insufficientData
+    ? '<div class="muted" style="font-size:12px;">Not enough fundamentals to form a view yet.</div>'
+    : `<div class="sa-signals-row">
+        ${saSignalDotHTML("Valuation", valuation, "attractive", "unattractive")}
+        ${saSignalDotHTML("Health", health, "strong", "weak")}
+        ${saSignalDotHTML("Growth", growth, "strong", "weak")}
+      </div>`;
+  const peVsIndText = (d.pe !== null && d.pe > 0 && d.industryPe !== null)
+    ? `${fmtNum(d.pe, 1)} <span class="muted">/ ${fmtNum(d.industryPe, 1)}</span>`
+    : "—";
+  const pbVsIndText = (d.pb !== null && d.industryPbv)
+    ? `${fmtNum(d.pb, 2)} <span class="muted">/ ${fmtNum(d.industryPbv, 2)}</span>`
+    : "—";
+  return `
+    <div class="sa-detail-section">
+      <div class="sa-detail-section-title">Why this recommendation?</div>
+      <div class="sa-reason-box">${escapeAttr(reason)}</div>
+    </div>
+    <div class="sa-detail-section">
+      <div class="sa-detail-section-title">Fundamental Signals</div>
+      ${signalsHTML}
+    </div>
+    <div class="sa-detail-sections" style="grid-template-columns:1fr 1fr;">
+      <div class="sa-detail-section">
+        <div class="sa-detail-section-title">Key Metrics</div>
+        ${saMetricRow(d.isFinancial ? "P/B vs Industry" : "PE vs Industry", d.isFinancial ? pbVsIndText : peVsIndText)}
+        ${saMetricRow("P/B", fmtOrDash(d.pb, 2))}
+        ${saMetricRow("ROE", fmtOrDash(d.roe, 1, "%"))}
+        ${saMetricRow("ROCE", fmtOrDash(d.roce, 1, "%"))}
+        ${saMetricRow("Debt / Equity", fmtOrDash(d.debtToEquity, 2))}
+        ${saMetricRow("Dividend Yield", fmtOrDash(d.dividendYield, 2, "%"))}
+      </div>
+      <div class="sa-detail-section">
+        <div class="sa-detail-section-title">52-Week Range</div>
+        <div class="sa-range-cell-lg">${renderRangeBarHTML(d)}</div>
+        <div class="sa-detail-section-title" style="margin-top:16px;">All-Time High</div>
+        <div class="sa-ath-row">
+          <input type="text" inputmode="decimal" id="saDrawerAth" value="${d.athPrice !== null ? d.athPrice.toFixed(2) : ""}" placeholder="e.g. 1850.00" ${isReadOnly() ? "disabled" : ""}>
+          <span class="muted sa-ath-note">${d.dropFromATH !== null ? fmtNum(d.dropFromATH, 1) + "% below ATH" : "No ATH recorded yet"}</span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function saDrawerGrowthHTML(ins) {
+  const { d } = ins;
+  return `
+    <div class="sa-detail-sections" style="grid-template-columns:1fr 1fr;">
+      <div class="sa-detail-section">
+        <div class="sa-detail-section-title">Earnings &amp; Sales Growth</div>
+        ${saMetricRow("EPS Growth (3Y)", fmtOrDash(d.epsGrowth3y, 1, "%"))}
+        ${saMetricRow("EPS Growth (5Y)", fmtOrDash(d.epsGrowth5y, 1, "%"))}
+        ${saMetricRow("Sales Growth (5Y)", fmtOrDash(d.salesGrowth5y, 1, "%"))}
+      </div>
+      <div class="sa-detail-section">
+        <div class="sa-detail-section-title">Profit Variance</div>
+        ${saMetricRow("Profit Growth (3Y)", fmtOrDash(d.profitVar3y, 1, "%"))}
+        ${saMetricRow("Profit Growth (5Y)", fmtOrDash(d.profitVar5y, 1, "%"))}
+        ${saMetricRow("Quarterly Profit Growth", fmtOrDash(d.qtrProfitVar, 1, "%"))}
+        ${saMetricRow("Quarterly Sales Growth", fmtOrDash(d.qtrSalesVar, 1, "%"))}
+      </div>
+    </div>
+  `;
+}
+
+function saDrawerFinancialsHTML(ins) {
+  const { row, d } = ins;
+  return `
+    <div class="sa-detail-sections" style="grid-template-columns:1fr 1fr;">
+      <div class="sa-detail-section">
+        <div class="sa-detail-section-title">Valuation &amp; Size</div>
+        ${saMetricRow("Book Value", fmtOrDash(d.bookValue))}
+        ${saMetricRow("Face Value", fmtOrDash(d.faceValue))}
+        ${saMetricRow("Market Cap", d.marketCap !== null ? "₹" + fmtNum(d.marketCap, 0) + " Cr" : "—")}
+        ${saMetricRow("Market Cap (5Y Ago)", d.marketCap5y !== null ? "₹" + fmtNum(d.marketCap5y, 0) + " Cr" : "—")}
+        ${saMetricRow("Industry PE", fmtOrDash(d.industryPe))}
+        ${saMetricRow("Industry P/B", fmtOrDash(d.industryPbv))}
+      </div>
+      <div class="sa-detail-section">
+        <div class="sa-detail-section-title">Financial Health</div>
+        ${d.isFinancial ? saMetricRow("ROA", fmtOrDash(d.roa, 1, "%")) : ""}
+        ${saMetricRow("Interest Coverage", fmtOrDash(d.intCoverage))}
+        ${saMetricRow("Free Cash Flow (Prev FY)", d.fcfPrevAnn !== null ? "₹" + fmtNum(d.fcfPrevAnn, 0) + " Cr" : "—")}
+      </div>
+      ${renderBankingMetricsSectionHTML(row, d)}
+    </div>
+  `;
+}
+
+function saDrawerOwnershipHTML(ins) {
+  const { d, allocPct, allocMax, capCategory, allocStatus } = ins;
+  return `
+    <div class="sa-detail-sections" style="grid-template-columns:1fr 1fr;">
+      <div class="sa-detail-section">
+        <div class="sa-detail-section-title">Your Allocation</div>
+        ${saMetricRow("Current Allocation", fmtNum(allocPct, 1) + "%", allocStatus ? "limit-" + allocStatus : "")}
+        ${saMetricRow("Limit", allocMax !== null ? allocMax + "% (" + escapeAttr(capCategory || "—") + ")" : "—")}
+      </div>
+      <div class="sa-detail-section">
+        <div class="sa-detail-section-title">Company Ownership</div>
+        ${saMetricRow("Promoter Holding", fmtOrDash(d.promoterHolding, 1, "%"))}
+        ${saMetricRow("Dividend Yield", fmtOrDash(d.dividendYield, 2, "%"))}
+      </div>
+    </div>
+  `;
+}
+
+function renderSaDrawerBody() {
+  const body = document.getElementById("saDrawerBody");
+  if (!body || !saDrawerRowKey) return;
+  const ins = saFindInsightByKey(saDrawerRowKey);
+  if (!ins) { closeSaDrawer(); return; }
+  const { row, d, capCategory } = ins;
+
+  const tabsHTML = SA_DRAWER_TABS.map(t => `<button type="button" class="sa-drawer-tab${saDrawerTab === t.key ? " active" : ""}" data-sa-tab="${t.key}" role="tab" aria-selected="${saDrawerTab === t.key}">${escapeAttr(t.label)}</button>`).join("");
+  let tabBodyHTML;
+  if (saDrawerTab === "financials") tabBodyHTML = saDrawerFinancialsHTML(ins);
+  else if (saDrawerTab === "growth") tabBodyHTML = saDrawerGrowthHTML(ins);
+  else if (saDrawerTab === "ownership") tabBodyHTML = saDrawerOwnershipHTML(ins);
+  else tabBodyHTML = saDrawerOverviewHTML(ins);
+
+  body.innerHTML = `
+    <div class="sa-detail-head" style="border-bottom:none;padding-bottom:0;margin-bottom:12px;">
+      ${eqAvatarHTML(row)}
+      <div style="flex:1 1 auto;min-width:0;">
+        <div class="sa-detail-name">${escapeAttr(row.name || "Unnamed stock")}</div>
+        <div class="sa-detail-meta">${escapeAttr(d.sector || "Sector not set")}${capCategory ? " · " + escapeAttr(capCategory) : ""}</div>
+      </div>
+      <div style="text-align:right;">
+        <div class="sa-detail-price">${fmtNum(d.ltp)}</div>
+        <div class="sa-detail-meta">${renderDayChangeBadgeHTML(d.ltp, d.prevClose, d.marketDataStale)}</div>
+      </div>
+    </div>
+    <div class="sa-drawer-head-badges">${saScoreRingHTML(ins)}${saCategoryPillHTML(ins)}</div>
+    <div class="sa-drawer-tabs" role="tablist">${tabsHTML}</div>
+    <div class="sa-drawer-tab-body">${tabBodyHTML}</div>
+  `;
+
+  body.querySelectorAll("[data-sa-tab]").forEach(btn => {
+    btn.addEventListener("click", () => { saDrawerTab = btn.dataset.saTab; renderSaDrawerBody(); });
+  });
+
+  const athInput = document.getElementById("saDrawerAth");
+  if (athInput) {
+    athInput.addEventListener("change", () => {
+      const val = parseFloat(String(athInput.value).replace(/,/g, ""));
+      row.athPrice = (isNaN(val) || val <= 0) ? null : val;
+      saveState();
+      renderSaDrawerBody();
+      renderStockAnalysis();
+    });
+  }
+}
+
+function openSaDrawer(rowKey, opts) {
+  if (!rowKey) return;
+  const ins = saFindInsightByKey(rowKey);
+  if (!ins) return;
+  closeSaRowMenu();
+  saDrawerRowKey = rowKey;
+  saDrawerTab = (opts && opts.tab) || "overview";
+  renderSaDrawerBody();
+  document.getElementById("saDrawerOverlay").classList.add("open");
+}
+
+function closeSaDrawer() {
+  const overlay = document.getElementById("saDrawerOverlay");
+  if (overlay) overlay.classList.remove("open");
+  saDrawerRowKey = null;
+}
+
+// Renders the Prev/Next + numbered pagination bar under the desktop
 
 /* ---- Import Screener Data (.xlsx) ----
    Header-name-driven (not positional) so column order in the
@@ -7315,6 +7654,12 @@ function showScreenerImportPreview(newRows, statusEl) {
       {
         label: `Replace ${existingCount} ${existingCount === 1 ? "row" : "rows"}`, primary: true, onClick: () => {
           state.screenerData = newRows;
+          // Fundamentals only ever change when a Screener file is
+          // re-imported (unlike live price, which refreshes every 30s)
+          // — this is the one and only place state.screenerData is
+          // ever assigned, so it's the correct spot to stamp when that
+          // last happened, for the Stock Analysis freshness line.
+          state.screenerImportedAt = new Date().toISOString();
           saveState();
           renderStockAnalysis();
           renderEquity();
@@ -9446,7 +9791,11 @@ setupMobileSort("debt", "debtMobileSort", "debtMobileSortDir", "#panel-debt thea
 // at every width (wired below, next to the category/sector filter),
 // replacing setupMobileSort() for these tabs.
 setupMobileSort("gold", "goldMobileSort", "goldMobileSortDir", "#panel-gold thead", () => { renderGold(); });
-setupMobileSort("stockanalysis", "stockAnalysisMobileSort", "stockAnalysisMobileSortDir", "#panel-stockanalysis thead", () => { tableUI.stockanalysis.page = 1; renderStockAnalysis(); });
+// Stock Analysis no longer has a separate mobile-only sort row — the
+// redesigned toolbar's "Sort by" dropdown (wired in
+// setupStockAnalysisControls()) works at every width, replacing
+// setupMobileSort() for this tab (same pattern already used for
+// Mutual Funds and Equity above).
 
 // Mutual Funds toolbar — category filter + unified sort dropdown
 // (see the redesigned #panel-mf toolbar in index.html). Both just
@@ -9479,6 +9828,8 @@ document.addEventListener("keydown", (e) => {
   if (document.getElementById("mfDrawerOverlay")?.classList.contains("open")) closeMFDrawer();
   closeEqRowMenu();
   if (document.getElementById("eqDrawerOverlay")?.classList.contains("open")) closeEqDrawer();
+  closeSaRowMenu();
+  if (document.getElementById("saDrawerOverlay")?.classList.contains("open")) closeSaDrawer();
 });
 
 // Equity toolbar — sector filter + unified sort dropdown (see the
@@ -9509,6 +9860,13 @@ document.getElementById("equitySortSelect")?.addEventListener("change", (e) => {
 document.getElementById("eqDrawerClose")?.addEventListener("click", closeEqDrawer);
 document.getElementById("eqDrawerOverlay")?.addEventListener("click", (e) => {
   if (e.target.id === "eqDrawerOverlay") closeEqDrawer();
+});
+
+// Stock Analysis detail drawer — same close-button/overlay-click/
+// Escape convention as the Mutual Fund and Equity drawers above.
+document.getElementById("saDrawerClose")?.addEventListener("click", closeSaDrawer);
+document.getElementById("saDrawerOverlay")?.addEventListener("click", (e) => {
+  if (e.target.id === "saDrawerOverlay") closeSaDrawer();
 });
 
 setupOverflowToggle("debtOverflowToggle", "debtToolbarSecondary");
@@ -9582,7 +9940,7 @@ document.getElementById("eqAttnFilter")?.addEventListener("change", (e) => {
   renderEquityAttention();
 });
 
-setupIntelligentInsightsControls();
+setupStockAnalysisControls();
 setupFilterClearButtons();
 setupAttentionToggle("dashAttnCard", "dashAttnToggle");
 setupAttentionToggle("debtAttnCard", "debtAttnToggle");
