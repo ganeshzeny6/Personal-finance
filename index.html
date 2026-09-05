@@ -1182,6 +1182,14 @@
   /* ---- Freshness line ---- */
   .sa-freshness{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-faint);margin:-6px 0 14px;}
   .sa-fresh-dot{width:6px;height:6px;border-radius:50%;background:var(--positive);flex:0 0 auto;}
+  /* Fundamentals older than 60/90 days — see SA_FUNDAMENTALS_STALE_DAYS
+     in app.js. Only the fundamentals half of the line is ever flagged;
+     live price is always fresh so it keeps the default styling. */
+  .sa-freshness.sa-fresh-stale{color:var(--warning);}
+  .sa-freshness.sa-fresh-stale .sa-fresh-dot{background:var(--warning);}
+  .sa-freshness.sa-fresh-very-stale{color:var(--negative);}
+  .sa-freshness.sa-fresh-very-stale .sa-fresh-dot{background:var(--negative);}
+  .sa-freshness .sa-fresh-price{color:var(--text-faint);}
 
   /* ---- Filter chips + Market Cap / Sort dropdowns ---- */
   .sa-filter-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;}

@@ -471,6 +471,15 @@ function formatRelativeAgo(iso) {
   return `${days} day${days === 1 ? "" : "s"} ago`;
 }
 
+// Whole days elapsed since a stored ISO timestamp, or null when there's
+// no timestamp yet — used to decide how stale the Screener import is.
+function daysSince(iso) {
+  if (!iso) return null;
+  const then = new Date(iso).getTime();
+  if (isNaN(then)) return null;
+  return Math.floor((Date.now() - then) / 86400000);
+}
+
 function plClass(n) {
   return n > 0 ? "pos" : n < 0 ? "neg" : "muted";
 }
@@ -6937,17 +6946,43 @@ let saUI = { catFilter: "All", capFilter: "", sort: "score" };
 // since the new Recommendation pill needs the identical vocabulary.
 const SA_CATEGORY_ORDER = INSIGHT_CATEGORY_ORDER;
 
+// Fundamentals only change on a Screener re-import (unlike live price,
+// which refreshes every 30s), so a portfolio can silently sit on months-
+// old ratios if the user forgets to re-import. Past 60 days the dot/text
+// turn amber ("getting old"); past 90 days, red ("re-import recommended").
+// Thresholds are deliberately generous — Screener fundamentals (quarterly
+// results, ratios) don't meaningfully change week to week.
+const SA_FUNDAMENTALS_STALE_DAYS = 60;
+const SA_FUNDAMENTALS_VERY_STALE_DAYS = 90;
+
 function renderStockAnalysisFreshness() {
   const el = document.getElementById("saFreshness");
   if (!el) return;
+  const fundDays = daysSince(state.screenerImportedAt);
   const fundAgo = formatRelativeAgo(state.screenerImportedAt);
   const priceAgo = formatRelativeAgo(state.lastPriceRefreshAt);
   const fundText = fundAgo ? `Fundamentals updated ${fundAgo}` : "Fundamentals not imported yet";
-  // Fundamentals only change on a Screener re-import — never implied to
-  // be live — while price freshness reflects the real 30-second refresh
-  // cycle (state.lastPriceRefreshAt), not a hardcoded "just now".
+  // Price freshness reflects the real 30-second refresh cycle
+  // (state.lastPriceRefreshAt), not a hardcoded "just now" — and it's
+  // never flagged stale since it's refreshed live.
   const priceText = state.equity.length > 0 && priceAgo ? ` · Prices updated ${priceAgo}` : "";
-  el.innerHTML = `<span class="sa-fresh-dot"></span>${escapeAttr(fundText)}${escapeAttr(priceText)}`;
+
+  let staleClass = "";
+  let staleSuffix = "";
+  if (fundDays !== null && fundDays >= SA_FUNDAMENTALS_VERY_STALE_DAYS) {
+    staleClass = "sa-fresh-very-stale";
+    staleSuffix = " — re-import recommended";
+  } else if (fundDays !== null && fundDays >= SA_FUNDAMENTALS_STALE_DAYS) {
+    staleClass = "sa-fresh-stale";
+    staleSuffix = " — getting old";
+  }
+
+  el.className = `sa-freshness${staleClass ? " " + staleClass : ""}`;
+  // priceText gets its own span forced back to the neutral color — the
+  // stale/very-stale coloring only ever applies to the fundamentals half
+  // of this line, never to the live (always-fresh) price half.
+  const priceSpan = priceText ? `<span class="sa-fresh-price">${escapeAttr(priceText)}</span>` : "";
+  el.innerHTML = `<span class="sa-fresh-dot"></span>${escapeAttr(fundText)}${escapeAttr(staleSuffix)}${priceSpan}`;
 }
 
 // Four summary cards (real counts, never hardcoded) — Stocks Analysed,
