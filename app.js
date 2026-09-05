@@ -372,7 +372,16 @@ function blankTradeBook() {
     // import already does, via isGoldSymbol()).
     trades: [],
     // Informational import history only, shown in Settings.
-    imports: []
+    imports: [],
+    // Google Drive auto-sync (see IMPORT — Trade Book below): the
+    // exact file picked once via the Picker, plus the outcome of the
+    // most recent sync attempt. null/empty until connected.
+    driveFileId: null,
+    driveFileName: null,
+    lastSyncedAt: null,
+    lastSyncStatus: null, // "ok" | "error" | "needs-reconnect"
+    lastSyncError: "",
+    lastSyncConflicts: 0
   };
 }
 
@@ -3683,8 +3692,8 @@ function renderPortfolioPerformanceChart() {
 
   if (!hasTrades) {
     showPlaceholder(
-      "No trade book imported yet",
-      "Import your trade book (Settings → Import Trade Book) to enable this chart — it compares your actual invested capital against a Nifty 50 equivalent using your real trade dates.",
+      "No trade book synced yet",
+      "Connect your trade book (Settings → Trade Book) to enable this chart — once connected it re-syncs from Google Drive automatically, and compares your actual invested capital against a Nifty 50 equivalent using your real trade dates.",
       false
     );
     return;
@@ -7106,39 +7115,68 @@ async function ensurePickerLoaded() {
   return pickerLoadPromise;
 }
 
-// Requests a Drive access token scoped to just files the person
-// explicitly picks (drive.file) — no standing access to their whole
-// Drive. Re-uses a token client across calls so re-importing later in
-// the same session doesn't always force a fresh consent screen.
+// Lazily creates (once) the shared OAuth token client scoped to just
+// files the person explicitly picks (drive.file) — no standing access
+// to their whole Drive. Shared by every Drive-backed importer (Zerodha
+// Holdings, Trade Book) so they all reuse the same live grant instead
+// of each maintaining its own client/consent state.
+function ensureDriveTokenClient() {
+  if (!driveTokenClient) {
+    driveTokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: state.googleDriveClientId,
+      scope: "https://www.googleapis.com/auth/drive.file",
+      callback: () => {} // overridden per-request just below
+    });
+  }
+  return driveTokenClient;
+}
+
+// Requests a Drive access token, showing a consent popup only if there's
+// no token yet in this session. Fine to call from a click handler.
 function requestDriveAccessToken() {
   return new Promise((resolve, reject) => {
-    if (!driveTokenClient) {
-      driveTokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: state.googleDriveClientId,
-        scope: "https://www.googleapis.com/auth/drive.file",
-        callback: () => {} // overridden per-request just below
-      });
-    }
-    driveTokenClient.callback = (resp) => {
+    const client = ensureDriveTokenClient();
+    client.callback = (resp) => {
       if (resp.error) { reject(new Error(resp.error)); return; }
       driveAccessToken = resp.access_token;
       resolve(driveAccessToken);
     };
-    driveTokenClient.requestAccessToken({ prompt: driveAccessToken ? "" : "consent" });
+    client.requestAccessToken({ prompt: driveAccessToken ? "" : "consent" });
   });
 }
 
-// Shows the Drive file picker filtered to Excel files (multi-select
-// enabled, so several account exports can be picked in one go) and
-// resolves with the chosen files as an array of { id, name, mimeType
-// }, or null if cancelled.
+// Same, but NEVER shows a popup/consent screen — it either silently
+// reuses an already-granted session or rejects. Used for the automatic
+// on-page-load Trade Book sync, where popping a Google consent dialog
+// with no user click behind it would be both jarring and likely
+// blocked by the browser anyway.
+function requestDriveAccessTokenSilent() {
+  return new Promise((resolve, reject) => {
+    const client = ensureDriveTokenClient();
+    client.callback = (resp) => {
+      if (resp.error) { reject(new Error(resp.error)); return; }
+      driveAccessToken = resp.access_token;
+      resolve(driveAccessToken);
+    };
+    client.requestAccessToken({ prompt: "" });
+  });
+}
+
+// Shows the Drive file picker (multi-select enabled by default, so
+// several account exports can be picked in one go for Holdings import;
+// pass { multiSelect: false } for a single-file pick like Trade Book)
+// and resolves with the chosen files as an array of { id, name,
+// mimeType }, or null if cancelled. `options.mimeTypes` overrides the
+// default Excel-only filter (e.g. for a CSV trade book).
 function openDrivePicker(accessToken, options) {
   const multiSelect = !options || options.multiSelect !== false;
+  const mimeTypes = (options && options.mimeTypes) ||
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.google-apps.spreadsheet";
   return new Promise((resolve) => {
     const view = new google.picker.DocsView()
       .setIncludeFolders(false)
       .setSelectFolderEnabled(false)
-      .setMimeTypes("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.google-apps.spreadsheet");
+      .setMimeTypes(mimeTypes);
     const pickerBuilder = new google.picker.PickerBuilder()
       .setOAuthToken(accessToken)
       .setDeveloperKey(state.googleDriveApiKey);
@@ -7213,14 +7251,13 @@ async function runDriveImportPicker() {
 
 
 /* ============================================================
-   IMPORT — Trade Book (Zerodha Console Tradebook CSV exports)
+   IMPORT — Trade Book (Zerodha Console Tradebook CSV, synced from a
+   single master file on Google Drive — see the "Google Drive
+   auto-sync" block further down for connect/sync/reconnect logic).
    Separate from the Holdings import above: a Tradebook export is
-   trade-level (every buy/sell, not a current-holdings snapshot) and
-   has no Client ID column, so the person labels each file with an
-   account name at import time instead. Parsed rows are stored in
-   `tradeBook` (see the TRADE BOOK block near saveState() above) —
-   never in `state`, never pushed to Firestore. Local files only for
-   now; Drive-backed import is a later phase (per plan doc §3b).
+   trade-level (every buy/sell, not a current-holdings snapshot).
+   Parsed rows are stored in `tradeBook` (see the TRADE BOOK block near
+   saveState() above) — never in `state`, never pushed to Firestore.
    ============================================================ */
 
 // Minimal CSV parser (quoted fields with embedded commas/escaped
@@ -7349,160 +7386,120 @@ function planTradeBookImport(newTrades, existingTrades) {
   return { toAdd, unchanged, conflicts, batchDuplicates: [...new Set(batchDuplicates)] };
 }
 
-function showTradeBookImportPreview(newTrades, sourceLabel, statusEl) {
-  const plan = planTradeBookImport(newTrades, tradeBook.trades);
-  const totalExisting = tradeBook.trades.length;
+// ---- Google Drive auto-sync (replaces the old manual "choose CSV
+// file(s) + label each with an account" flow) ----
+// Ganesh maintains one combined master_tradebook.csv in Google Drive,
+// so the app just re-reads that single file automatically — on every
+// page load/reload, plus on demand via "Sync Now" in Settings — using
+// the same drive.file OAuth + Picker infra as the Zerodha Holdings
+// import above (no standing access to the whole Drive, only the exact
+// file picked once via "Connect Google Drive"). All trades from this
+// file share one account label (the connected file's name), since
+// it's already a merged/master export rather than a per-account one.
+// New trades are added automatically; a row whose key already exists
+// with DIFFERENT data is left untouched and just counted as a
+// conflict (see tradeBook.lastSyncConflicts) rather than silently
+// overwritten — the same safety the old preview-and-confirm modal
+// gave, without a modal blocking every reload.
 
-  const conflictRows = plan.conflicts.slice(0, 10).map(c => `
-    <tr>
-      <td class="left">${escapeAttr(c.incoming.symbol)}</td>
-      <td class="left">${escapeAttr(c.incoming.tradeId)}</td>
-      <td class="left">${escapeAttr(c.existing.quantity + " @ " + c.existing.price)}</td>
-      <td class="left">${escapeAttr(c.incoming.quantity + " @ " + c.incoming.price)}</td>
-    </tr>`).join("");
-
-  const html = `
-    <div class="import-stat-row">
-      <div class="import-stat"><div class="n">${totalExisting}</div><div class="l">Trades On File</div></div>
-      <div class="import-stat"><div class="n">${newTrades.length}</div><div class="l">Trades In File(s)</div></div>
-      <div class="import-stat"><div class="n">${plan.toAdd.length}</div><div class="l">New Trades To Add</div></div>
-      <div class="import-stat"><div class="n">${plan.unchanged.length}</div><div class="l">Already Imported</div></div>
-      <div class="import-stat ${plan.conflicts.length ? "warn" : ""}"><div class="n">${plan.conflicts.length}</div><div class="l">Conflicting Duplicates</div></div>
-    </div>
-    <p>Trade book data is stored only in this browser (never synced to the cloud) and is used by the Dashboard's Portfolio performance chart — it doesn't change your Equity, Mutual Funds or Gold holdings above.</p>
-    ${plan.batchDuplicates.length ? `<p class="settings-note">${plan.batchDuplicates.length} repeated trade_id${plan.batchDuplicates.length === 1 ? "" : "s"} within the selected file(s) themselves — the later row won for each.</p>` : ""}
-    ${plan.conflicts.length ? `
-      <h4>Conflicting duplicates <span class="hint">same account + exchange + segment + trade ID, different data</span></h4>
-      <div class="table-scroll-wrap">
-        <table>
-          <thead><tr><th class="left">Symbol</th><th class="left">Trade ID</th><th class="left">Stored (Qty @ Price)</th><th class="left">Incoming (Qty @ Price)</th></tr></thead>
-          <tbody>${conflictRows}</tbody>
-        </table>
-      </div>
-      ${plan.conflicts.length > 10 ? `<p class="settings-note">…and ${plan.conflicts.length - 10} more.</p>` : ""}
-      <div class="settings-field">
-        <label style="display:flex;align-items:center;gap:8px;">
-          <input type="checkbox" id="tbOverwriteConflicts" style="width:auto;">
-          Overwrite these ${plan.conflicts.length} conflicting ${plan.conflicts.length === 1 ? "entry" : "entries"} with the incoming data
-        </label>
-      </div>
-    ` : ""}
-  `;
-
-  openModal(
-    `Import Trade Book from ${escapeAttr(sourceLabel)} — Preview`,
-    html,
-    [
-      { label: "Cancel", onClick: () => { closeModal(); if (statusEl) statusEl.textContent = ""; } },
-      {
-        label: `Add ${plan.toAdd.length} Trade${plan.toAdd.length === 1 ? "" : "s"}`, primary: true, onClick: () => {
-          plan.toAdd.forEach(t => tradeBook.trades.push(t));
-          const overwriteEl = document.getElementById("tbOverwriteConflicts");
-          const overwrite = plan.conflicts.length > 0 && overwriteEl && overwriteEl.checked;
-          if (overwrite) {
-            plan.conflicts.forEach(c => {
-              const i = tradeBook.trades.findIndex(t => tradeKey(t) === c.key);
-              if (i !== -1) tradeBook.trades[i] = c.incoming; else tradeBook.trades.push(c.incoming);
-            });
-          }
-          tradeBook.imports.push({
-            id: uid(), fileName: sourceLabel, importedAt: new Date().toISOString(),
-            tradeCount: newTrades.length, added: plan.toAdd.length,
-            conflicts: plan.conflicts.length, overwritten: overwrite ? plan.conflicts.length : 0
-          });
-          saveTradeBook();
-          renderDashboard(); // picks up the new/changed trade count for the Portfolio performance chart
-          closeModal();
-          if (statusEl) {
-            statusEl.textContent = `Added ${plan.toAdd.length} new trade${plan.toAdd.length === 1 ? "" : "s"}` +
-              (overwrite ? `, overwrote ${plan.conflicts.length}.` : (plan.conflicts.length ? ` — ${plan.conflicts.length} conflicting duplicate${plan.conflicts.length === 1 ? "" : "s"} left as-is.` : "."));
-          }
-        }
-      }
-    ]
-  );
+async function downloadDriveFileAsText(fileId, accessToken) {
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+    headers: { Authorization: "Bearer " + accessToken }
+  });
+  if (!res.ok) throw new Error(`Drive returned HTTP ${res.status} for the trade book file.`);
+  return res.text();
 }
 
-// Remembers the account label typed for each filename within this
-// browser tab's session only (not persisted) — just a convenience so
-// re-importing the same account's updated export doesn't require
-// re-typing the label.
-let lastTradeBookAccountLabels = {};
-
-function openTradeBookAccountLabelModal(files) {
-  const rows = files.map((f, i) => `
-    <div class="settings-field">
-      <label for="tbAccountLabel${i}">${escapeAttr(f.name)}</label>
-      <input type="text" id="tbAccountLabel${i}" placeholder="e.g. Zerodha - Primary" value="${escapeAttr(lastTradeBookAccountLabels[f.name] || "")}">
-    </div>`).join("");
-  openModal(
-    "Label each file with an account",
-    `<p>A Tradebook export doesn't carry an account/Client ID the way the Holdings Statement does — give each file a short account label so trades from your different demat accounts can be told apart and deduplicated correctly. Using the same label on two files is correct when they really are the same account.</p>${rows}`,
-    [
-      { label: "Cancel", onClick: closeModal },
-      {
-        label: "Continue", primary: true, onClick: async () => {
-          const labels = files.map((f, i) => {
-            const el = document.getElementById(`tbAccountLabel${i}`);
-            const v = (el && el.value || "").trim() || f.name;
-            lastTradeBookAccountLabels[f.name] = v;
-            return v;
-          });
-          closeModal();
-          await processTradeBookFiles(files, labels);
-        }
-      }
-    ]
-  );
-}
-
-async function processTradeBookFiles(files, labels) {
-  const statusEl = document.getElementById("tradeBookImportStatus");
-  if (statusEl) statusEl.textContent = `Reading ${files.length} file${files.length > 1 ? "s" : ""}...`;
-  let allTrades = [];
-  let totalSkipped = 0;
+// `interactive` gates whether a consent popup is allowed if a silent
+// token refresh fails — true only for a user-initiated click (Connect
+// / Sync Now in Settings), false for the automatic on-load call, so
+// opening/reloading the page never pops a Google sign-in dialog on its
+// own; it just leaves lastSyncStatus as "needs-reconnect" instead.
+async function syncTradeBookFromDrive(interactive) {
+  if (!tradeBook.driveFileId) return;
+  if (!state.googleDriveClientId || !state.googleDriveApiKey) return;
+  const statusEl = document.getElementById("tradeBookSyncStatus");
   try {
-    for (let i = 0; i < files.length; i++) {
-      const text = await files[i].text();
-      const { trades, skipped } = parseTradeBookCSV(text, labels[i]);
-      allTrades = allTrades.concat(trades);
-      totalSkipped += skipped;
+    await ensureGisLoaded();
+    let token;
+    try {
+      token = await requestDriveAccessTokenSilent();
+    } catch (silentErr) {
+      if (!interactive) {
+        tradeBook.lastSyncStatus = "needs-reconnect";
+        saveTradeBook();
+        return;
+      }
+      token = await requestDriveAccessToken(); // user already clicked something, so a popup here is fine
     }
+    if (statusEl) statusEl.textContent = "Syncing trade book from Google Drive...";
+    const text = await downloadDriveFileAsText(tradeBook.driveFileId, token);
+    const accountLabel = tradeBook.driveFileName || "Google Drive";
+    const { trades: newTrades, skipped } = parseTradeBookCSV(text, accountLabel);
+    if (newTrades.length === 0) {
+      tradeBook.lastSyncStatus = "error";
+      tradeBook.lastSyncError = "No valid trade rows found in the Drive file.";
+      saveTradeBook();
+      if (statusEl) statusEl.textContent = "Sync failed — see note below.";
+      return;
+    }
+    const plan = planTradeBookImport(newTrades, tradeBook.trades);
+    plan.toAdd.forEach(t => tradeBook.trades.push(t));
+    tradeBook.imports.push({
+      id: uid(), fileName: "Google Drive: " + accountLabel, importedAt: new Date().toISOString(),
+      tradeCount: newTrades.length, added: plan.toAdd.length, conflicts: plan.conflicts.length
+    });
+    tradeBook.lastSyncedAt = new Date().toISOString();
+    tradeBook.lastSyncStatus = "ok";
+    tradeBook.lastSyncError = "";
+    tradeBook.lastSyncConflicts = plan.conflicts.length;
+    saveTradeBook();
+    renderDashboard(); // picks up the new trade count for the Portfolio performance chart
+    if (statusEl) {
+      statusEl.textContent = plan.toAdd.length
+        ? `Synced — added ${plan.toAdd.length} new trade${plan.toAdd.length === 1 ? "" : "s"}.`
+        : "Synced — no new trades.";
+    }
+    if (skipped > 0) console.warn(`Trade Book Drive sync: ${skipped} row(s) skipped (missing Symbol/Trade ID/Quantity/Price).`);
+  } catch (err) {
+    tradeBook.lastSyncStatus = "error";
+    tradeBook.lastSyncError = err && err.message ? err.message : "Unknown error";
+    saveTradeBook();
+    if (statusEl) statusEl.textContent = "Sync failed — see note below.";
+  }
+}
+
+// Opens the Picker (filtered to CSV files, single-select) so Ganesh
+// chooses the exact master_tradebook.csv once — this is what actually
+// grants the app's drive.file-scoped token access to that file's
+// bytes. Picking again later (e.g. if the file is ever recreated with
+// a new ID) reconnects to the new file.
+async function connectTradeBookDrive() {
+  if (!state.googleDriveClientId || !state.googleDriveApiKey) {
+    alert('Google Drive sync needs a one-time setup: add a "Google Drive Client ID" and "Google Drive API Key" in Settings (the same ones used by Zerodha Holdings import).');
+    return;
+  }
+  const statusEl = document.getElementById("tradeBookSyncStatus");
+  if (statusEl) statusEl.textContent = "Opening Google Drive...";
+  let files, accessToken;
+  try {
+    await ensurePickerLoaded();
+    await ensureGisLoaded();
+    accessToken = await requestDriveAccessToken();
+    files = await openDrivePicker(accessToken, { multiSelect: false, mimeTypes: "text/csv,text/plain" });
   } catch (err) {
     if (statusEl) statusEl.textContent = "";
-    alert("Could not read one of the selected files. Make sure each is an unmodified Zerodha Console Tradebook .csv export.");
+    alert("Could not open Google Drive: " + (err && err.message ? err.message : "unknown error"));
     return;
   }
-  if (statusEl) statusEl.textContent = "";
-  if (allTrades.length === 0) {
-    alert("No valid trade rows found in the selected file(s). Expected columns: symbol, isin, trade_date, exchange, segment, series, trade_type, auction, quantity, price, trade_id, order_id, order_execution_time.");
-    return;
-  }
-  const sourceLabel = files.map(f => f.name).join(", ");
-  showTradeBookImportPreview(allTrades, sourceLabel, statusEl);
-  if (totalSkipped > 0) {
-    console.warn(`Trade Book import: ${totalSkipped} row(s) skipped (missing Symbol/Trade ID/Quantity/Price).`);
-  }
+  if (!files || files.length === 0) { if (statusEl) statusEl.textContent = ""; return; } // person cancelled the picker
+  const file = files[0];
+  tradeBook.driveFileId = file.id;
+  tradeBook.driveFileName = file.name;
+  saveTradeBook();
+  await syncTradeBookFromDrive(true);
+  openSettingsModal(); // refresh the modal so it shows the newly-connected file + sync result
 }
-
-function openTradeBookImportChooser() {
-  openModal(
-    "Import Trade Book",
-    `<p>Import Zerodha Console Tradebook CSV exports — trade-level history (every buy/sell) used by the Dashboard's Portfolio performance chart. Equity, Mutual Fund and Gold ETF trades (e.g. GOLDBEES) are all detected automatically; you can select several files at once.</p>
-     <p class="settings-note">This is stored only in this browser (not synced to the cloud) and is separate from your Equity/Mutual Funds/Gold holdings — importing it never changes those tabs.</p>`,
-    [
-      { label: "Cancel", onClick: closeModal },
-      { label: "Choose Files", primary: true, onClick: () => { closeModal(); document.getElementById("importTradeBookFile").click(); } }
-    ]
-  );
-}
-
-document.getElementById("importTradeBookFile").addEventListener("change", async (e) => {
-  const files = Array.from(e.target.files || []);
-  e.target.value = "";
-  if (files.length === 0) return;
-  openTradeBookAccountLabelModal(files);
-});
 
 
 /* ============================================================
@@ -8182,14 +8179,20 @@ function openSettingsModal() {
       <span class="status-tag" id="investmentsImportStatus"></span>
     </div>
 
-    <h4>Import Trade Book</h4>
-    <p class="settings-note" style="margin-top:0">Import Zerodha Console Tradebook CSV exports (per demat account) to build trade-level history for the Dashboard's "Portfolio performance" chart below. Stored only in this browser — never synced to the cloud — and separate from your Equity/Mutual Funds/Gold holdings above; importing it never changes those tabs.</p>
+    <h4>Trade Book (Google Drive sync)</h4>
+    <p class="settings-note" style="margin-top:0">Trade-level history for the Dashboard's "Portfolio performance" chart is read automatically from your trade book CSV on Google Drive every time you open or reload this page — no manual file import anymore. Stored only in this browser — never synced to the cloud — and separate from your Equity/Mutual Funds/Gold holdings above.</p>
+    <p class="settings-note" style="margin-top:0">${tradeBook.driveFileId
+      ? `Connected to <b>${escapeAttr(tradeBook.driveFileName || "")}</b>.`
+      : "Not connected yet — click Connect Google Drive and pick your trade book CSV."}</p>
     <div class="settings-actions">
-      <button class="btn" id="settingsBtnImportTradeBook">Import Trade Book</button>
-      <span class="status-tag" id="tradeBookImportStatus"></span>
+      <button class="btn" id="settingsBtnConnectTradeBookDrive">${tradeBook.driveFileId ? "Change File" : "Connect Google Drive"}</button>
+      ${tradeBook.driveFileId ? `<button class="btn btn-ghost" id="settingsBtnSyncTradeBookNow">Sync Now</button>` : ""}
+      <span class="status-tag" id="tradeBookSyncStatus"></span>
       ${tradeBook.trades.length ? `<button class="btn btn-ghost" id="settingsBtnClearTradeBook">Clear Trade Book Data</button>` : ""}
     </div>
-    <p class="settings-note">${escapeAttr(tbSummaryText)}</p>
+    <p class="settings-note">${escapeAttr(tbSummaryText)}${tradeBook.lastSyncedAt ? ` Last synced ${new Date(tradeBook.lastSyncedAt).toLocaleString()}` : ""}${tradeBook.lastSyncConflicts ? ` — ${tradeBook.lastSyncConflicts} row${tradeBook.lastSyncConflicts === 1 ? "" : "s"} on the last sync had different data already stored and were left untouched.` : (tradeBook.lastSyncedAt ? "." : "")}</p>
+    ${tradeBook.lastSyncStatus === "error" ? `<p class="settings-note" style="color:var(--negative)">Last sync failed: ${escapeAttr(tradeBook.lastSyncError || "unknown error")}</p>` : ""}
+    ${tradeBook.lastSyncStatus === "needs-reconnect" ? `<p class="settings-note" style="color:var(--warning)">Google Drive access needs to be refreshed — click Sync Now or Change File above.</p>` : ""}
 
     <h4>Portfolio Performance Chart</h4>
     <p class="settings-note" style="margin-top:0">The Dashboard's "Portfolio performance" card compares your net invested capital (from the Trade Book above) against a Nifty 50 equivalent, using a small Apps Script Web App that serves your "Nifty History" sheet as JSON — same pattern as the Price/Holdings API URLs above, deployed separately. One-time setup: open the "Nifty Live (helper)" sheet → Extensions → Apps Script → make sure it has the <code>doGet()</code> function from the latest <code>nifty_daily_capture.gs</code> → Deploy → New deployment → Web app (Execute as: Me, Who has access: Anyone) → paste the resulting URL below.</p>
@@ -8258,14 +8261,17 @@ function openSettingsModal() {
     closeModal();
     openImportChooser();
   });
-  document.getElementById("settingsBtnImportTradeBook").addEventListener("click", () => {
-    closeModal();
-    openTradeBookImportChooser();
+  document.getElementById("settingsBtnConnectTradeBookDrive").addEventListener("click", () => {
+    connectTradeBookDrive();
   });
+  const syncTradeBookNowBtn = document.getElementById("settingsBtnSyncTradeBookNow");
+  if (syncTradeBookNowBtn) {
+    syncTradeBookNowBtn.addEventListener("click", () => syncTradeBookFromDrive(true));
+  }
   const clearTradeBookBtn = document.getElementById("settingsBtnClearTradeBook");
   if (clearTradeBookBtn) {
     clearTradeBookBtn.addEventListener("click", () => {
-      const ok = confirm(`Delete all ${tradeBook.trades.length} stored trade book records? This can't be undone. (Your Equity/Mutual Funds/Gold holdings are unaffected — this only clears trade-book data used by the Portfolio performance chart.)`);
+      const ok = confirm(`Delete all ${tradeBook.trades.length} stored trade book records and disconnect Google Drive sync? This can't be undone. (Your Equity/Mutual Funds/Gold holdings are unaffected — this only clears trade-book data used by the Portfolio performance chart.)`);
       if (!ok) return;
       tradeBook = blankTradeBook();
       saveTradeBook();
@@ -8429,4 +8435,11 @@ function runAllLiveRefreshes() {
   refreshIndexData();
 }
 runAllLiveRefreshes();
+
+// Trade book: once connected (Settings → Trade Book → Connect Google
+// Drive), re-reads the same Drive file automatically every time this
+// page loads/reloads — silently (no consent popup on its own; see
+// syncTradeBookFromDrive's `interactive` flag). There's no manual
+// "Import Trade Book" step anymore.
+syncTradeBookFromDrive(false);
 setInterval(runAllLiveRefreshes, LIVE_REFRESH_INTERVAL_MS);

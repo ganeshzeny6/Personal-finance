@@ -1691,7 +1691,6 @@
 
     <input type="file" id="importFile" accept="application/json" style="display:none">
     <input type="file" id="importInvestmentsFile" accept=".xlsx,.xls" multiple style="display:none">
-    <input type="file" id="importTradeBookFile" accept=".csv" multiple style="display:none">
 
     <main>
 
@@ -1802,8 +1801,8 @@
       </div>
       <div class="dash-perf-chart-placeholder" id="dashPerfPlaceholder">
         <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
-        <div class="dash-perf-chart-placeholder-title" id="dashPerfPlaceholderTitle">No trade book imported yet</div>
-        <p id="dashPerfPlaceholderText">Import your trade book (Settings → Import Trade Book) and add a Nifty History API URL (Settings) to enable this chart — it compares your actual invested capital against a Nifty 50 equivalent computed from your real trade dates. Full P&amp;L and allocation numbers above are unaffected either way.</p>
+        <div class="dash-perf-chart-placeholder-title" id="dashPerfPlaceholderTitle">No trade book synced yet</div>
+        <p id="dashPerfPlaceholderText">Connect your trade book (Settings → Trade Book) and add a Nifty History API URL (Settings) to enable this chart — once connected it re-syncs from Google Drive automatically and compares your actual invested capital against a Nifty 50 equivalent computed from your real trade dates. Full P&amp;L and allocation numbers above are unaffected either way.</p>
       </div>
       <div class="dash-perf-chart-wrap" id="dashPerfChartWrap" style="display:none">
         <div class="chart-wrap" style="height:260px;"><canvas id="dashPerfChart"></canvas></div>
