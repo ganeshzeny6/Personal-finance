@@ -544,7 +544,7 @@ modalOverlay.addEventListener("click", (e) => {
    ============================================================ */
 
 const tableUI = {
-  equity: { sortCol: "allocPct", sortDir: -1, filter: "" },
+  equity: { sortCol: "allocPct", sortDir: -1, filter: "", sector: "" },
   debt:   { sortCol: "maturityDate", sortDir: 1, filter: "" },
   mf:     { sortCol: "allocPct", sortDir: -1, filter: "", category: "" },
   gold:   { sortCol: null, sortDir: 1, filter: "" },
@@ -995,15 +995,24 @@ function equityDerived(row) {
   return { avgPrice, currentValue, pl, plPct };
 }
 
-function equityTotals() {
+// Totals over an arbitrary set of rows — equityTotals() is just this
+// called with the full portfolio. Same split as mfTotalsFor()/
+// mfTotals(), for the same reason: the table's own Total row can
+// reflect whatever's currently filtered/searched without disturbing
+// the whole-portfolio figures the summary cards and XIRR use.
+function equityTotalsFor(rows) {
   let invested = 0, current = 0;
-  state.equity.forEach(r => {
+  rows.forEach(r => {
     invested += Number(r.invested) || 0;
     current += equityDerived(r).currentValue;
   });
   const pl = current - invested;
   const plPct = invested > 0 ? (pl / invested) * 100 : 0;
   return { invested, current, pl, plPct };
+}
+
+function equityTotals() {
+  return equityTotalsFor(state.equity);
 }
 
 // Equity's Cap (Large/Mid/Small) column reuses the exact same Screener
@@ -1090,141 +1099,506 @@ function equityGetSortValue(row, col, screenerMap) {
   }
 }
 
-function renderEquity() {
-  const tbody = document.getElementById("equityTableBody");
-  tbody.innerHTML = "";
-  const totals = equityTotals();
-  // Built once per render and threaded through the search/sort
-  // closures below, rather than rebuilt per row — buildScreenerMap()
-  // is the same lookup Stock Analysis uses.
-  const screenerMap = buildScreenerMap();
-  const displayRows = applySortFilter(
-    "equity", state.equity,
+/* ---- Equity XIRR ----
+   Reuses the shared calcXIRR()/buildXIRRCashflows() from the Mutual
+   Funds section above. Unlike Mutual Funds, Equity's per-stock match
+   is fully reliable, not best-effort: a stock's own row.name IS its
+   trading symbol (that's what Zerodha Holdings import matches on —
+   see the `equity:` entry in the Zerodha import config), and the
+   Trade Book's own Symbol column for an "equity" trade is exactly
+   the same string, so matching row.name against trade.symbol
+   (case-insensitive) is a genuine one-to-one key, not a coincidence
+   the way it sometimes is for Mutual Funds. */
+function eqPortfolioXIRR() {
+  const trades = tradeBook.trades.filter(t => t.assetClass === "equity");
+  if (trades.length === 0) return null;
+  return calcXIRR(buildXIRRCashflows(trades, equityTotals().current));
+}
+function eqStockXIRR(row) {
+  const key = (row.name || "").trim().toUpperCase();
+  if (!key) return null;
+  const trades = tradeBook.trades.filter(t => t.assetClass === "equity" && (t.symbol || "").trim().toUpperCase() === key);
+  if (trades.length === 0) return null;
+  return calcXIRR(buildXIRRCashflows(trades, equityDerived(row).currentValue));
+}
+
+/* ---- Sector color coding — same hashSlot() scheme Mutual Funds
+   uses for Category, with its own set of pinned common sectors so
+   the usual suspects land on a sensible, stable color. ---- */
+const EQ_KNOWN_SECTOR_SLOTS = {
+  "it": 0, "information technology": 0, "technology": 0,
+  "banking": 1, "financial services": 1, "finance": 1, "bank": 1, "bfsi": 1,
+  "pharma": 2, "pharmaceuticals": 2, "healthcare": 2,
+  "fmcg": 3, "consumer goods": 3, "consumer staples": 3,
+  "auto": 4, "automobile": 4, "automotive": 4,
+  "energy": 5, "oil & gas": 5, "oil and gas": 5, "power": 5,
+  "metals": 6, "metals & mining": 6, "mining": 6, "steel": 6,
+  "infrastructure": 7, "infra": 7, "construction": 7, "realty": 7, "real estate": 7
+};
+function eqSectorSlot(sector) {
+  const key = String(sector || "").trim().toLowerCase();
+  if (!key) return 7;
+  if (key in EQ_KNOWN_SECTOR_SLOTS) return EQ_KNOWN_SECTOR_SLOTS[key];
+  return hashSlot(key, 8);
+}
+// Reuses the exact same .mf-cat-badge/.mf-avatar classes Mutual
+// Funds built for its Category badge/avatar — a colored pill and an
+// initial-in-a-circle are the same component either way, so sharing
+// the CSS keeps the two tabs visually consistent for free.
+function eqSectorBadgeHTML(sector) {
+  if (!sector) return '<span class="mf-cat-badge mf-cat-7">Uncategorized</span>';
+  return `<span class="mf-cat-badge mf-cat-${eqSectorSlot(sector)}">${escapeAttr(sector)}</span>`;
+}
+function eqAvatarHTML(row) {
+  const initial = (String(row.name || "").trim().charAt(0) || "?").toUpperCase();
+  return `<div class="mf-avatar mf-cat-${eqSectorSlot(row.sector)}">${escapeAttr(initial)}</div>`;
+}
+
+// Applies the Sector dropdown on top of the shared search/sort infra
+// — mirrors mfVisibleRows(), just with Equity's screenerMap threaded
+// through since equityGetSearchText/equityGetSortValue both need it
+// for the Cap column.
+function eqVisibleRows(screenerMap) {
+  let rows = state.equity;
+  if (tableUI.equity.sector) rows = rows.filter(r => (r.sector || "") === tableUI.equity.sector);
+  return applySortFilter(
+    "equity", rows,
     (row) => equityGetSearchText(row, screenerMap),
     (row, col) => equityGetSortValue(row, col, screenerMap)
   );
+}
+
+function populateEquitySectorFilter() {
+  const sel = document.getElementById("equitySectorFilter");
+  if (!sel) return;
+  const current = tableUI.equity.sector;
+  const sectors = Array.from(new Set(state.equity.map(r => r.sector).filter(Boolean))).sort();
+  sel.innerHTML = '<option value="">All Sectors</option>' +
+    sectors.map(s => `<option value="${escapeAttr(s)}">${escapeAttr(s)}</option>`).join("");
+  if (sectors.includes(current)) sel.value = current;
+  else { tableUI.equity.sector = ""; sel.value = ""; }
+}
+
+function renderEquitySummary() {
+  const el = document.getElementById("eqSummaryGrid");
+  if (!el) return;
+  const totals = equityTotals();
+  const xirr = eqPortfolioXIRR();
+  el.innerHTML = `
+    <div class="sa-stat-card accent-blue">
+      <div class="sa-stat-label">${icon("wallet", 14)} Total Invested</div>
+      <div class="sa-stat-value">${fmtINR(totals.invested)}</div>
+    </div>
+    <div class="sa-stat-card accent-gold">
+      <div class="sa-stat-label">${icon("trending-up", 14)} Current Value</div>
+      <div class="sa-stat-value">${fmtINR(totals.current)}</div>
+    </div>
+    <div class="sa-stat-card ${totals.pl >= 0 ? "accent-pos" : "accent-neg"}">
+      <div class="sa-stat-label">${icon(totals.pl >= 0 ? "trending-up" : "trending-down", 14)} Total P&amp;L</div>
+      <div class="sa-stat-value ${plClass(totals.pl)}">${fmtINRCompactSigned(totals.pl)}<span class="sa-stat-sub">${fmtPct(totals.plPct)}</span></div>
+    </div>
+    <div class="sa-stat-card accent-warn">
+      <div class="sa-stat-label">${icon("percent", 14)} XIRR</div>
+      <div class="sa-stat-value ${xirr === null ? "muted" : plClass(xirr)}">${xirr === null ? "—" : fmtPct(xirr)}</div>
+      ${xirr === null ? '<div class="sa-stat-sub" style="margin-left:0;margin-top:5px;display:block;">Connect Trade Book for XIRR</div>' : ""}
+    </div>
+  `;
+}
+
+/* ---- floating three-dot row menu — same CSS/behavior as Mutual
+   Funds' own menu (.mf-menu-*), a separate singleton element so
+   each tab's menu is independent. ---- */
+let eqMenuOpenRowId = null;
+function eqMenuOutsideHandler(e) {
+  const el = document.getElementById("eqRowMenu");
+  if (el && !el.contains(e.target)) closeEqRowMenu();
+}
+function closeEqRowMenu() {
+  const el = document.getElementById("eqRowMenu");
+  if (el) el.remove();
+  eqMenuOpenRowId = null;
+  document.removeEventListener("click", eqMenuOutsideHandler, true);
+  window.removeEventListener("resize", closeEqRowMenu);
+  window.removeEventListener("scroll", closeEqRowMenu, true);
+}
+function openEqRowMenu(btn, rowId) {
+  if (eqMenuOpenRowId === rowId) { closeEqRowMenu(); return; }
+  closeEqRowMenu();
+  const row = state.equity.find(r => r.id === rowId);
+  if (!row) return;
+  eqMenuOpenRowId = rowId;
+
+  const menu = document.createElement("div");
+  menu.id = "eqRowMenu";
+  menu.className = "mf-menu-dropdown open";
+  menu.innerHTML = `
+    <button type="button" class="mf-menu-item" data-act="view">${icon("eye", 15)} View Details</button>
+    <button type="button" class="mf-menu-item" data-act="transactions">${icon("list", 15)} View Transactions</button>
+    <button type="button" class="mf-menu-item" data-act="sector">${icon("edit-3", 15)} Edit Sector</button>
+    <button type="button" class="mf-menu-item danger" data-act="remove">${icon("trash-2", 15)} Remove Holding</button>
+  `;
+  document.body.appendChild(menu);
+
+  const r = btn.getBoundingClientRect();
+  const menuW = menu.offsetWidth || 190;
+  let left = Math.max(8, Math.min(r.right - menuW, window.innerWidth - menuW - 8));
+  menu.style.left = left + "px";
+  menu.style.top = (r.bottom + 6) + "px";
+  requestAnimationFrame(() => {
+    const mh = menu.getBoundingClientRect().height;
+    if (r.bottom + 6 + mh > window.innerHeight - 8) {
+      menu.style.top = Math.max(8, r.top - mh - 6) + "px";
+    }
+  });
+
+  menu.querySelector('[data-act="view"]').addEventListener("click", () => { closeEqRowMenu(); openEqDrawer(rowId); });
+  menu.querySelector('[data-act="transactions"]').addEventListener("click", () => { closeEqRowMenu(); openEqTransactionsModal(rowId); });
+  menu.querySelector('[data-act="sector"]').addEventListener("click", () => { closeEqRowMenu(); openEqDrawer(rowId, { focusSector: true }); });
+  menu.querySelector('[data-act="remove"]').addEventListener("click", () => {
+    closeEqRowMenu();
+    eqRemoveHolding(rowId);
+  });
+
+  setTimeout(() => document.addEventListener("click", eqMenuOutsideHandler, true), 0);
+  window.addEventListener("resize", closeEqRowMenu);
+  window.addEventListener("scroll", closeEqRowMenu, true);
+}
+
+function eqRemoveHolding(rowId) {
+  const row = state.equity.find(r => r.id === rowId);
+  if (!row) return;
+  const ok = confirm(`Remove "${row.name || "this stock"}" from your Equity holdings? This can't be undone.`);
+  if (!ok) return;
+  state.equity = state.equity.filter(r => r.id !== rowId);
+  saveState();
+  if (eqDrawerRowId === rowId) closeEqDrawer();
+  renderEquity();
+  renderDashboard();
+}
+
+/* ---- detail drawer ---- */
+let eqDrawerRowId = null;
+
+function eqDrawerVisualizationHTML(row, d) {
+  const invested = Number(row.invested) || 0;
+  const current = d.currentValue;
+  const max = Math.max(invested, current, 1);
+  return `
+    <div class="sa-detail-section">
+      <div class="sa-detail-section-title">Invested vs Current Value</div>
+      <div class="mf-viz-row">
+        <div class="mf-viz-label">Invested</div>
+        <div class="mf-alloc-track"><div class="mf-alloc-fill" style="width:${clamp((invested / max) * 100, 0, 100)}%;background:var(--blue)"></div></div>
+        <div class="mf-viz-value">${fmtINRCompact(invested)}</div>
+      </div>
+      <div class="mf-viz-row">
+        <div class="mf-viz-label">Current</div>
+        <div class="mf-alloc-track"><div class="mf-alloc-fill" style="width:${clamp((current / max) * 100, 0, 100)}%;background:${d.pl >= 0 ? "var(--positive)" : "var(--negative)"}"></div></div>
+        <div class="mf-viz-value">${fmtINRCompact(current)}</div>
+      </div>
+    </div>
+  `;
+}
+
+function eqDrawerBodyHTML(row) {
+  const d = equityDerived(row);
+  const totals = equityTotals();
+  const allocPct = totals.invested > 0 ? (Number(row.invested) / totals.invested) * 100 : 0;
+  const screenerMap = buildScreenerMap();
+  const capCategory = getEquityCapCategory(row, screenerMap);
+  const allocMax = getEquityAllocLimit(capCategory);
+  const allocStatus = allocLimitStatus(allocPct, allocMax);
+  const stockXirr = eqStockXIRR(row);
+  const locked = isReadOnly();
+  const chg = dayChangePct(row.ltp, row.prevClose);
+  const chgHTML = chg === null
+    ? '<span class="muted">—</span>'
+    : `<span class="${chg > 0 ? "pos" : chg < 0 ? "neg" : "muted"}">${chg > 0 ? "▲" : chg < 0 ? "▼" : "•"} ${chg >= 0 ? "+" : ""}${fmtNum(chg, 2)}%</span>${row.marketDataStale ? ' <span class="dc-stale-dot" title="Some live fields could not refresh this cycle">•</span>' : ""}`;
+
+  return `
+    <div class="sa-detail-head" style="border-bottom:none;padding-bottom:0;margin-bottom:16px;">
+      ${eqAvatarHTML(row)}
+      <div style="flex:1 1 auto;min-width:0;">
+        <div class="sa-detail-name">${escapeAttr(row.name || "Unnamed stock")}</div>
+        <div class="sa-detail-meta">${eqSectorBadgeHTML(row.sector)}${capCategory ? ` <span class="muted">· ${escapeAttr(capCategory)}</span>` : ""}</div>
+      </div>
+    </div>
+    <div class="sa-detail-sections" style="grid-template-columns:1fr 1fr;margin-bottom:16px;">
+      <div class="sa-detail-section">
+        <div class="sa-detail-section-title">Overview</div>
+        <div class="sa-detail-row"><span class="k">Invested</span><span class="v">${fmtINR(row.invested)}</span></div>
+        <div class="sa-detail-row"><span class="k">Current Value</span><span class="v">${fmtINR(d.currentValue)}</span></div>
+        <div class="sa-detail-row"><span class="k">P&amp;L</span><span class="v ${plClass(d.pl)}">${fmtINRCompactSigned(d.pl)}</span></div>
+        <div class="sa-detail-row"><span class="k">Return %</span><span class="v ${plClass(d.pl)}">${fmtPct(d.plPct)}</span></div>
+        <div class="sa-detail-row"><span class="k">Allocation</span><span class="v${allocStatus ? " limit-" + allocStatus : ""}">${fmtNum(allocPct)}%${allocMax !== null ? ` <span class="alloc-limit-note">/ ${allocMax}%</span>` : ""}</span></div>
+        <div class="sa-detail-row"><span class="k">Stock XIRR</span><span class="v ${stockXirr === null ? "muted" : plClass(stockXirr)}">${stockXirr === null ? "Insufficient trade data" : fmtPct(stockXirr)}</span></div>
+      </div>
+      <div class="sa-detail-section">
+        <div class="sa-detail-section-title">Stock Details</div>
+        <div class="sa-detail-row"><span class="k">Units</span><span class="v">${fmtNum(row.units, 2)}</span></div>
+        <div class="sa-detail-row"><span class="k">Avg Price</span><span class="v">${fmtNum(d.avgPrice)}</span></div>
+        <div class="sa-detail-row"><span class="k">LTP</span><span class="v">${fmtNum(row.ltp)}${row.livePricePending ? ' <span class="pending-badge">Pending</span>' : ""}</span></div>
+        <div class="sa-detail-row"><span class="k">Day Change</span><span class="v">${chgHTML}</span></div>
+        <div class="sa-detail-row"><span class="k">Prev Close</span><span class="v">${row.prevClose != null ? fmtNum(row.prevClose, 2) : "—"}</span></div>
+        <div class="sa-detail-row"><span class="k">Day Range</span><span class="v">${row.dayLow != null && row.dayHigh != null ? `${fmtNum(row.dayLow, 2)} – ${fmtNum(row.dayHigh, 2)}` : "—"}</span></div>
+        <div class="sa-detail-row"><span class="k">52W Range</span><span class="v">${row.low52Live != null && row.high52Live != null ? `${fmtNum(row.low52Live, 2)} – ${fmtNum(row.high52Live, 2)}` : "—"}</span></div>
+      </div>
+    </div>
+    ${eqDrawerVisualizationHTML(row, d)}
+    <div class="sa-detail-section" style="margin-top:14px;">
+      <div class="sa-detail-section-title">Sector</div>
+      <input type="text" id="eqDrawerSector" value="${escapeAttr(row.sector || "")}" placeholder="e.g. IT" ${locked ? "disabled" : ""}
+        style="width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font-body);font-size:13px;padding:8px 10px;">
+    </div>
+    <div class="drawer-actions">
+      <button type="button" class="btn btn-ghost" id="eqDrawerViewTx">${icon("list", 15)} View Transactions</button>
+      ${locked ? "" : `<button type="button" class="btn btn-ghost" id="eqDrawerRemove" style="color:var(--negative)">${icon("trash-2", 15)} Remove Holding</button>`}
+    </div>
+  `;
+}
+
+function openEqDrawer(rowId, opts) {
+  const row = state.equity.find(r => r.id === rowId);
+  if (!row) return;
+  closeEqRowMenu();
+  eqDrawerRowId = rowId;
+  document.getElementById("eqDrawerBody").innerHTML = eqDrawerBodyHTML(row);
+  document.getElementById("eqDrawerOverlay").classList.add("open");
+
+  const sectorInput = document.getElementById("eqDrawerSector");
+  if (sectorInput) {
+    sectorInput.addEventListener("change", () => {
+      row.sector = sectorInput.value;
+      saveState();
+      renderDashboard();
+    });
+    if (opts && opts.focusSector) setTimeout(() => sectorInput.focus(), 260);
+  }
+  const viewTxBtn = document.getElementById("eqDrawerViewTx");
+  if (viewTxBtn) viewTxBtn.addEventListener("click", () => openEqTransactionsModal(rowId));
+  const removeBtn = document.getElementById("eqDrawerRemove");
+  if (removeBtn) removeBtn.addEventListener("click", () => eqRemoveHolding(rowId));
+}
+
+function closeEqDrawer() {
+  const overlay = document.getElementById("eqDrawerOverlay");
+  if (overlay) overlay.classList.remove("open");
+  eqDrawerRowId = null;
+}
+
+// View Transactions — Trade Book rows matched to this stock by
+// Symbol. Unlike Mutual Funds, this match is reliable rather than
+// best-effort (see eqStockXIRR()'s comment above).
+function openEqTransactionsModal(rowId) {
+  const row = state.equity.find(r => r.id === rowId);
+  if (!row) return;
+  const key = (row.name || "").trim().toUpperCase();
+  const trades = key ? tradeBook.trades.filter(t => t.assetClass === "equity" && (t.symbol || "").trim().toUpperCase() === key) : [];
+  const sorted = [...trades].sort((a, b) => String(a.tradeDate).localeCompare(String(b.tradeDate)));
+
+  let body;
+  if (tradeBook.trades.length === 0) {
+    body = `<p class="settings-note" style="margin-top:0">Connect your Trade Book (Settings → Trade Book) to see transaction history here — once connected it syncs automatically from Google Drive.</p>`;
+  } else if (sorted.length === 0) {
+    body = `<p class="settings-note" style="margin-top:0">No Trade Book transactions found for this stock yet.</p>`;
+  } else {
+    body = `<div class="table-scroll-wrap"><table>
+        <thead><tr><th>Date</th><th>Type</th><th>Qty</th><th>Price</th><th>Amount</th></tr></thead>
+        <tbody>${sorted.map(t => `
+          <tr>
+            <td>${escapeAttr(String(t.tradeDate).slice(0, 10))}</td>
+            <td style="text-transform:capitalize">${escapeAttr(t.tradeType || "")}</td>
+            <td>${fmtNum(t.quantity, 2)}</td>
+            <td>${fmtNum(t.price)}</td>
+            <td>${fmtINR(Number(t.quantity) * Number(t.price))}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table></div>`;
+  }
+  openModal(`Transactions — ${row.name || "Stock"}`, body, [{ label: "Close", primary: true, onClick: closeModal }]);
+}
+
+function renderEquityMobileList() {
+  const wrap = document.getElementById("equityMobileList");
+  if (!wrap) return;
+  const screenerMap = buildScreenerMap();
+  const rows = eqVisibleRows(screenerMap);
+  const viewTotals = equityTotalsFor(rows);
 
   if (state.equity.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="13">No stocks yet. Use "Import Holdings" to bring in your Zerodha Console export.</td></tr>';
-  } else if (displayRows.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="13">No stocks match this filter.</td></tr>';
+    wrap.innerHTML = '<div class="empty-row" style="padding:22px 0;text-align:center;color:var(--text-faint)">No stocks yet. Use "Import Holdings" to bring in your Zerodha Console export.</div>';
+    return;
+  }
+  if (rows.length === 0) {
+    wrap.innerHTML = '<div class="empty-row" style="padding:22px 0;text-align:center;color:var(--text-faint)">No stocks match this filter.</div>';
+    return;
   }
 
-  // Name, Invested, Units and LTP are only ever meant to change via
-  // Zerodha Holdings import or the automatic live-price refresh now —
-  // they're permanently read-only regardless of the Lock Portfolio
-  // toggle. Sector is the one field left for manual annotation, and
-  // still follows the Lock Portfolio toggle like the rest of the app.
-  const notesLocked = isReadOnly();
-  displayRows.forEach(row => {
+  wrap.innerHTML = rows.map(row => {
     const d = equityDerived(row);
-    // Alloc % reflects each stock's share of total invested capital,
-    // not its share of current market value.
-    const allocPct = totals.invested > 0 ? (Number(row.invested) / totals.invested) * 100 : 0;
+    const allocPct = viewTotals.invested > 0 ? (Number(row.invested) / viewTotals.invested) * 100 : 0;
     const capCategory = getEquityCapCategory(row, screenerMap);
     const allocMax = getEquityAllocLimit(capCategory);
     const allocStatus = allocLimitStatus(allocPct, allocMax);
-    const allocCellClass = allocStatus ? `c-alloc alloc-${allocStatus}` : "c-alloc";
+    const chg = dayChangePct(row.ltp, row.prevClose);
+    const chgChip = chg === null ? "" : `<div class="eq-fund-daychg"><span class="dc-chip ${chg > 0 ? "pos" : chg < 0 ? "neg" : "muted"}">${chg > 0 ? "▲" : chg < 0 ? "▼" : "•"} ${chg >= 0 ? "+" : ""}${fmtNum(chg, 2)}%</span></div>`;
+    return `
+      <div class="mf-mobile-card" data-id="${row.id}">
+        <div class="mf-mobile-card-top">
+          ${eqAvatarHTML(row)}
+          <div class="mf-fund-name-wrap">
+            <div class="mf-fund-name">${escapeAttr(row.name || "Unnamed stock")}</div>
+            ${eqSectorBadgeHTML(row.sector)}
+            ${chgChip}
+          </div>
+          <div class="mf-menu-wrap mf-mobile-card-menu">
+            <button type="button" class="mf-menu-btn" title="Actions" aria-label="Actions">${icon("more-vertical", 18)}</button>
+          </div>
+        </div>
+        <div class="mf-mobile-card-values">
+          <div class="mf-mobile-card-value"><div class="l">Invested</div><div class="v">${fmtINR(row.invested)}</div></div>
+          <div class="mf-mobile-card-value align-r"><div class="l">Current</div><div class="v">${fmtINR(d.currentValue)}</div></div>
+        </div>
+        <div class="mf-mobile-card-values">
+          <div class="mf-mobile-card-value"><div class="l">P&amp;L</div><div class="v ${plClass(d.pl)}">${fmtINRCompactSigned(d.pl)}</div></div>
+          <div class="mf-mobile-card-value align-r"><div class="l">Return</div><div class="v ${plClass(d.pl)}">${fmtPct(d.plPct)}</div></div>
+        </div>
+        <div class="mf-mobile-card-alloc">
+          <div class="mf-alloc-track"><div class="mf-alloc-fill${allocStatus ? " limit-" + allocStatus : ""}" style="width:${clamp(allocPct, 0, 100)}%"></div></div>
+          <span class="mf-alloc-pct${allocStatus ? " limit-" + allocStatus : ""}">${fmtNum(allocPct, 1)}%</span>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  wrap.querySelectorAll(".mf-mobile-card").forEach(card => {
+    card.addEventListener("click", (e) => {
+      if (e.target.closest(".mf-menu-wrap")) return;
+      openEqDrawer(card.dataset.id);
+    });
+    card.querySelector(".mf-menu-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      openEqRowMenu(e.currentTarget, card.dataset.id);
+    });
+  });
+}
+
+function renderEquity() {
+  populateEquitySectorFilter();
+  renderEquitySummary();
+
+  const tbody = document.getElementById("equityTableBody");
+  tbody.innerHTML = "";
+  // Built once per render and threaded through the search/sort/alloc
+  // closures below, rather than rebuilt per row — buildScreenerMap()
+  // is the same lookup Stock Analysis uses.
+  const screenerMap = buildScreenerMap();
+  const displayRows = eqVisibleRows(screenerMap);
+  // Table Total row (and each row's Allocation %) is scoped to
+  // whatever's currently filtered/searched, not the whole portfolio
+  // — same behavior as the Mutual Funds redesign. Allocation stays
+  // invested-based (not current-value-based), matching Equity's
+  // pre-existing semantics.
+  const viewTotals = equityTotalsFor(displayRows);
+  const filtered = !!(tableUI.equity.sector || tableUI.equity.filter);
+  const totalLabel = document.getElementById("eqTotalLabel");
+  if (totalLabel) totalLabel.textContent = filtered ? "Total (filtered)" : "Total";
+
+  if (state.equity.length === 0) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="8">No stocks yet. Use "Import Holdings" to bring in your Zerodha Console export.</td></tr>';
+  } else if (displayRows.length === 0) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="8">No stocks match this filter.</td></tr>';
+  }
+
+  displayRows.forEach(row => {
+    const d = equityDerived(row);
+    // Alloc % reflects each stock's share of total invested capital,
+    // not its share of current market value — unchanged from before
+    // the redesign, just re-based on viewTotals so it recomputes
+    // when filtered.
+    const allocPct = viewTotals.invested > 0 ? (Number(row.invested) / viewTotals.invested) * 100 : 0;
+    const capCategory = getEquityCapCategory(row, screenerMap);
+    const allocMax = getEquityAllocLimit(capCategory);
+    const allocStatus = allocLimitStatus(allocPct, allocMax);
     const allocTitle = allocStatus
       ? `${allocLimitStatusLabel(allocStatus)} — limit ${allocMax}% (${capCategory})`
       : "Import Screener Data to classify this stock's cap category and see its allocation limit";
     const allocLimitNote = allocMax !== null ? `<span class="alloc-limit-note">/ ${allocMax}%</span>` : "";
+    const pendingBadge = row.livePricePending ? ' <span class="pending-badge">Pending</span>' : "";
+    const chg = dayChangePct(row.ltp, row.prevClose);
+    const chgChip = chg === null
+      ? ""
+      : `<div class="eq-fund-daychg"><span class="dc-chip ${chg > 0 ? "pos" : chg < 0 ? "neg" : "muted"}">${chg > 0 ? "▲" : chg < 0 ? "▼" : "•"} ${chg >= 0 ? "+" : ""}${fmtNum(chg, 2)}%${row.marketDataStale ? '<span class="dc-stale-dot" title="Some live fields could not refresh this cycle">•</span>' : ""}</span></div>`;
     const tr = document.createElement("tr");
     tr.dataset.id = row.id;
+    tr.className = "eq-row";
     tr.innerHTML = `
-      <td class="left sticky-col"><input type="text" value="${escapeAttr(row.name || "")}" data-field="name" placeholder="e.g. TCS.NS" disabled></td>
-      <td class="left" data-label="Sector"><input type="text" value="${escapeAttr(row.sector || "")}" data-field="sector" placeholder="e.g. IT" ${notesLocked ? "disabled" : ""}></td>
-      <td class="left" data-label="Cap">${capCategory ? escapeAttr(capCategory) : '<span class="muted">—</span>'}</td>
-      <td data-label="Invested Amt"><input type="number" step="any" value="${roundedInputValue(row.invested)}" data-field="invested" disabled></td>
-      <td data-label="Units"><input type="number" step="any" value="${roundedInputValue(row.units)}" data-field="units" disabled></td>
-      <td class="c-avg" data-label="Avg Price">${fmtNum(d.avgPrice)}</td>
-      <td data-label="LTP">${renderEquityPriceCellHTML(row)}</td>
-      <td class="c-daychg" data-label="Day Chg %">${renderEquityDayChangeCellHTML(row)}</td>
-      <td class="c-cv" data-label="Current Value">${fmtNum(d.currentValue)}</td>
-      <td class="c-pl ${plClass(d.pl)}" data-label="P&amp;L">${fmtNum(d.pl)}</td>
-      <td class="c-plpct ${plClass(d.pl)}" data-label="P&amp;L %">${fmtPct(d.plPct)}</td>
-      <td class="${allocCellClass}" data-label="Alloc %" title="${escapeAttr(allocTitle)}">${fmtNum(allocPct)}%${allocLimitNote}</td>
-      <td class="row-actions"><button class="icon-btn" title="Remove">✕</button></td>
+      <td class="left sticky-col" data-label="Stock">
+        <div class="mf-fund-cell">
+          ${eqAvatarHTML(row)}
+          <div class="mf-fund-name-wrap">
+            <div class="mf-fund-name" title="${escapeAttr(row.name || "")}">${escapeAttr(row.name || "Unnamed stock")}</div>
+            ${chgChip}
+          </div>
+        </div>
+      </td>
+      <td class="left" data-label="Sector">${eqSectorBadgeHTML(row.sector)}</td>
+      <td data-label="Invested Amt">${fmtINR(row.invested)}</td>
+      <td data-label="Current Value">${fmtINR(d.currentValue)}${pendingBadge}</td>
+      <td class="${plClass(d.pl)}" data-label="P&amp;L">${fmtINRCompactSigned(d.pl)}</td>
+      <td class="${plClass(d.pl)}" data-label="Return %">${fmtPct(d.plPct)}</td>
+      <td data-label="Allocation" title="${escapeAttr(allocTitle)}">
+        <div class="mf-alloc-cell">
+          <div class="mf-alloc-track"><div class="mf-alloc-fill${allocStatus ? " limit-" + allocStatus : ""}" style="width:${clamp(allocPct, 0, 100)}%"></div></div>
+          <span class="mf-alloc-pct${allocStatus ? " limit-" + allocStatus : ""}">${fmtNum(allocPct, 1)}%${allocLimitNote}</span>
+        </div>
+      </td>
+      <td class="row-actions">
+        <div class="mf-menu-wrap">
+          <button type="button" class="mf-menu-btn" title="Actions" aria-label="Actions">${icon("more-vertical", 16)}</button>
+        </div>
+      </td>
     `;
-    tr.querySelectorAll("input").forEach(inp => {
-      inp.addEventListener("change", () => {
-        const field = inp.dataset.field;
-        row[field] = (field === "name" || field === "sector") ? inp.value : parseFloat(inp.value) || 0;
-        saveState();
-        updateEquityComputed();
-        renderDashboard();
-      });
+    tr.addEventListener("click", (e) => {
+      if (e.target.closest(".mf-menu-wrap")) return;
+      openEqDrawer(row.id);
     });
-    tr.querySelector(".icon-btn").addEventListener("click", () => {
-      state.equity = state.equity.filter(r => r.id !== row.id);
-      saveState();
-      renderEquity();
-      renderDashboard();
+    tr.querySelector(".mf-menu-btn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      openEqRowMenu(e.currentTarget, row.id);
     });
     tbody.appendChild(tr);
   });
 
-  document.getElementById("eqTotalInvested").textContent = fmtINR(totals.invested);
-  document.getElementById("eqTotalCurrent").textContent = fmtINR(totals.current);
+  document.getElementById("eqTotalInvested").textContent = fmtINR(viewTotals.invested);
+  document.getElementById("eqTotalCurrent").textContent = fmtINR(viewTotals.current);
   const plCell = document.getElementById("eqTotalPL");
-  plCell.textContent = fmtINR(totals.pl);
-  plCell.className = plClass(totals.pl);
+  plCell.textContent = fmtINR(viewTotals.pl);
+  plCell.className = plClass(viewTotals.pl);
   const plPctCell = document.getElementById("eqTotalPLPct");
-  plPctCell.textContent = fmtPct(totals.plPct);
-  plPctCell.className = plClass(totals.pl);
-  document.getElementById("eqMobTotalInvested").textContent = fmtINR(totals.invested);
-  document.getElementById("eqMobTotalCurrent").textContent = fmtINR(totals.current);
-  const mobPlCell = document.getElementById("eqMobTotalPL");
-  mobPlCell.textContent = fmtINR(totals.pl);
-  mobPlCell.className = plClass(totals.pl);
-  renderEquityMoversStrip();
-}
+  plPctCell.textContent = fmtPct(viewTotals.plPct);
+  plPctCell.className = plClass(viewTotals.pl);
+  const allocTotalCell = document.getElementById("eqTotalAlloc");
+  if (allocTotalCell) allocTotalCell.textContent = displayRows.length ? "100%" : "—";
 
-// Lightweight refresh used on every keystroke-commit (input `change`):
-// updates only the read-only derived cells and footer totals, and never
-// touches the <input> elements themselves — so focus/Tab order across
-// fields in the same row (and across rows) is never disturbed.
-function updateEquityComputed() {
-  const tbody = document.getElementById("equityTableBody");
-  const totals = equityTotals();
-  const screenerMap = buildScreenerMap();
-  state.equity.forEach(row => {
-    const tr = tbody.querySelector(`tr[data-id="${row.id}"]`);
-    if (!tr) return;
-    const d = equityDerived(row);
-    const allocPct = totals.invested > 0 ? (Number(row.invested) / totals.invested) * 100 : 0;
-    tr.querySelector(".c-avg").textContent = fmtNum(d.avgPrice);
-    tr.querySelector(".c-cv").textContent = fmtNum(d.currentValue);
-    const plCell = tr.querySelector(".c-pl");
-    plCell.textContent = fmtNum(d.pl);
-    plCell.className = "c-pl " + plClass(d.pl);
-    const plPctCell = tr.querySelector(".c-plpct");
-    plPctCell.textContent = fmtPct(d.plPct);
-    plPctCell.className = "c-plpct " + plClass(d.pl);
-    const capCategory = getEquityCapCategory(row, screenerMap);
-    const allocMax = getEquityAllocLimit(capCategory);
-    const allocStatus = allocLimitStatus(allocPct, allocMax);
-    const allocCell = tr.querySelector(".c-alloc");
-    allocCell.className = allocStatus ? `c-alloc alloc-${allocStatus}` : "c-alloc";
-    allocCell.title = allocStatus
-      ? `${allocLimitStatusLabel(allocStatus)} — limit ${allocMax}% (${capCategory})`
-      : "Import Screener Data to classify this stock's cap category and see its allocation limit";
-    allocCell.innerHTML = `${fmtNum(allocPct)}%${allocMax !== null ? `<span class="alloc-limit-note">/ ${allocMax}%</span>` : ""}`;
-  });
-  document.getElementById("eqTotalInvested").textContent = fmtINR(totals.invested);
-  document.getElementById("eqTotalCurrent").textContent = fmtINR(totals.current);
-  const plCell = document.getElementById("eqTotalPL");
-  plCell.textContent = fmtINR(totals.pl);
-  plCell.className = plClass(totals.pl);
-  const plPctCell = document.getElementById("eqTotalPLPct");
-  plPctCell.textContent = fmtPct(totals.plPct);
-  plPctCell.className = plClass(totals.pl);
-  document.getElementById("eqMobTotalInvested").textContent = fmtINR(totals.invested);
-  document.getElementById("eqMobTotalCurrent").textContent = fmtINR(totals.current);
-  const mobPlCell = document.getElementById("eqMobTotalPL");
-  mobPlCell.textContent = fmtINR(totals.pl);
-  mobPlCell.className = plClass(totals.pl);
+  renderEquityMobileList();
   renderEquityMoversStrip();
+
+  const sortSelect = document.getElementById("equitySortSelect");
+  if (sortSelect) {
+    const val = `${tableUI.equity.sortCol}:${tableUI.equity.sortDir}`;
+    if (Array.from(sortSelect.options).some(o => o.value === val)) sortSelect.value = val;
+  }
+
+  // Keeps the drawer live if it's open on a stock that's still in
+  // the list (e.g. the 30-second live-price auto-refresh ticking
+  // while the panel is open), and closes it gracefully if that stock
+  // was removed from underneath it instead.
+  if (eqDrawerRowId) {
+    const stillThere = state.equity.find(r => r.id === eqDrawerRowId);
+    if (stillThere) document.getElementById("eqDrawerBody").innerHTML = eqDrawerBodyHTML(stillThere);
+    else closeEqDrawer();
+  }
 }
 
 // Equity rows are no longer created by hand — Name, Invested, Units
@@ -2547,7 +2921,10 @@ function calcXIRR(cashflows) {
 // XIRR needs a closing flow to annualize a position that's still
 // open — the position's value as of today is appended as one final
 // positive inflow (the standard "sell everything today" convention).
-function mfCashflowsFromTrades(trades, currentValueToday) {
+// Shared by Mutual Funds and Equity (both trade books have the same
+// buy/sell/quantity/price shape) — asset-class filtering happens in
+// the caller, not here.
+function buildXIRRCashflows(trades, currentValueToday) {
   const flows = trades
     .filter(t => t.tradeDate && isFinite(Number(t.quantity)) && isFinite(Number(t.price)))
     .map(t => ({
@@ -2567,7 +2944,7 @@ function mfCashflowsFromTrades(trades, currentValueToday) {
 function mfPortfolioXIRR() {
   const trades = tradeBook.trades.filter(t => t.assetClass === "mf");
   if (trades.length === 0) return null;
-  return calcXIRR(mfCashflowsFromTrades(trades, mfTotals().current));
+  return calcXIRR(buildXIRRCashflows(trades, mfTotals().current));
 }
 
 // Best-effort per-fund XIRR for the detail drawer. The Trade Book
@@ -2585,16 +2962,17 @@ function mfFundXIRR(row) {
   if (!key) return null;
   const trades = tradeBook.trades.filter(t => t.assetClass === "mf" && (t.symbol || "").trim().toUpperCase() === key);
   if (trades.length === 0) return null;
-  return calcXIRR(mfCashflowsFromTrades(trades, mfDerived(row).currentValue));
+  return calcXIRR(buildXIRRCashflows(trades, mfDerived(row).currentValue));
 }
 
 /* ---- category color coding: 8 stable slots, deterministically
-   hashed per category name so every fund gets *a* consistent color
-   without hardcoding every possible category string. A handful of
-   very common categories are pinned to a sensible slot so e.g.
-   "Large Cap" and "Largecap" always land on the same color even
-   though the hash of those two strings would differ. ---- */
-function mfHashSlot(str, mod) {
+   hashed per category name so every fund (or, for Equity, sector)
+   gets *a* consistent color without hardcoding every possible
+   string. A handful of very common categories are pinned to a
+   sensible slot so e.g. "Large Cap" and "Largecap" always land on
+   the same color even though the hash of those two strings would
+   differ. hashSlot() itself is shared with Equity's Sector badges. ---- */
+function hashSlot(str, mod) {
   let h = 0;
   const s = String(str || "");
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
@@ -2615,7 +2993,7 @@ function mfCategorySlot(category) {
   const key = String(category || "").trim().toLowerCase();
   if (!key) return 7;
   if (key in MF_KNOWN_CATEGORY_SLOTS) return MF_KNOWN_CATEGORY_SLOTS[key];
-  return mfHashSlot(key, 8);
+  return hashSlot(key, 8);
 }
 function mfCategoryBadgeHTML(category) {
   if (!category) return '<span class="mf-cat-badge mf-cat-7">Uncategorized</span>';
@@ -8812,12 +9190,11 @@ markInitialSortIndicator("mf", "#panel-mf thead");
 markInitialSortIndicator("gold", "#panel-gold thead");
 markInitialSortIndicator("stockanalysis", "#panel-stockanalysis thead");
 
-setupMobileSort("equity", "equityMobileSort", "equityMobileSortDir", "#panel-equity thead", () => { renderEquity(); });
 setupMobileSort("debt", "debtMobileSort", "debtMobileSortDir", "#panel-debt thead", () => { renderDebt(); });
-// Mutual Funds no longer has a mobile-only sort row — its redesigned
-// toolbar has one sort dropdown that works at every width (wired
-// below, next to the category filter), replacing setupMobileSort()
-// for this tab.
+// Mutual Funds and Equity no longer have a mobile-only sort row —
+// their redesigned toolbars each have one sort dropdown that works
+// at every width (wired below, next to the category/sector filter),
+// replacing setupMobileSort() for these tabs.
 setupMobileSort("gold", "goldMobileSort", "goldMobileSortDir", "#panel-gold thead", () => { renderGold(); });
 setupMobileSort("stockanalysis", "stockAnalysisMobileSort", "stockAnalysisMobileSortDir", "#panel-stockanalysis thead", () => { tableUI.stockanalysis.page = 1; renderStockAnalysis(); });
 
@@ -8850,6 +9227,34 @@ document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   closeMFRowMenu();
   if (document.getElementById("mfDrawerOverlay")?.classList.contains("open")) closeMFDrawer();
+  closeEqRowMenu();
+  if (document.getElementById("eqDrawerOverlay")?.classList.contains("open")) closeEqDrawer();
+});
+
+// Equity toolbar — sector filter + unified sort dropdown (see the
+// redesigned #panel-equity toolbar in index.html), mirroring the
+// Mutual Funds pattern above. Both just mutate the same tableUI.equity
+// state the desktop column-header sort already uses, then re-render.
+document.getElementById("equitySectorFilter")?.addEventListener("change", (e) => {
+  tableUI.equity.sector = e.target.value;
+  renderEquity();
+});
+document.getElementById("equitySortSelect")?.addEventListener("change", (e) => {
+  const [col, dir] = e.target.value.split(":");
+  tableUI.equity.sortCol = col;
+  tableUI.equity.sortDir = Number(dir);
+  document.querySelectorAll("#panel-equity thead th.sortable").forEach(h => h.classList.remove("sort-asc", "sort-desc"));
+  const th = document.querySelector(`#panel-equity thead th.sortable[data-col="${col}"]`);
+  if (th) th.classList.add(tableUI.equity.sortDir === 1 ? "sort-asc" : "sort-desc");
+  renderEquity();
+});
+
+// Equity detail drawer — close via the X button or by clicking the
+// dimmed overlay outside the panel (same convention as the Mutual
+// Fund drawer and the existing modal's overlay-click-to-close).
+document.getElementById("eqDrawerClose")?.addEventListener("click", closeEqDrawer);
+document.getElementById("eqDrawerOverlay")?.addEventListener("click", (e) => {
+  if (e.target.id === "eqDrawerOverlay") closeEqDrawer();
 });
 
 setupOverflowToggle("debtOverflowToggle", "debtToolbarSecondary");

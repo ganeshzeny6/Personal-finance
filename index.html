@@ -1091,7 +1091,11 @@
   }
   .col-resizer:hover, .col-resizer.resizing{background:var(--gold-soft);}
   table.data-table{table-layout:fixed;width:100%;}
-  #panel-equity table.data-table{min-width:1430px;}
+  /* Reduced from the old 12-column layout's 1430px along with the
+     Equity redesign below (same overflow bug the Mutual Funds table
+     had — this stale minimum was forcing horizontal scrolling on
+     most screens even after the column count came down). */
+  #panel-equity table.data-table{min-width:800px;}
   #panel-debt table.data-table{min-width:1615px;}
   /* Left over from the old 12-column layout before the redesign to 8
      columns — that stale 1400px minimum was forcing this table wider
@@ -1233,6 +1237,16 @@
   .sa-detail-row:last-child{border-bottom:none;}
   .sa-detail-row .k{color:var(--text-muted);flex:1 1 auto;}
   .sa-detail-row .v{font-family:var(--font-mono);color:var(--text);font-weight:500;white-space:nowrap;flex:0 0 auto;text-align:right;}
+  /* .sa-detail-row .v's own color (above) is two classes deep, so it
+     silently outranks a single-class color modifier like .pos/.neg/
+     .muted placed on the same element — restating them here at
+     matching specificity is what actually lets a drawer's P&L/Return
+     value render green or red instead of always the default text
+     color. (Pre-existing gap in the original Stock Analysis drawer,
+     surfaced now because the Equity redesign leans on it more.) */
+  .sa-detail-row .v.pos{color:var(--positive);}
+  .sa-detail-row .v.neg{color:var(--negative);}
+  .sa-detail-row .v.muted{color:var(--text-faint);}
 
   @media (max-width:700px){
     .sa-detail-sections{grid-template-columns:1fr;}
@@ -1814,6 +1828,68 @@
     }
     .drawer-overlay.open .drawer-panel{transform:translateY(0);}
   }
+
+  /* ============================================================
+     EQUITY — REDESIGN (2026)
+     Same treatment as Mutual Funds above, reusing almost all of its
+     component CSS as-is rather than duplicating it: summary cards
+     (.sa-summary-grid/.sa-stat-card), the avatar + colored badge
+     (.mf-avatar/.mf-cat-badge/.mf-cat-N), the allocation bar
+     (.mf-alloc-*), the floating three-dot menu (.mf-menu-*), the
+     stacked mobile card internals (.mf-mobile-card and its
+     children), and the drawer shell (.drawer-*) are all generic —
+     built for Mutual Funds first, but with no MF-specific styling
+     baked in, so Equity's markup just uses the same classes. Only
+     genuinely new pieces are below: the per-tab hover rule, the
+     mobile-list show/hide pairing (a separate element from MF's own
+     mobile list), and two modifier classes for Equity's allocation
+     LIMIT feature (approaching/above a stock's cap-category cap),
+     which Mutual Funds has no equivalent of.
+     ============================================================ */
+  #panel-equity .sa-summary-grid{margin-bottom:16px;}
+  #panel-equity .table-toolbar{margin-bottom:10px;}
+  #panel-equity .eq-toolbar-select{min-width:172px;}
+  #panel-equity .attn-filter-select{padding-top:7px;padding-bottom:7px;}
+  @media (max-width:700px){
+    #panel-equity .table-toolbar .attn-filter-wrap{flex:1 1 150px;}
+    #panel-equity .table-toolbar .attn-filter-select{width:100%;}
+  }
+
+  #panel-equity tbody tr.eq-row{cursor:pointer;transition:background .12s ease;}
+  #panel-equity tbody tr.eq-row:hover{background:var(--surface-2);}
+  #panel-equity tbody tr.eq-row:hover td.sticky-col{background:var(--surface-2);}
+
+  /* Day-change chip as a subtitle under the stock name (LTP/Units/
+     Avg Price/full OHLC detail all moved to the drawer) — reuses the
+     existing .dc-chip the old Day Chg % column used, just smaller. */
+  .eq-fund-daychg{margin-top:3px;}
+  .eq-fund-daychg .dc-chip{font-size:10px;padding:1px 6px;}
+
+  /* Allocation-limit coloring — a modifier Mutual Funds never uses
+     (a fund has no "cap category" ceiling the way a stock's
+     Large/Mid/Small Cap classification does). .limit-approaching/
+     .limit-above are plain color classes usable on any text (the
+     table cell, a mobile card, or a plain row in the drawer); the
+     two .mf-alloc-fill rules additionally recolor the progress bar
+     itself when it's used on that specific element. */
+  .limit-approaching{color:var(--warning);font-weight:600;}
+  .limit-above{color:var(--negative);font-weight:600;}
+  .mf-alloc-fill.limit-approaching{background:var(--warning);}
+  .mf-alloc-fill.limit-above{background:var(--negative);}
+  /* .sa-detail-row .v's own color rule is two classes deep and would
+     otherwise outrank the single-class .limit-* rules above wherever
+     the allocation-limit color is used inside the drawer's Overview
+     row — these two restate the same colors at matching specificity
+     so the drawer's Allocation row still goes amber/red like the
+     table and mobile card do. */
+  .sa-detail-row .v.limit-approaching{color:var(--warning);}
+  .sa-detail-row .v.limit-above{color:var(--negative);}
+
+  .eq-mobile-list{display:none;flex-direction:column;gap:10px;}
+  @media (max-width:700px){
+    #panel-equity .table-scroll{display:none;}
+    .eq-mobile-list{display:flex;}
+  }
 </style>
 </head>
 <body>
@@ -2064,94 +2140,82 @@
     <!-- ============ EQUITY ============ -->
     <section class="portfolio-subpanel active" id="panel-equity">
     <h2 class="section-title">Equity — Stocks</h2>
-    <p class="section-sub">Track individual stock holdings. Units, Avg Price and LTP are driven by Zerodha Holdings import and an automatic live-price refresh every 30 seconds — only Sector can be edited by hand. Cap (Large/Mid/Small) is derived from the Market Cap you import via "Import Screener Data" on the Stock Analysis tab, matched by Symbol; it shows a dash until that's imported.</p>
+    <p class="section-sub">Track individual stock holdings. Units, Avg Price and LTP are driven by Zerodha Holdings import and an automatic live-price refresh every 30 seconds — open a stock's details to edit its Sector. Cap (Large/Mid/Small) is derived from the Market Cap you import via "Import Screener Data" on the Stock Analysis tab, matched by Symbol.</p>
+
+    <div class="sa-summary-grid" id="eqSummaryGrid"></div>
 
     <div class="table-toolbar">
       <div class="left-group">
         <div class="filter-clear-wrap">
-          <input type="text" class="filter-input" id="equityFilter" placeholder="Filter...">
+          <input type="text" class="filter-input" id="equityFilter" placeholder="Search stocks...">
           <button type="button" class="filter-clear-btn" data-clear-target="equityFilter" title="Clear filter" aria-label="Clear filter">✕</button>
+        </div>
+        <div class="attn-filter-wrap">
+          <select class="attn-filter-select eq-toolbar-select" id="equitySectorFilter">
+            <option value="">All Sectors</option>
+          </select>
+        </div>
+        <div class="attn-filter-wrap">
+          <select class="attn-filter-select eq-toolbar-select" id="equitySortSelect">
+            <option value="allocPct:-1">Allocation: High to Low</option>
+            <option value="allocPct:1">Allocation: Low to High</option>
+            <option value="pl:-1">P&amp;L: High to Low</option>
+            <option value="pl:1">P&amp;L: Low to High</option>
+            <option value="currentValue:-1">Current Value: High to Low</option>
+            <option value="currentValue:1">Current Value: Low to High</option>
+            <option value="dayChangePct:-1">Day Change %: High to Low</option>
+            <option value="dayChangePct:1">Day Change %: Low to High</option>
+            <option value="name:1">Name: A to Z</option>
+            <option value="name:-1">Name: Z to A</option>
+          </select>
         </div>
         <span class="status-tag" id="equityFetchStatus"></span>
         <div class="movers-strip" id="equityMoversStrip"></div>
       </div>
-    </div>
-    <div class="mobile-totals" id="equityMobileTotals">
-      <div>
-        <div class="row"><span>Invested</span></div>
-        <div class="vals"><span id="eqMobTotalInvested">₹0</span></div>
-      </div>
-      <div>
-        <div class="row"><span>Current</span></div>
-        <div class="vals"><span id="eqMobTotalCurrent">₹0</span></div>
-      </div>
-      <div>
-        <div class="row"><span>P&amp;L</span></div>
-        <div class="vals"><span id="eqMobTotalPL">₹0</span></div>
-      </div>
-    </div>
-    <div class="mobile-sort-row">
-      <select id="equityMobileSort">
-        <option value="">Sort: default</option>
-        <option value="name">Name</option>
-        <option value="sector">Sector</option>
-        <option value="invested">Invested Amt</option>
-        <option value="units">Units</option>
-        <option value="ltp">LTP</option>
-        <option value="dayChangePct">Day Change %</option>
-        <option value="currentValue">Current Value</option>
-        <option value="pl">P&amp;L</option>
-        <option value="plPct">P&amp;L %</option>
-        <option value="allocPct" selected>Alloc %</option>
-      </select>
-      <button class="mobile-sort-dir" id="equityMobileSortDir" title="Toggle ascending/descending">↓</button>
     </div>
     <div class="fail-panel" id="equityFailPanel" style="display:none"></div>
 
     <div class="table-scroll">
       <table class="data-table">
         <colgroup>
-          <col id="col-eq-name" style="width:200px">
+          <col id="col-eq-name" style="width:230px">
+          <col style="width:130px">
           <col style="width:120px">
-          <col style="width:100px">
-          <col style="width:130px"><col style="width:90px"><col style="width:100px">
-          <col style="width:110px"><col style="width:100px"><col style="width:140px"><col style="width:120px">
-          <col style="width:90px"><col style="width:85px"><col style="width:45px">
+          <col style="width:130px">
+          <col style="width:110px">
+          <col style="width:90px">
+          <col style="width:150px">
+          <col style="width:50px">
         </colgroup>
         <thead>
           <tr>
-            <th class="left sortable resizable sticky-col" data-col="name">Stock / Symbol<span class="col-resizer"></span></th>
+            <th class="left sortable resizable sticky-col" data-col="name">Stock<span class="col-resizer"></span></th>
             <th class="left sortable" data-col="sector">Sector</th>
-            <th class="left sortable" data-col="capCategory">Cap</th>
             <th class="sortable" data-col="invested">Invested Amt</th>
-            <th class="sortable" data-col="units">Units</th>
-            <th class="sortable" data-col="avgPrice">Avg Price</th>
-            <th class="sortable" data-col="ltp">LTP</th>
-            <th class="sortable" data-col="dayChangePct">Day Chg %</th>
             <th class="sortable" data-col="currentValue">Current Value</th>
             <th class="sortable" data-col="pl">P&amp;L</th>
-            <th class="sortable" data-col="plPct">P&amp;L %</th>
-            <th class="sortable" data-col="allocPct">Alloc %</th>
+            <th class="sortable" data-col="plPct">Return %</th>
+            <th class="sortable" data-col="allocPct">Allocation</th>
             <th class="row-actions">—</th>
           </tr>
         </thead>
         <tbody id="equityTableBody"></tbody>
         <tfoot>
           <tr>
-            <td class="left sticky-col">Total</td>
-            <td></td>
+            <td class="left sticky-col" id="eqTotalLabel">Total</td>
             <td></td>
             <td id="eqTotalInvested">₹0</td>
-            <td>—</td><td>—</td><td>—</td><td>—</td>
             <td id="eqTotalCurrent">₹0</td>
             <td id="eqTotalPL">₹0</td>
             <td id="eqTotalPLPct">0%</td>
-            <td>100%</td>
+            <td id="eqTotalAlloc">100%</td>
             <td></td>
           </tr>
         </tfoot>
       </table>
     </div>
+
+    <div class="eq-mobile-list" id="equityMobileList"></div>
   </section>
 
   <!-- ============ DEBT ============ -->
@@ -2764,6 +2828,21 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-09-05-mf-redesign"></script>
+<!-- Equity detail drawer — same shell as the Mutual Fund drawer
+     above (shared .drawer-overlay/.drawer-panel CSS), separate
+     element/id since the two tabs' drawers can't be open at once
+     but are otherwise independent. Content is injected by
+     openEqDrawer() in app.js. -->
+<div class="drawer-overlay" id="eqDrawerOverlay">
+  <div class="drawer-panel">
+    <div class="drawer-header">
+      <div class="drawer-header-title">Stock Details</div>
+      <button class="drawer-close" id="eqDrawerClose" title="Close" aria-label="Close">✕</button>
+    </div>
+    <div class="drawer-body" id="eqDrawerBody"></div>
+  </div>
+</div>
+
+<script src="app.js?v=2026-09-05-eq-redesign"></script>
 </body>
 </html>
