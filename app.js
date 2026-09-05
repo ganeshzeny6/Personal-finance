@@ -544,7 +544,7 @@ modalOverlay.addEventListener("click", (e) => {
    ============================================================ */
 
 const tableUI = {
-  equity: { sortCol: "allocPct", sortDir: -1, filter: "", sector: "" },
+  equity: { sortCol: "allocPct", sortDir: -1, filter: "", sector: "", capCategory: "" },
   debt:   { sortCol: "maturityDate", sortDir: 1, filter: "" },
   mf:     { sortCol: "allocPct", sortDir: -1, filter: "", category: "" },
   gold:   { sortCol: null, sortDir: 1, filter: "" },
@@ -1161,6 +1161,7 @@ function eqAvatarHTML(row) {
 function eqVisibleRows(screenerMap) {
   let rows = state.equity;
   if (tableUI.equity.sector) rows = rows.filter(r => (r.sector || "") === tableUI.equity.sector);
+  if (tableUI.equity.capCategory) rows = rows.filter(r => getEquityCapCategory(r, screenerMap) === tableUI.equity.capCategory);
   return applySortFilter(
     "equity", rows,
     (row) => equityGetSearchText(row, screenerMap),
@@ -1177,6 +1178,33 @@ function populateEquitySectorFilter() {
     sectors.map(s => `<option value="${escapeAttr(s)}">${escapeAttr(s)}</option>`).join("");
   if (sectors.includes(current)) sel.value = current;
   else { tableUI.equity.sector = ""; sel.value = ""; }
+}
+
+// Cap filter's 3 options are a fixed enum (marketCapCategory() never
+// returns anything else), so unlike Sector this dropdown's HTML
+// options never need rebuilding — just keep the select in sync with
+// tableUI.equity.capCategory on each render.
+function syncEquityCapFilterSelect() {
+  const sel = document.getElementById("equityCapFilter");
+  if (sel) sel.value = tableUI.equity.capCategory || "";
+}
+
+// Small "L / M / S" chip shown right next to a stock's name (see
+// renderEquity()/renderEquityMobileList()) instead of Cap living in
+// its own table column — a stock's Cap Category comes from the same
+// getEquityCapCategory()/Screener join the Allocation-limit coloring
+// already uses, just displayed inline here. Returns "" (no chip) when
+// the cap category isn't known yet, same as the dash Cap used to show
+// elsewhere before Screener data is imported for that symbol.
+const EQ_CAP_CHIP = {
+  "Large Cap": { letter: "L", cls: "cap-large" },
+  "Mid Cap": { letter: "M", cls: "cap-mid" },
+  "Small Cap": { letter: "S", cls: "cap-small" }
+};
+function eqCapChipHTML(capCategory) {
+  const info = EQ_CAP_CHIP[capCategory];
+  if (!info) return "";
+  return `<span class="eq-cap-chip ${info.cls}" title="${escapeAttr(capCategory)}">${info.letter}</span>`;
 }
 
 function renderEquitySummary() {
@@ -1203,6 +1231,97 @@ function renderEquitySummary() {
       ${xirr === null ? '<div class="sa-stat-sub" style="margin-left:0;margin-top:5px;display:block;">Connect Trade Book for XIRR</div>' : ""}
     </div>
   `;
+}
+
+/* ---- "What needs your attention" — Equity ----
+   Same collapsible attn-card pattern the Dashboard and Debt tabs
+   already use (setupAttentionToggle()/updateAttnCountBadge(), the
+   .dash-attn-* CSS). The items themselves reuse computeStockInsight()
+   wholesale — the exact same valuation/health/growth verdict engine
+   that powers Stock Analysis -> Intelligent Insights — rather than
+   inventing a second "is this stock good" scoring system: a stock
+   lands here when Intelligent Insights would already categorize it
+   "Consider Adding" (room left under its allocation limit AND
+   fundamentals genuinely support adding) or "Reduce / Sell" (the
+   opposite — already overweight and/or fundamentals have turned
+   weak). ETFs are excluded, same as Intelligent Insights, since they
+   have no company-level fundamentals to score. */
+let eqUI = { attnFilter: "all" };
+
+function computeEquityAttentionItems() {
+  const screenerMap = buildScreenerMap();
+  const eligible = state.equity.filter(row => !isETFEquity(row));
+  const items = [];
+  eligible.forEach(row => {
+    const insight = computeStockInsight(row, screenerMap);
+    if (insight.category === "Consider Adding") {
+      items.push({
+        kind: "add",
+        severity: "good",
+        title: `${row.name || "This stock"} — consider adding`,
+        detail: `Allocation ${fmtNum(insight.allocPct, 1)}%${insight.allocMax !== null ? ` of ${insight.allocMax}% limit` : ""} — ${insight.reason}`,
+        allocPct: insight.allocPct,
+        rowId: row.id,
+        actionLabel: "View Details"
+      });
+    } else if (insight.category === "Reduce / Sell") {
+      items.push({
+        kind: "reduce",
+        severity: "bad",
+        title: `${row.name || "This stock"} — consider reducing`,
+        detail: insight.reason,
+        allocPct: insight.allocPct,
+        rowId: row.id,
+        actionLabel: "View Details"
+      });
+    }
+  });
+  // Lowest-allocation "add" candidates first (the most clear-cut
+  // "barely holding it, and fundamentals are good" case), then
+  // highest-allocation "reduce" candidates first (most overweight).
+  items.sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === "add" ? -1 : 1;
+    return a.kind === "add" ? a.allocPct - b.allocPct : b.allocPct - a.allocPct;
+  });
+  return items;
+}
+
+function renderEquityAttention() {
+  const el = document.getElementById("eqAttentionList");
+  if (!el) return;
+  const screenerMap = buildScreenerMap();
+  const hasScreenerData = (state.screenerData || []).length > 0;
+  const allItems = computeEquityAttentionItems();
+  updateAttnCountBadge("eqAttnCount", allItems.length);
+  const items = eqUI.attnFilter === "all" ? allItems : allItems.filter(i => i.kind === eqUI.attnFilter);
+
+  if (allItems.length === 0) {
+    el.innerHTML = `<div class="dash-attn-empty">${hasScreenerData
+      ? "No standout opportunities or risks right now — every holding is either well-positioned or doesn't have a clear enough fundamental signal."
+      : 'Import Screener Data (from the Stock Analysis tab) to get fundamentals-based suggestions here — e.g. a stock you barely hold but whose fundamentals look strong.'}</div>`;
+    return;
+  }
+  if (items.length === 0) {
+    el.innerHTML = `<div class="dash-attn-empty">No items match this filter right now.</div>`;
+    return;
+  }
+  el.innerHTML = "";
+  items.forEach(item => {
+    const row = document.createElement("div");
+    row.className = "dash-attn-item";
+    row.innerHTML = `
+      <div class="dash-attn-top">
+        <div class="dash-attn-dot ${item.severity}"></div>
+        <div class="dash-attn-body">
+          <div class="dash-attn-title">${escapeAttr(item.title)}</div>
+          <div class="dash-attn-detail">${escapeAttr(item.detail)}</div>
+        </div>
+      </div>
+      <button class="dash-attn-action">${escapeAttr(item.actionLabel)}</button>
+    `;
+    row.querySelector(".dash-attn-action").addEventListener("click", () => openEqDrawer(item.rowId));
+    el.appendChild(row);
+  });
 }
 
 /* ---- floating three-dot row menu — same CSS/behavior as Mutual
@@ -1423,7 +1542,13 @@ function renderEquityMobileList() {
   if (!wrap) return;
   const screenerMap = buildScreenerMap();
   const rows = eqVisibleRows(screenerMap);
-  const viewTotals = equityTotalsFor(rows);
+  // Allocation % is always each stock's share of the WHOLE Equity
+  // portfolio, never re-based to whatever's currently filtered — see
+  // the matching comment in renderEquity() for why (a filtered-down
+  // denominator would silently invalidate the allocation-limit
+  // coloring, since the cap limits are defined against the whole
+  // portfolio, not against a filtered subset).
+  const wholeTotals = equityTotals();
 
   if (state.equity.length === 0) {
     wrap.innerHTML = '<div class="empty-row" style="padding:22px 0;text-align:center;color:var(--text-faint)">No stocks yet. Use "Import Holdings" to bring in your Zerodha Console export.</div>';
@@ -1436,7 +1561,7 @@ function renderEquityMobileList() {
 
   wrap.innerHTML = rows.map(row => {
     const d = equityDerived(row);
-    const allocPct = viewTotals.invested > 0 ? (Number(row.invested) / viewTotals.invested) * 100 : 0;
+    const allocPct = wholeTotals.invested > 0 ? (Number(row.invested) / wholeTotals.invested) * 100 : 0;
     const capCategory = getEquityCapCategory(row, screenerMap);
     const allocMax = getEquityAllocLimit(capCategory);
     const allocStatus = allocLimitStatus(allocPct, allocMax);
@@ -1447,7 +1572,7 @@ function renderEquityMobileList() {
         <div class="mf-mobile-card-top">
           ${eqAvatarHTML(row)}
           <div class="mf-fund-name-wrap">
-            <div class="mf-fund-name">${escapeAttr(row.name || "Unnamed stock")}</div>
+            <div class="mf-fund-name">${escapeAttr(row.name || "Unnamed stock")}${eqCapChipHTML(capCategory)}</div>
             ${eqSectorBadgeHTML(row.sector)}
             ${chgChip}
           </div>
@@ -1485,7 +1610,9 @@ function renderEquityMobileList() {
 
 function renderEquity() {
   populateEquitySectorFilter();
+  syncEquityCapFilterSelect();
   renderEquitySummary();
+  renderEquityAttention();
 
   const tbody = document.getElementById("equityTableBody");
   tbody.innerHTML = "";
@@ -1494,13 +1621,23 @@ function renderEquity() {
   // is the same lookup Stock Analysis uses.
   const screenerMap = buildScreenerMap();
   const displayRows = eqVisibleRows(screenerMap);
-  // Table Total row (and each row's Allocation %) is scoped to
-  // whatever's currently filtered/searched, not the whole portfolio
-  // — same behavior as the Mutual Funds redesign. Allocation stays
-  // invested-based (not current-value-based), matching Equity's
-  // pre-existing semantics.
+  // The table's own Total row is scoped to whatever's currently
+  // filtered/searched, not the whole portfolio — filter down to just
+  // FMCG and this reflects only those FMCG stocks' invested/current/
+  // P&L. viewTotals is ONLY for that footer row, though — see the
+  // allocPct comment below for why each row's own Allocation % does
+  // NOT use it.
   const viewTotals = equityTotalsFor(displayRows);
-  const filtered = !!(tableUI.equity.sector || tableUI.equity.filter);
+  // Every stock's Allocation % (and its allocation-limit color) is
+  // always that stock's share of the WHOLE Equity portfolio, even
+  // while filtered. It must NOT be re-based to the filtered subset's
+  // total — the cap limits in Settings -> Equity Allocation Limits
+  // are configured as "% of total Equity", so comparing a stock's
+  // share-of-FMCG-only against a share-of-everything limit would
+  // silently mislabel a genuinely over-concentrated stock as within
+  // limit (or vice versa) the moment a filter is active.
+  const wholeTotals = equityTotals();
+  const filtered = !!(tableUI.equity.sector || tableUI.equity.capCategory || tableUI.equity.filter);
   const totalLabel = document.getElementById("eqTotalLabel");
   if (totalLabel) totalLabel.textContent = filtered ? "Total (filtered)" : "Total";
 
@@ -1512,11 +1649,9 @@ function renderEquity() {
 
   displayRows.forEach(row => {
     const d = equityDerived(row);
-    // Alloc % reflects each stock's share of total invested capital,
-    // not its share of current market value — unchanged from before
-    // the redesign, just re-based on viewTotals so it recomputes
-    // when filtered.
-    const allocPct = viewTotals.invested > 0 ? (Number(row.invested) / viewTotals.invested) * 100 : 0;
+    // Share of total invested capital across the WHOLE portfolio —
+    // see the wholeTotals comment above.
+    const allocPct = wholeTotals.invested > 0 ? (Number(row.invested) / wholeTotals.invested) * 100 : 0;
     const capCategory = getEquityCapCategory(row, screenerMap);
     const allocMax = getEquityAllocLimit(capCategory);
     const allocStatus = allocLimitStatus(allocPct, allocMax);
@@ -1537,7 +1672,7 @@ function renderEquity() {
         <div class="mf-fund-cell">
           ${eqAvatarHTML(row)}
           <div class="mf-fund-name-wrap">
-            <div class="mf-fund-name" title="${escapeAttr(row.name || "")}">${escapeAttr(row.name || "Unnamed stock")}</div>
+            <div class="mf-fund-name" title="${escapeAttr(row.name || "")}">${escapeAttr(row.name || "Unnamed stock")}${eqCapChipHTML(capCategory)}</div>
             ${chgChip}
           </div>
         </div>
@@ -1578,8 +1713,17 @@ function renderEquity() {
   const plPctCell = document.getElementById("eqTotalPLPct");
   plPctCell.textContent = fmtPct(viewTotals.plPct);
   plPctCell.className = plClass(viewTotals.pl);
+  // Filtered totals' OWN share of the whole portfolio (e.g. "FMCG
+  // stocks together are 15.4% of my total Equity") — not a hardcoded
+  // 100%, since 100% would only ever be true when nothing is
+  // filtered. Unfiltered, viewTotals === wholeTotals so this still
+  // reads as (very close to) 100%.
   const allocTotalCell = document.getElementById("eqTotalAlloc");
-  if (allocTotalCell) allocTotalCell.textContent = displayRows.length ? "100%" : "—";
+  if (allocTotalCell) {
+    allocTotalCell.textContent = (displayRows.length && wholeTotals.invested > 0)
+      ? fmtNum((viewTotals.invested / wholeTotals.invested) * 100, 1) + "%"
+      : "—";
+  }
 
   renderEquityMobileList();
   renderEquityMoversStrip();
@@ -3258,9 +3402,10 @@ function renderMFMobileList() {
   const wrap = document.getElementById("mfMobileList");
   if (!wrap) return;
   const rows = mfVisibleRows();
-  // Same as the desktop table: allocation bars are re-based to
-  // whatever's currently filtered/searched, not the whole portfolio.
-  const viewTotals = mfTotalsFor(rows);
+  // Allocation % is always a fund's share of the WHOLE Mutual Fund
+  // portfolio, never re-based to whatever's currently filtered — see
+  // the matching comment in renderMF() below.
+  const wholeTotals = mfTotals();
 
   if (state.mf.length === 0) {
     wrap.innerHTML = '<div class="empty-row" style="padding:22px 0;text-align:center;color:var(--text-faint)">No mutual funds yet. Use "Import Holdings" to bring in your Zerodha Console export.</div>';
@@ -3273,7 +3418,7 @@ function renderMFMobileList() {
 
   wrap.innerHTML = rows.map(row => {
     const d = mfDerived(row);
-    const allocPct = viewTotals.current > 0 ? (d.currentValue / viewTotals.current) * 100 : 0;
+    const allocPct = wholeTotals.current > 0 ? (d.currentValue / wholeTotals.current) * 100 : 0;
     return `
       <div class="mf-mobile-card" data-id="${row.id}">
         <div class="mf-mobile-card-top">
@@ -3321,15 +3466,18 @@ function renderMF() {
   const tbody = document.getElementById("mfTableBody");
   tbody.innerHTML = "";
   const displayRows = mfVisibleRows();
-  // Totals for the table's own Total row (and each row's Allocation
-  // %) are scoped to whatever's currently filtered/searched, not the
-  // whole portfolio — filter down to just your ETFs and this reflects
-  // only those ETFs' total, with their allocation bars re-based to
-  // sum to 100% among themselves. The summary cards above stay
-  // whole-portfolio on purpose (mfTotals()/mfPortfolioXIRR() are
-  // unaffected by this), since those are meant to always show the
-  // full picture regardless of how the table below is filtered.
+  // The table's own Total row is scoped to whatever's currently
+  // filtered/searched, not the whole portfolio — filter down to just
+  // your ETFs and this reflects only those ETFs' invested/current/
+  // P&L. The summary cards above stay whole-portfolio on purpose
+  // (mfTotals()/mfPortfolioXIRR() are unaffected by this).
   const viewTotals = mfTotalsFor(displayRows);
+  // Each row's own Allocation % is always that fund's share of the
+  // WHOLE Mutual Fund portfolio, even while filtered — re-basing it
+  // to the filtered subset would make e.g. a single ETF read as 100%
+  // the moment you filter down to ETFs, which misrepresents its
+  // actual weight in the portfolio.
+  const wholeTotals = mfTotals();
   const filtered = !!(tableUI.mf.category || tableUI.mf.filter);
   const totalLabel = document.getElementById("mfTotalLabel");
   if (totalLabel) totalLabel.textContent = filtered ? "Total (filtered)" : "Total";
@@ -3342,7 +3490,7 @@ function renderMF() {
 
   displayRows.forEach(row => {
     const d = mfDerived(row);
-    const allocPct = viewTotals.current > 0 ? (d.currentValue / viewTotals.current) * 100 : 0;
+    const allocPct = wholeTotals.current > 0 ? (d.currentValue / wholeTotals.current) * 100 : 0;
     const pendingBadge = row.livePricePending ? ' <span class="pending-badge">Pending</span>' : "";
     const tr = document.createElement("tr");
     tr.dataset.id = row.id;
@@ -3392,8 +3540,15 @@ function renderMF() {
   const plPctCell = document.getElementById("mfTotalPLPct");
   plPctCell.textContent = fmtPct(viewTotals.plPct);
   plPctCell.className = plClass(viewTotals.pl);
+  // Filtered totals' OWN share of the whole portfolio (not a
+  // hardcoded 100%, which would only be true unfiltered) — mirrors
+  // the identical fix on the Equity tab's Total row.
   const allocTotalCell = document.getElementById("mfTotalAlloc");
-  if (allocTotalCell) allocTotalCell.textContent = displayRows.length ? "100%" : "—";
+  if (allocTotalCell) {
+    allocTotalCell.textContent = (displayRows.length && wholeTotals.current > 0)
+      ? fmtNum((viewTotals.current / wholeTotals.current) * 100, 1) + "%"
+      : "—";
+  }
 
   renderMFMobileList();
 
@@ -9239,6 +9394,10 @@ document.getElementById("equitySectorFilter")?.addEventListener("change", (e) =>
   tableUI.equity.sector = e.target.value;
   renderEquity();
 });
+document.getElementById("equityCapFilter")?.addEventListener("change", (e) => {
+  tableUI.equity.capCategory = e.target.value;
+  renderEquity();
+});
 document.getElementById("equitySortSelect")?.addEventListener("change", (e) => {
   const [col, dir] = e.target.value.split(":");
   tableUI.equity.sortCol = col;
@@ -9323,11 +9482,16 @@ document.getElementById("debtAttnFilter")?.addEventListener("change", (e) => {
   debtUI.attnFilter = e.target.value;
   renderDebtAttention();
 });
+document.getElementById("eqAttnFilter")?.addEventListener("change", (e) => {
+  eqUI.attnFilter = e.target.value;
+  renderEquityAttention();
+});
 
 setupIntelligentInsightsControls();
 setupFilterClearButtons();
 setupAttentionToggle("dashAttnCard", "dashAttnToggle");
 setupAttentionToggle("debtAttnCard", "debtAttnToggle");
+setupAttentionToggle("eqAttnCard", "eqAttnToggle");
 
 setupFabAdd("fabAddDebt", "btnAddDebt");
 

@@ -474,8 +474,8 @@
     font-family:var(--font-mono);font-size:10.5px;font-weight:700;color:#fff;background:var(--negative);
     border-radius:20px;padding:1px 7px;line-height:1.5;
   }
-  .attn-card #dashAttentionList, .attn-card #debtAttentionList{display:none;}
-  .attn-card.expanded #dashAttentionList, .attn-card.expanded #debtAttentionList{display:grid;}
+  .attn-card #dashAttentionList, .attn-card #debtAttentionList, .attn-card #eqAttentionList{display:none;}
+  .attn-card.expanded #dashAttentionList, .attn-card.expanded #debtAttentionList, .attn-card.expanded #eqAttentionList{display:grid;}
   .attn-card .attn-filter-wrap{display:none;}
   .attn-card.expanded .attn-filter-wrap{display:inline-flex;}
 
@@ -1890,6 +1890,22 @@
     #panel-equity .table-scroll{display:none;}
     .eq-mobile-list{display:flex;}
   }
+
+  /* Cap Category (Large/Mid/Small) shown as a small "L/M/S" chip right
+     next to the stock name instead of its own table column — kept
+     deliberately plain/outlined rather than filled, so it doesn't
+     compete visually with the Sector badge's fill color in the same
+     row. Unknown cap category (no Screener match yet) renders no chip
+     at all — see eqCapChipHTML(). */
+  .eq-cap-chip{
+    display:inline-flex;align-items:center;justify-content:center;
+    width:16px;height:16px;margin-left:6px;vertical-align:middle;
+    border-radius:4px;border:1px solid var(--border);
+    font-family:var(--font-mono);font-size:9.5px;font-weight:700;line-height:1;
+  }
+  .eq-cap-chip.cap-large{color:var(--blue);border-color:var(--blue);}
+  .eq-cap-chip.cap-mid{color:var(--gold);border-color:var(--gold);}
+  .eq-cap-chip.cap-small{color:var(--warning);border-color:var(--warning);}
 </style>
 </head>
 <body>
@@ -2144,6 +2160,24 @@
 
     <div class="sa-summary-grid" id="eqSummaryGrid"></div>
 
+    <div class="dash-section card attn-card" id="eqAttnCard">
+      <div class="attn-card-header">
+        <button type="button" class="attn-toggle-btn" id="eqAttnToggle" aria-expanded="false" aria-controls="eqAttentionList" title="Show/hide">
+          <span class="attn-toggle-chevron">▸</span>
+          <span class="attn-toggle-label">What needs your attention</span>
+          <span class="attn-count-badge" id="eqAttnCount" style="display:none">0</span>
+        </button>
+        <span class="attn-filter-wrap">
+          <select class="attn-filter-select" id="eqAttnFilter">
+            <option value="all">All</option>
+            <option value="add">Consider Adding</option>
+            <option value="reduce">Reduce / Sell</option>
+          </select>
+        </span>
+      </div>
+      <div id="eqAttentionList"></div>
+    </div>
+
     <div class="table-toolbar">
       <div class="left-group">
         <div class="filter-clear-wrap">
@@ -2153,6 +2187,14 @@
         <div class="attn-filter-wrap">
           <select class="attn-filter-select eq-toolbar-select" id="equitySectorFilter">
             <option value="">All Sectors</option>
+          </select>
+        </div>
+        <div class="attn-filter-wrap">
+          <select class="attn-filter-select eq-toolbar-select" id="equityCapFilter">
+            <option value="">All Caps</option>
+            <option value="Large Cap">Large Cap</option>
+            <option value="Mid Cap">Mid Cap</option>
+            <option value="Small Cap">Small Cap</option>
           </select>
         </div>
         <div class="attn-filter-wrap">
