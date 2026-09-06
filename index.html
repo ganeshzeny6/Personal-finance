@@ -874,6 +874,146 @@
   .insights-empty{color:var(--text-faint);font-size:12.5px;padding:24px 0;text-align:center;}
 
   /* ============================================================
+     REBALANCE TAB
+     A decision page, not a data table — every number here is read
+     live from computeRebalanceOverview() in app.js. Colors stay on
+     small icons/badges/text/bars, never a whole card (per the redesign
+     brief) so the page reads calm even when several things are off
+     target at once.
+     ============================================================ */
+  .rb-header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:16px;}
+  .rb-header-meta{text-align:right;flex:0 0 auto;}
+  .rb-header-updated{font-size:11.5px;color:var(--text-faint);}
+  .rb-header-value{font-size:12.5px;color:var(--text-muted);margin-top:2px;}
+  .rb-header-value b{color:var(--text);font-family:var(--font-mono);}
+  @media (max-width:560px){.rb-header-meta{text-align:left;}}
+
+  .rb-status-banner{
+    display:flex;align-items:flex-start;gap:14px;background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--radius);padding:18px 20px;margin-bottom:16px;
+  }
+  .rb-status-icon{width:40px;height:40px;border-radius:11px;display:flex;align-items:center;justify-content:center;flex:0 0 auto;}
+  .rb-status-icon.onTrack{background:#1a8a5f22;color:var(--positive);}
+  .rb-status-icon.watch{background:#b07a1c22;color:var(--warning);}
+  .rb-status-icon.action{background:#c23c4e22;color:var(--negative);}
+  .rb-status-body{flex:1 1 auto;min-width:0;}
+  .rb-status-title{font-family:var(--font-display);font-size:16.5px;font-weight:600;color:var(--text);margin-bottom:3px;}
+  .rb-status-sub{font-size:12.5px;color:var(--text-muted);}
+  .rb-status-badge{
+    display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:4px 10px;border-radius:20px;
+    flex:0 0 auto;white-space:nowrap;
+  }
+  .rb-status-badge::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;}
+  .rb-status-badge.onTrack{background:#1a8a5f1a;color:var(--positive);}
+  .rb-status-badge.watch{background:#b07a1c1a;color:var(--warning);}
+  .rb-status-badge.action{background:#c23c4e1a;color:var(--negative);}
+
+  .rb-section h3{margin:0 0 3px;font-family:var(--font-display);font-size:15px;font-weight:600;display:flex;align-items:center;gap:7px;}
+  .rb-section-sub{font-size:12px;color:var(--text-faint);margin:0 0 14px;}
+  .rb-subhead{font-size:12.5px;font-weight:600;color:var(--text-muted);margin:16px 0 10px;padding-top:14px;border-top:1px solid var(--border);}
+  .rb-explanation{font-size:13px;line-height:1.65;color:var(--text-muted);margin:0;}
+
+  .rb-grid{
+    display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;
+    grid-template-areas:"overall attn" "stock mf";
+  }
+  .rb-area-attn{grid-area:attn;}
+  .rb-area-overall{grid-area:overall;}
+  .rb-area-stock{grid-area:stock;}
+  .rb-area-mf{grid-area:mf;}
+  @media (max-width:900px){
+    .rb-grid{grid-template-columns:1fr;grid-template-areas:"attn" "overall" "stock" "mf";}
+  }
+
+  /* Target-vs-current comparison row — the one visual pattern used
+     consistently across Overall Portfolio, Stock Rebalancing and
+     Mutual Fund Rebalancing, per the redesign brief ("use the same
+     visual pattern consistently, no pie/donut charts"). */
+  .rb-compare-row{padding:12px 0;border-bottom:1px solid var(--border);}
+  .rb-compare-row:last-child{border-bottom:none;padding-bottom:2px;}
+  .rb-compare-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:8px;}
+  .rb-compare-name{font-family:var(--font-display);font-size:13px;font-weight:600;color:var(--text);}
+  .rb-compare-diff{display:inline-flex;align-items:center;gap:3px;font-family:var(--font-mono);font-size:12px;font-weight:600;white-space:nowrap;}
+  .rb-compare-diff.onTrack{color:var(--positive);}
+  .rb-compare-diff.watch{color:var(--warning);}
+  .rb-compare-diff.action{color:var(--negative);}
+  .rb-bar-line{display:flex;align-items:center;gap:8px;margin-bottom:5px;}
+  .rb-bar-line:last-child{margin-bottom:0;}
+  .rb-bar-label{width:52px;flex:0 0 auto;font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.03em;}
+  .rb-bar-track{flex:1 1 auto;height:7px;border-radius:4px;background:var(--bg);overflow:hidden;}
+  .rb-bar-fill{height:100%;border-radius:4px;}
+  .rb-bar-fill.target{background:var(--gold);opacity:.55;}
+  .rb-bar-value{width:44px;flex:0 0 auto;text-align:right;font-family:var(--font-mono);font-size:11.5px;color:var(--text-muted);}
+
+  /* "What needs your attention?" action cards */
+  .rb-attn-summary{font-size:12.5px;color:var(--text-muted);margin-bottom:14px;}
+  .rb-attn-empty{display:flex;align-items:center;gap:8px;color:var(--positive);font-size:13px;font-weight:500;padding:8px 0;}
+  .rb-attn-card{display:flex;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);}
+  .rb-attn-card:last-child{border-bottom:none;padding-bottom:0;}
+  .rb-attn-icon{width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex:0 0 auto;}
+  .rb-attn-icon.add{background:#1a8a5f1a;color:var(--positive);}
+  .rb-attn-icon.reduce{background:#c23c4e1a;color:var(--negative);}
+  .rb-attn-title{font-family:var(--font-display);font-size:13px;font-weight:600;color:var(--text);margin-bottom:2px;}
+  .rb-attn-meta{font-size:11.5px;color:var(--text-faint);margin-bottom:5px;font-family:var(--font-mono);}
+  .rb-attn-detail{font-size:12px;color:var(--text-muted);line-height:1.5;}
+  .rb-attn-priority{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;padding:2px 7px;border-radius:5px;margin-left:6px;vertical-align:middle;}
+  .rb-attn-priority.action{background:#c23c4e1a;color:var(--negative);}
+  .rb-attn-priority.watch{background:#b07a1c1a;color:var(--warning);}
+
+  /* Individual stock limit breaches */
+  .rb-limit-ok{display:flex;align-items:center;gap:8px;color:var(--positive);font-size:13px;padding:6px 0;}
+  .rb-limit-item{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);}
+  .rb-limit-item:last-child{border-bottom:none;}
+  .rb-limit-body{flex:1 1 auto;min-width:0;}
+  .rb-limit-name{font-family:var(--font-display);font-size:13px;font-weight:600;color:var(--text);}
+  .rb-limit-cat{font-size:11px;color:var(--text-faint);margin-top:1px;}
+  .rb-limit-figures{font-family:var(--font-mono);font-size:11.5px;color:var(--negative);margin-top:3px;}
+  .rb-limit-btn{
+    flex:0 0 auto;font-size:11.5px;font-weight:600;color:var(--negative);background:var(--negative-soft);
+    border:1px solid transparent;border-radius:8px;padding:6px 11px;cursor:pointer;white-space:nowrap;
+  }
+  .rb-limit-btn:hover{filter:brightness(1.05);}
+
+  /* Mutual Fund add/reduce/on-target compact rows */
+  .rb-mf-action-row{display:flex;align-items:center;gap:9px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12.5px;}
+  .rb-mf-action-row:last-child{border-bottom:none;}
+  .rb-mf-action-row .lbl{flex:1 1 auto;color:var(--text);font-weight:500;}
+  .rb-mf-action-row .sts{font-size:11.5px;font-weight:600;white-space:nowrap;display:inline-flex;align-items:center;gap:4px;}
+  .rb-mf-action-row .sts.add{color:var(--positive);}
+  .rb-mf-action-row .sts.reduce{color:var(--negative);}
+  .rb-mf-action-row .sts.onTrack{color:var(--text-faint);}
+
+  /* "My Rebalancing Plan" / "How to rebalance" — native <details>, kept
+     visually secondary (no bold headline, small chevron) so the main
+     content above stays the focus. */
+  .rb-details{margin-bottom:12px;}
+  .rb-details summary{
+    cursor:pointer;font-family:var(--font-display);font-size:13.5px;font-weight:600;color:var(--text);
+    list-style:none;display:flex;align-items:center;justify-content:space-between;
+  }
+  .rb-details summary::-webkit-details-marker{display:none;}
+  .rb-details summary::after{content:"";width:16px;height:16px;flex:0 0 auto;
+    background:var(--text-faint);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center/contain no-repeat;
+    mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center/contain no-repeat;
+    transition:transform .15s ease;
+  }
+  .rb-details[open] summary::after{transform:rotate(180deg);}
+  .rb-details #rbPlanContent, .rb-details .rb-help-content{margin-top:14px;}
+  .rb-help-content ol{margin:0;padding-left:18px;font-size:12.5px;color:var(--text-muted);line-height:1.9;}
+  .rb-plan-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;}
+  .rb-plan-card{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;}
+  .rb-plan-card-title{font-size:11px;font-weight:600;color:var(--text-faint);text-transform:uppercase;letter-spacing:.03em;margin-bottom:8px;}
+  .rb-plan-row{display:flex;justify-content:space-between;font-size:12.5px;padding:3px 0;color:var(--text-muted);}
+  .rb-plan-row b{color:var(--text);font-family:var(--font-mono);font-weight:600;}
+  .rb-plan-edit-link{font-size:11.5px;color:var(--gold);cursor:pointer;text-decoration:underline;background:none;border:none;padding:0;margin-top:10px;display:inline-block;}
+
+  @media (max-width:560px){
+    .rb-status-banner{flex-wrap:wrap;}
+    .rb-bar-label{width:40px;}
+    .rb-bar-value{width:38px;}
+  }
+
+  /* ============================================================
      INTELLIGENT INSIGHTS — redesign (UI only; see app.js — every
      number rendered here still comes from computeStockInsight() /
      stockAnalysisDerived() / the fundamental-verdict functions,
@@ -2078,7 +2218,7 @@
 
       <div class="sidebar-divider"></div>
       <div class="sidebar-section-label">Decide</div>
-      <button class="sidebar-nav-item" id="navRebalance"><span class="nav-icon">⇄</span><span class="nav-label">Rebalance</span></button>
+      <button class="sidebar-nav-item tab-btn" id="navRebalance" data-tab="rebalance"><span class="nav-icon">⇄</span><span class="nav-label">Rebalance</span></button>
       <button class="sidebar-nav-item" id="navOpportunities"><span class="nav-icon">◎</span><span class="nav-label">Opportunities</span></button>
 
       <div class="sidebar-divider"></div>
@@ -2931,6 +3071,78 @@
     <div class="sa-pagination" id="saPagination"></div>
 
     <p class="settings-note">"Import Screener Data" reads an .xlsx with a header row (symbol, book_value, eps, industry_pe, roe, roce, etc. — same column names your Screener export uses) and matches each row to an Equity holding by Symbol. Re-importing replaces the whole Screener dataset. Click any row (or tap a card) to see its full breakdown — valuation, health, growth, and everything else — in the detail panel.</p>
+  </section>
+
+  <!-- ============ REBALANCE ============
+       Everything inside is built by renderRebalance() in app.js from
+       live portfolio data every time this tab opens — no numbers are
+       hardcoded here, only empty containers. See computeRebalanceOverview()
+       in app.js for the full calculation this all reads from. -->
+  <section class="panel" id="panel-rebalance">
+    <div class="rb-header">
+      <div>
+        <h2 class="section-title">Rebalance</h2>
+        <p class="section-sub">Keep your portfolio aligned with your plan.</p>
+      </div>
+      <div class="rb-header-meta">
+        <div class="rb-header-updated" id="rbLastCalculated">Last calculated just now</div>
+        <div class="rb-header-value">Based on current portfolio value: <b id="rbPortfolioValue">₹0</b></div>
+      </div>
+    </div>
+
+    <div class="rb-status-banner" id="rbStatusBanner"></div>
+
+    <div class="card rb-section" id="rbExplanationCard">
+      <h3>What this means</h3>
+      <p class="rb-explanation" id="rbExplanationText"></p>
+    </div>
+
+    <div class="rb-grid">
+      <div class="card rb-section rb-area-attn">
+        <h3>What needs your attention?</h3>
+        <div id="rbAttentionList"></div>
+      </div>
+
+      <div class="card rb-section rb-area-overall">
+        <h3>Overall Portfolio</h3>
+        <p class="rb-section-sub">Debt, Mutual Funds, Equity and Gold — your top-level plan.</p>
+        <div id="rbOverallRows"></div>
+      </div>
+
+      <div class="card rb-section rb-area-stock">
+        <h3>Stock Rebalancing</h3>
+        <p class="rb-section-sub">How your Equity is split by market cap, and any single stock over its limit.</p>
+        <div id="rbStockCapRows"></div>
+        <h4 class="rb-subhead">Individual Stock Limits</h4>
+        <p class="rb-section-sub" id="rbStockLimitsNote" style="margin-bottom:12px"></p>
+        <div id="rbStockLimits"></div>
+      </div>
+
+      <div class="card rb-section rb-area-mf">
+        <h3>Mutual Fund Rebalancing</h3>
+        <p class="rb-section-sub">How your Mutual Funds are split by category.</p>
+        <div id="rbMfRows"></div>
+        <div id="rbMfActions"></div>
+      </div>
+    </div>
+
+    <details class="card rb-details" id="rbPlanDetails">
+      <summary>My Rebalancing Plan</summary>
+      <div id="rbPlanContent"></div>
+    </details>
+
+    <details class="card rb-details">
+      <summary>How to rebalance</summary>
+      <div class="rb-help-content">
+        <ol>
+          <li>We compare your current portfolio with your target.</li>
+          <li>We find areas that are above or below target.</li>
+          <li>We check individual stock limits.</li>
+          <li>We suggest where your next investment could go.</li>
+          <li>We only highlight items that need attention.</li>
+        </ol>
+      </div>
+    </details>
   </section>
 
     </main>

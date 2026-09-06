@@ -123,7 +123,7 @@ const DEFAULT_GOOGLE_DRIVE_API_KEY = "AIzaSyB0waRuXkp9Bh1k0CcmSea-BXcM6yY8WQs";
 // "Nifty History API URL" is filled in after deploying that script.
 const DEFAULT_NIFTY_HISTORY_API_URL = "";
 
-const DEFAULT_IDEAL = { cash: 5, debt: 30, mf: 30, equity: 25, gold: 10 };
+const DEFAULT_IDEAL = { cash: 0, debt: 45, mf: 35, equity: 15, gold: 5 };
 
 // Equity tab: maximum recommended allocation % (of total Equity Invested
 // Amount) per market-cap category — editable under Settings -> Equity
@@ -140,6 +140,26 @@ const DEFAULT_EQUITY_ALLOC_LIMITS = { large: 15, mid: 8, small: 5 };
 // getEquityCapAllocTarget() below, editable under Settings -> Equity
 // Allocation Targets (Overall Portfolio, by Market Cap).
 const DEFAULT_EQUITY_CAP_ALLOC_TARGETS = { large: 70, mid: 20, small: 10 };
+
+// Mutual Funds tab: overall target % of the WHOLE mutual fund portfolio
+// per category — the MF equivalent of DEFAULT_EQUITY_CAP_ALLOC_TARGETS
+// above. A fund's category comes from its own free-text Category field
+// (row.category, e.g. "Index Fund", "Flexi Cap") — see
+// classifyMfTargetCategory() below, which buckets that free text into
+// one of these four target categories (or null/"Other" when it matches
+// none, the same way an equity stock's cap can be "Unclassified").
+// Editable under Settings -> Mutual Fund Allocation Targets.
+const DEFAULT_MF_CATEGORY_TARGETS = { indexEtf: 65, flexiCap: 15, midCap: 10, smallCap: 10 };
+
+// Rebalance tab: how far current allocation can drift from target
+// before it's called out. One shared, named threshold instead of
+// magic numbers scattered through the Rebalance page's rendering code
+// — every "On Track / Needs Attention / Rebalance Now" judgment on
+// that page reads these two numbers instead of a hardcoded 3/7.
+// Deliberately separate from the Dashboard's own ATTENTION_DRIFT_THRESHOLD
+// (which stays untouched) so this redesign never changes that existing
+// feature's behavior.
+const REBALANCE_TOLERANCE = { watch: 3, action: 7 };
 
 // Stock Analysis: columns hidden by default on a brand-new install, so
 // the table opens compact/scannable instead of showing all 32 fields
@@ -225,6 +245,9 @@ function blankState() {
     // Overall Large/Mid/Small target split for the whole Equity
     // portfolio — see DEFAULT_EQUITY_CAP_ALLOC_TARGETS above.
     equityCapAllocTargets: { ...DEFAULT_EQUITY_CAP_ALLOC_TARGETS },
+    // Overall Index/ETF / Flexi / Mid / Small target split for the
+    // whole Mutual Fund portfolio — see DEFAULT_MF_CATEGORY_TARGETS above.
+    mfCategoryTargets: { ...DEFAULT_MF_CATEGORY_TARGETS },
     equity: [],
     debt: [],
     mf: [],
@@ -310,6 +333,7 @@ function mergeIntoState(saved) {
     ideal: { ...DEFAULT_IDEAL, ...(saved.ideal || {}) },
     equityAllocLimits: { ...DEFAULT_EQUITY_ALLOC_LIMITS, ...(saved.equityAllocLimits || {}) },
     equityCapAllocTargets: { ...DEFAULT_EQUITY_CAP_ALLOC_TARGETS, ...(saved.equityCapAllocTargets || {}) },
+    mfCategoryTargets: { ...DEFAULT_MF_CATEGORY_TARGETS, ...(saved.mfCategoryTargets || {}) },
     // Backfill: earlier saves may have an explicit "" here from before
     // these had real defaults — treat that the same as "never set"
     // rather than letting a blank string win.
@@ -515,7 +539,16 @@ const ICON_PATHS = {
   "monitor": '<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>',
   "lock": '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
   "unlock": '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>',
-  "chevron-left": '<path d="m15 18-6-6 6-6"/>'
+  "chevron-left": '<path d="m15 18-6-6 6-6"/>',
+  "chevron-down": '<path d="m6 9 6 6 6-6"/>',
+  "refresh-cw": '<path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/>',
+  "briefcase-business": '<path d="M12 12h.01"/><path d="M16 6V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><path d="M22 13a18.15 18.15 0 0 1-20 0"/><rect width="20" height="14" x="2" y="6" rx="2"/>',
+  "shield-check": '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
+  "chart-candlestick": '<path d="M9 5v4"/><rect width="4" height="6" x="7" y="9" rx="1"/><path d="M9 15v2"/><path d="M17 3v2"/><rect width="4" height="8" x="15" y="5" rx="1"/><path d="M17 13v3"/><path d="M3 3v18h18"/>',
+  "gem": '<path d="M6 3h12l4 6-10 12L2 9Z"/><path d="M11 3 8 9l4 12 4-12-3-6"/><path d="M2 9h20"/>',
+  "circle-check": '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+  "triangle-alert": '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  "circle-help": '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>'
 };
 function icon(name, size, cls) {
   size = size || 16;
@@ -833,6 +866,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     if (btn.dataset.tab === "dashboard") renderDashboard();
     if (btn.dataset.tab === "insights") renderInsights();
     if (btn.dataset.tab === "stockanalysis") renderStockAnalysis();
+    if (btn.dataset.tab === "rebalance") renderRebalance();
   });
 });
 
@@ -911,13 +945,12 @@ document.querySelectorAll(".mobile-bottom-nav-item[data-tab]").forEach(btn => {
 });
 document.getElementById("mobileMoreBtn")?.addEventListener("click", () => setSidebarOpen(true));
 
-// Rebalance / Opportunities sidebar entries — real, existing features
-// (the ideal-% editor and Intelligent Insights) surfaced as top-level
-// nav items instead of being buried in Dashboard-only buttons.
-document.getElementById("navRebalance")?.addEventListener("click", () => {
-  setSidebarOpen(false);
-  openIdealTargetsModal();
-});
+// Opportunities sidebar entry — a real, existing feature (Intelligent
+// Insights) surfaced as a top-level nav item. Rebalance used to be a
+// shortcut into the ideal-% editor modal the same way, but is now a
+// full tab in its own right — #navRebalance carries the .tab-btn class
+// so it's wired up by the generic tab-switch handler above instead
+// (panel switch + renderRebalance(), same as Dashboard/Insights/etc.).
 document.getElementById("navOpportunities")?.addEventListener("click", () => {
   setSidebarOpen(false);
   goToTab("stockanalysis");
@@ -4358,6 +4391,418 @@ function renderDashAttention() {
   });
 }
 
+/* ============================================================
+   REBALANCE TAB
+   Everything below reads live portfolio data every time it runs —
+   nothing here is ever cached or stored. Three levels, each reusing
+   an existing calculation where one already exists:
+     Level 1 — Overall Portfolio (Debt/MF/Equity/Gold/Cash): reuses
+       computeAssetClassesAndNetWorth() + state.ideal, exactly what
+       the existing "Edit allocation targets" modal already uses.
+     Level 2a — Equity by market cap (Large/Mid/Small): reuses
+       computeCapAllocationSummary() + state.equityCapAllocTargets,
+       unchanged from the Stock Analysis -> Intelligent Insights cards.
+     Level 2b — Mutual Funds by category (Index/ETF, Flexi, Mid,
+       Small): new — computeMfCategorySummary() below — but built the
+       same way as Level 2a, bucketed from each fund's own free-text
+       Category field via classifyMfTargetCategory().
+     Level 3 — Individual stocks vs their per-stock limit: reuses
+       getEquityAllocLimit()/allocLimitStatus(), exactly what the
+       Equity tab's Alloc % column already shows.
+   ============================================================ */
+
+// Three plain-English tiers instead of a numeric score — see
+// REBALANCE_TOLERANCE above for the two breakpoints this reads.
+function rebalanceStatusFromDiff(diffPct) {
+  const abs = Math.abs(diffPct);
+  if (abs >= REBALANCE_TOLERANCE.action) return "action";
+  if (abs >= REBALANCE_TOLERANCE.watch) return "watch";
+  return "onTrack";
+}
+const REBALANCE_STATUS_LABEL = { onTrack: "On Track", watch: "Needs Attention", action: "Rebalance Now" };
+const REBALANCE_STATUS_COLOR = { onTrack: "var(--positive)", watch: "var(--warning)", action: "var(--negative)" };
+// Worst-of-N rollup — one "action" anywhere makes the whole portfolio
+// "action", one "watch" (with no "action") makes it "watch".
+function worstRebalanceStatus(statuses) {
+  if (statuses.includes("action")) return "action";
+  if (statuses.includes("watch")) return "watch";
+  return "onTrack";
+}
+
+// Buckets a Mutual Fund's own free-text Category field (row.category —
+// whatever the person typed, e.g. "Index Fund", "Nifty 50 ETF", "Flexi
+// Cap", "Midcap Fund") into one of the four target categories from
+// state.mfCategoryTargets. Order matters: "index"/"etf" is checked
+// first since an index fund's name/category often also contains
+// "Large Cap" or similar, and should count as Index/ETF, not a cap
+// bucket. Returns null (the same convention as an equity stock with no
+// Screener match) when nothing matches — shown as "Other" with no
+// target, never guessed.
+const MF_TARGET_CATEGORIES = [
+  { key: "indexEtf", label: "Index Funds / ETFs", match: /index|etf|nifty|sensex/i },
+  { key: "flexiCap", label: "Flexi Cap", match: /flexi/i },
+  { key: "smallCap", label: "Small Cap", match: /small/i },
+  { key: "midCap", label: "Mid Cap", match: /mid/i }
+];
+function classifyMfTargetCategory(categoryText) {
+  const s = (categoryText || "").trim();
+  if (!s) return null;
+  const hit = MF_TARGET_CATEGORIES.find(c => c.match.test(s));
+  return hit ? hit.key : null;
+}
+function mfTargetCategoryLabel(key) {
+  const hit = MF_TARGET_CATEGORIES.find(c => c.key === key);
+  return hit ? hit.label : "Other";
+}
+
+// The Mutual Fund equivalent of computeCapAllocationSummary() — same
+// shape, same "% of the whole MF portfolio's Invested Amount" basis
+// (matching how Equity's own cap allocation is computed), just bucketed
+// by classifyMfTargetCategory() instead of marketCapCategory().
+function computeMfCategorySummary() {
+  const totalInvested = state.mf.reduce((s, r) => s + (Number(r.invested) || 0), 0);
+  const targets = state.mfCategoryTargets || DEFAULT_MF_CATEGORY_TARGETS;
+  const buckets = { indexEtf: 0, flexiCap: 0, midCap: 0, smallCap: 0, other: 0 };
+  state.mf.forEach(row => {
+    const key = classifyMfTargetCategory(row.category) || "other";
+    buckets[key] = (buckets[key] || 0) + (Number(row.invested) || 0);
+  });
+  const pct = (v) => totalInvested > 0 ? (v / totalInvested) * 100 : 0;
+  return MF_TARGET_CATEGORIES.map(c => {
+    const current = pct(buckets[c.key]);
+    const target = Number(targets[c.key]) || 0;
+    return { key: c.key, label: c.label, current, target, diff: current - target, status: rebalanceStatusFromDiff(current - target) };
+  }).concat([
+    { key: "other", label: "Other / Uncategorized", current: pct(buckets.other), target: null, diff: null, status: null }
+  ]);
+}
+
+// The single master calculation the whole Rebalance page renders from.
+// Everything here is read fresh from `state` every call — nothing is
+// stored, so the page can never show a stale number.
+function computeRebalanceOverview() {
+  const { classes, netWorth } = computeAssetClassesAndNetWorth();
+  const eqTotals = equityTotals();
+  const mfTotalsV = mfTotals();
+
+  // Level 1 — Overall Portfolio. Cash is intentionally excluded from
+  // the headline four rows (Debt/MF/Equity/Gold, the categories the
+  // person's plan actually targets) but still counts inside netWorth,
+  // exactly like the existing Ideal Targets modal.
+  const levelKeys = ["debt", "mf", "equity", "gold"];
+  const level1 = levelKeys.map(key => {
+    const c = classes.find(cc => cc.key === key);
+    const current = netWorth > 0 ? (c.current / netWorth) * 100 : 0;
+    const target = Number(state.ideal[key]) || 0;
+    const diff = current - target;
+    return { key, label: c.label, current, target, diff, status: rebalanceStatusFromDiff(diff), amount: c.current };
+  });
+
+  // Level 2a — Equity by market cap. Reuses the exact same figures as
+  // the Stock Analysis -> Intelligent Insights "Cap Allocation" cards.
+  const capSummary = computeCapAllocationSummary();
+  const level2Equity = ["large", "mid", "small"].map(k => {
+    const b = capSummary.find(x => x.key === k);
+    const diff = b.pct - (b.max || 0);
+    return { key: k, label: b.label, current: b.pct, target: b.max || 0, diff, status: rebalanceStatusFromDiff(diff) };
+  });
+
+  // Level 2b — Mutual Funds by category.
+  const mfSummary = computeMfCategorySummary();
+  const level2Mf = mfSummary.filter(m => m.target !== null);
+
+  // Level 3 — individual stocks over their per-stock cap limit (Equity
+  // tab's own Alloc %/allocLimitStatus(), unchanged).
+  const screenerMap = buildScreenerMap();
+  const overLimitStocks = state.equity.map(row => {
+    const capCategory = getEquityCapCategory(row, screenerMap);
+    const allocMax = getEquityAllocLimit(capCategory);
+    const allocPct = eqTotals.invested > 0 ? (Number(row.invested) / eqTotals.invested) * 100 : 0;
+    return { row, capCategory, allocPct, allocMax, status: allocLimitStatus(allocPct, allocMax) };
+  }).filter(s => s.status === "above")
+    .sort((a, b) => (b.allocPct - b.allocMax) - (a.allocPct - a.allocMax));
+
+  // Overall status — worst of the four Level-1 categories only (Level
+  // 2/3 issues are surfaced in their own dedicated sections below, so
+  // they don't also drive the top-line status banner).
+  const overallStatus = worstRebalanceStatus(level1.map(c => c.status));
+
+  // Master "What needs your attention?" list — pooled from Level 1 +
+  // Level 2b (Mutual Fund categories), sorted by how far off target
+  // each one is, most severe first. Level 2a (equity cap) issues live
+  // only in the Stock Rebalancing section below, and individual stock
+  // limit breaches only in Individual Stock Limits, so nothing here
+  // duplicates those two dedicated sections.
+  const attentionCandidates = [
+    ...level1.map(c => ({ scope: "portfolio", key: c.key, label: c.label, current: c.current, target: c.target, diff: c.diff, status: c.status })),
+    ...level2Mf.map(c => ({ scope: "mf", key: c.key, label: c.label, current: c.current, target: c.target, diff: c.diff, status: c.status }))
+  ].filter(c => c.status !== "onTrack");
+  attentionCandidates.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+  const attentionItems = attentionCandidates.slice(0, 5).map(c => {
+    const isAdd = c.diff < 0; // current below target -> add; above -> reduce/pause
+    return {
+      ...c,
+      direction: isAdd ? "add" : "reduce",
+      actionLabel: isAdd ? `Add ${c.label}` : (c.scope === "mf" ? `Reduce / pause ${c.label}` : `Reduce ${c.label}`),
+      detail: isAdd
+        ? `${c.label} is ${fmtNum(Math.abs(c.diff), 1)}% below your target.`
+        : `${c.label} is ${fmtNum(Math.abs(c.diff), 1)}% above your target.`
+    };
+  });
+
+  return {
+    netWorth, level1, level2Equity, level2Mf, mfSummary, overLimitStocks,
+    overallStatus, attentionItems, eqTotals, mfTotals: mfTotalsV
+  };
+}
+
+// The plain-English paragraph for "Explain the result" — built only
+// from level1 (the categories the person's overall plan targets), most
+// severe first, capped to the two that matter most so it stays
+// readable. "New money first" phrasing (section 16) rather than a sell
+// recommendation, unless nothing is below target at all.
+function generateRebalanceExplanation(overview) {
+  const offTarget = overview.level1.filter(c => c.status !== "onTrack").sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+  if (offTarget.length === 0) {
+    return "Your portfolio is well balanced across Debt, Mutual Funds, Equity and Gold — every category is close to its target. No changes are needed right now.";
+  }
+  const sentences = offTarget.slice(0, 2).map(c =>
+    `Your ${c.label} allocation is ${fmtNum(Math.abs(c.diff), 1)}% ${c.diff > 0 ? "above" : "below"} your target.`
+  );
+  const below = offTarget.filter(c => c.diff < 0).map(c => c.label);
+  const above = offTarget.filter(c => c.diff > 0).map(c => c.label);
+  let closing;
+  if (below.length && above.length) {
+    closing = `You may want to direct your next investments toward ${below.join(" and ")}, and avoid adding to ${above.join(" or ")} until the allocation comes closer to your target.`;
+  } else if (below.length) {
+    closing = `You may want to direct your next investments toward ${below.join(" and ")} until the allocation comes closer to your target.`;
+  } else {
+    closing = `Consider directing your next investments elsewhere and avoid adding to ${above.join(" or ")} until the allocation comes closer to your target.`;
+  }
+  return sentences.join(" ") + " " + closing;
+}
+
+// One target-vs-current comparison row — the single visual pattern
+// reused for Overall Portfolio, Stock Rebalancing and Mutual Fund
+// Rebalancing rows. scaleMax is shared across every row in the same
+// section (computed once by the caller) so bar lengths stay honestly
+// comparable to each other within that section, not just within a row.
+function rebalanceCompareRowHTML(label, targetPct, currentPct, scaleMax, iconName) {
+  const diff = currentPct - targetPct;
+  const status = rebalanceStatusFromDiff(diff);
+  const max = scaleMax || Math.max(targetPct, currentPct, 10) * 1.15;
+  const targetBarPct = clamp((targetPct / max) * 100, 0, 100);
+  const currentBarPct = clamp((currentPct / max) * 100, 0, 100);
+  const currentColor = REBALANCE_STATUS_COLOR[status];
+  // "On target" follows the same tolerance tiers as everything else on
+  // the page (REBALANCE_TOLERANCE), not a near-zero cutoff — otherwise
+  // a +2% difference the app has already decided needs no action would
+  // still show as "2.0% above target" next to a reassuring green bar,
+  // which reads as a mismatch to someone with little market knowledge.
+  const onTarget = status === "onTrack";
+  const diffText = onTarget ? "On target" : `${fmtNum(Math.abs(diff), 1)}% ${diff > 0 ? "above" : "below"} target`;
+  const diffIcon = onTarget ? "circle-check" : diff > 0 ? "trending-up" : "trending-down";
+  return `
+    <div class="rb-compare-row">
+      <div class="rb-compare-top">
+        <div class="rb-compare-name">${iconName ? icon(iconName, 14) + " " : ""}${escapeAttr(label)}</div>
+        <div class="rb-compare-diff ${status}">${icon(diffIcon, 13)} ${diffText}</div>
+      </div>
+      <div class="rb-bar-line">
+        <div class="rb-bar-label">Target</div>
+        <div class="rb-bar-track"><div class="rb-bar-fill target" style="width:${targetBarPct}%"></div></div>
+        <div class="rb-bar-value">${fmtNum(targetPct, 0)}%</div>
+      </div>
+      <div class="rb-bar-line">
+        <div class="rb-bar-label">Current</div>
+        <div class="rb-bar-track"><div class="rb-bar-fill" style="width:${currentBarPct}%;background:${currentColor}"></div></div>
+        <div class="rb-bar-value">${fmtNum(currentPct, 1)}%</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderRebalanceAttentionList(overview) {
+  const el = document.getElementById("rbAttentionList");
+  if (!el) return;
+  const items = overview.attentionItems;
+  if (items.length === 0) {
+    el.innerHTML = `<div class="rb-attn-empty">${icon("circle-check", 16)} Your portfolio is well balanced — nothing needs your attention right now.</div>`;
+    return;
+  }
+  el.innerHTML =
+    `<div class="rb-attn-summary">${items.length} thing${items.length === 1 ? "" : "s"} need${items.length === 1 ? "s" : ""} your attention.</div>` +
+    items.map((item, i) => {
+      const iconName = item.direction === "add" ? "trending-up" : "trending-down";
+      const priorityBadge = item.status === "action" ? `<span class="rb-attn-priority action">High</span>` : `<span class="rb-attn-priority watch">Medium</span>`;
+      const advice = item.direction === "add"
+        ? "Consider directing your next investment here."
+        : "Consider directing new money elsewhere instead of adding more, rather than selling right away.";
+      return `
+        <div class="rb-attn-card" data-idx="${i}" style="cursor:pointer">
+          <div class="rb-attn-icon ${item.direction}">${icon(iconName, 16)}</div>
+          <div class="rb-attn-body">
+            <div class="rb-attn-title">${escapeAttr(item.actionLabel)}${priorityBadge}</div>
+            <div class="rb-attn-meta">Current ${fmtNum(item.current, 1)}% · Target ${fmtNum(item.target, 1)}%</div>
+            <div class="rb-attn-detail">${escapeAttr(item.detail)} ${escapeAttr(advice)}</div>
+          </div>
+        </div>
+      `;
+    }).join("");
+  el.querySelectorAll(".rb-attn-card").forEach(card => {
+    const item = items[Number(card.dataset.idx)];
+    card.addEventListener("click", () => {
+      // Level 1 keys (debt/mf/equity/gold) are exactly the Portfolio
+      // sub-tab keys goToTab() already understands; Level 2b (MF
+      // category) items jump to the Mutual Funds sub-tab the same way.
+      if (item.scope === "portfolio") goToTab(item.key);
+      else goToTab("mf");
+    });
+  });
+}
+
+function renderRebalanceStockLimits(overview) {
+  const el = document.getElementById("rbStockLimits");
+  const noteEl = document.getElementById("rbStockLimitsNote");
+  if (!el) return;
+  const limits = state.equityAllocLimits || DEFAULT_EQUITY_ALLOC_LIMITS;
+  if (noteEl) noteEl.textContent = `Maximum per stock — Large Cap ${fmtNum(limits.large, 0)}% · Mid Cap ${fmtNum(limits.mid, 0)}% · Small Cap ${fmtNum(limits.small, 0)}%.`;
+  if (overview.overLimitStocks.length === 0) {
+    el.innerHTML = `<div class="rb-limit-ok">${icon("circle-check", 16)} All individual stock allocations are within your limits.</div>`;
+    return;
+  }
+  el.innerHTML = overview.overLimitStocks.map((s, i) => `
+    <div class="rb-limit-item" data-idx="${i}" style="cursor:pointer">
+      <div class="rb-limit-body">
+        <div class="rb-limit-name">${escapeAttr(s.row.name || "Unnamed stock")}</div>
+        <div class="rb-limit-cat">${escapeAttr(s.capCategory || "Unclassified")}</div>
+        <div class="rb-limit-figures">${fmtNum(s.allocPct, 1)}% of ${fmtNum(s.allocMax, 0)}% maximum · over by ${fmtNum(s.allocPct - s.allocMax, 1)}%</div>
+      </div>
+      <button class="rb-limit-btn" type="button">Consider Reducing</button>
+    </div>
+  `).join("");
+  el.querySelectorAll(".rb-limit-item").forEach(itemEl => {
+    const s = overview.overLimitStocks[Number(itemEl.dataset.idx)];
+    itemEl.addEventListener("click", () => openEqDrawer(s.row.id));
+  });
+}
+
+function renderRebalanceMfActions(overview) {
+  const el = document.getElementById("rbMfActions");
+  if (!el) return;
+  el.innerHTML = overview.level2Mf.map(c => {
+    if (c.status === "onTrack") {
+      return `<div class="rb-mf-action-row"><span class="lbl">${escapeAttr(c.label)}</span><span class="sts onTrack">${icon("circle-check", 13)} On target</span></div>`;
+    }
+    const isAdd = c.diff < 0;
+    const text = isAdd ? `Needs +${fmtNum(Math.abs(c.diff), 1)}%` : `${fmtNum(Math.abs(c.diff), 1)}% above target`;
+    return `<div class="rb-mf-action-row"><span class="lbl">${escapeAttr(c.label)}</span><span class="sts ${isAdd ? "add" : "reduce"}">${icon(isAdd ? "trending-up" : "trending-down", 13)} ${escapeAttr(text)}</span></div>`;
+  }).join("");
+}
+
+function renderRebalancePlanContent() {
+  const el = document.getElementById("rbPlanContent");
+  if (!el) return;
+  const ideal = state.ideal;
+  const eqT = state.equityCapAllocTargets || DEFAULT_EQUITY_CAP_ALLOC_TARGETS;
+  const mfT = state.mfCategoryTargets || DEFAULT_MF_CATEGORY_TARGETS;
+  el.innerHTML = `
+    <div class="rb-plan-grid">
+      <div class="rb-plan-card">
+        <div class="rb-plan-card-title">Overall Portfolio</div>
+        <div class="rb-plan-row"><span>Debt</span><b>${fmtNum(ideal.debt, 0)}%</b></div>
+        <div class="rb-plan-row"><span>Mutual Funds</span><b>${fmtNum(ideal.mf, 0)}%</b></div>
+        <div class="rb-plan-row"><span>Equity</span><b>${fmtNum(ideal.equity, 0)}%</b></div>
+        <div class="rb-plan-row"><span>Gold</span><b>${fmtNum(ideal.gold, 0)}%</b></div>
+        <button class="rb-plan-edit-link" type="button" id="rbEditOverallPlan">Edit</button>
+      </div>
+      <div class="rb-plan-card">
+        <div class="rb-plan-card-title">Stocks (of Equity)</div>
+        <div class="rb-plan-row"><span>Large Cap</span><b>${fmtNum(eqT.large, 0)}%</b></div>
+        <div class="rb-plan-row"><span>Mid Cap</span><b>${fmtNum(eqT.mid, 0)}%</b></div>
+        <div class="rb-plan-row"><span>Small Cap</span><b>${fmtNum(eqT.small, 0)}%</b></div>
+        <button class="rb-plan-edit-link" type="button" id="rbEditStockPlan">Edit</button>
+      </div>
+      <div class="rb-plan-card">
+        <div class="rb-plan-card-title">Mutual Funds</div>
+        <div class="rb-plan-row"><span>Index / ETF</span><b>${fmtNum(mfT.indexEtf, 0)}%</b></div>
+        <div class="rb-plan-row"><span>Flexi Cap</span><b>${fmtNum(mfT.flexiCap, 0)}%</b></div>
+        <div class="rb-plan-row"><span>Mid Cap</span><b>${fmtNum(mfT.midCap, 0)}%</b></div>
+        <div class="rb-plan-row"><span>Small Cap</span><b>${fmtNum(mfT.smallCap, 0)}%</b></div>
+        <button class="rb-plan-edit-link" type="button" id="rbEditMfPlan">Edit</button>
+      </div>
+    </div>
+  `;
+  document.getElementById("rbEditOverallPlan").addEventListener("click", openIdealTargetsModal);
+  document.getElementById("rbEditStockPlan").addEventListener("click", openSettingsModal);
+  document.getElementById("rbEditMfPlan").addEventListener("click", openSettingsModal);
+}
+
+// The single entry point — called every time the Rebalance tab
+// becomes active (see the .tab-btn click handler) so it's always
+// computed from whatever's in `state` at that moment.
+function renderRebalance() {
+  if (!document.getElementById("panel-rebalance")) return;
+  const overview = computeRebalanceOverview();
+
+  const lastCalcEl = document.getElementById("rbLastCalculated");
+  if (lastCalcEl) lastCalcEl.textContent = "Last calculated just now";
+  const valueEl = document.getElementById("rbPortfolioValue");
+  if (valueEl) valueEl.textContent = fmtINRCompact(overview.netWorth);
+
+  const statusEl = document.getElementById("rbStatusBanner");
+  if (statusEl) {
+    const statusIconName = overview.overallStatus === "onTrack" ? "circle-check" : "triangle-alert";
+    const headline = overview.overallStatus === "onTrack" ? "Your portfolio is well balanced"
+      : overview.overallStatus === "watch" ? "Your portfolio is slightly out of balance"
+      : "Your portfolio needs attention";
+    const offCount = overview.attentionItems.length;
+    const subLine = offCount === 0 ? "Every category is close to its target." : `${offCount} area${offCount === 1 ? " is" : "s are"} outside your target.`;
+    statusEl.innerHTML = `
+      <div class="rb-status-icon ${overview.overallStatus}">${icon(statusIconName, 20)}</div>
+      <div class="rb-status-body">
+        <div class="rb-status-title">${escapeAttr(headline)}</div>
+        <div class="rb-status-sub">${escapeAttr(subLine)}</div>
+      </div>
+      <div class="rb-status-badge ${overview.overallStatus}">${escapeAttr(REBALANCE_STATUS_LABEL[overview.overallStatus])}</div>
+    `;
+  }
+
+  const explanationEl = document.getElementById("rbExplanationText");
+  if (explanationEl) explanationEl.textContent = generateRebalanceExplanation(overview);
+
+  renderRebalanceAttentionList(overview);
+
+  const overallRowsEl = document.getElementById("rbOverallRows");
+  if (overallRowsEl) {
+    const overallIcons = { debt: "shield-check", mf: "layers", equity: "chart-candlestick", gold: "gem" };
+    const overallMax = Math.max(...overview.level1.map(c => Math.max(c.target, c.current)), 10) * 1.15;
+    overallRowsEl.innerHTML = overview.level1.map(c =>
+      rebalanceCompareRowHTML(c.label, c.target, c.current, overallMax, overallIcons[c.key])
+    ).join("");
+  }
+
+  const stockRowsEl = document.getElementById("rbStockCapRows");
+  if (stockRowsEl) {
+    const stockMax = Math.max(...overview.level2Equity.map(c => Math.max(c.target, c.current)), 10) * 1.15;
+    stockRowsEl.innerHTML = overview.level2Equity.map(c =>
+      rebalanceCompareRowHTML(c.label, c.target, c.current, stockMax)
+    ).join("");
+  }
+  renderRebalanceStockLimits(overview);
+
+  const mfRowsEl = document.getElementById("rbMfRows");
+  if (mfRowsEl) {
+    const mfMax = Math.max(...overview.level2Mf.map(c => Math.max(c.target, c.current)), 10) * 1.15;
+    mfRowsEl.innerHTML = overview.level2Mf.map(c =>
+      rebalanceCompareRowHTML(c.label, c.target, c.current, mfMax)
+    ).join("");
+  }
+  renderRebalanceMfActions(overview);
+
+  renderRebalancePlanContent();
+}
+
 // Portfolio Health — a new composite score (not present before this
 // redesign), built entirely from numbers the app already computes
 // elsewhere: allocation drift (state.ideal vs actual), equity
@@ -4599,6 +5044,7 @@ function openIdealTargetsModal() {
       state.ideal[e.target.dataset.key] = parseFloat(e.target.value) || 0;
       saveState();
       renderDashboard();
+      renderRebalance();
       openIdealTargetsModal();
     });
   });
@@ -9674,6 +10120,25 @@ function openSettingsModal() {
       <input type="text" inputmode="decimal" id="settingsCapTargetSmall" value="${escapeAttr(String(state.equityCapAllocTargets?.small ?? DEFAULT_EQUITY_CAP_ALLOC_TARGETS.small))}">
     </div>
 
+    <h4>Mutual Fund Allocation Targets (Overall Portfolio, by Category)</h4>
+    <p class="settings-note" style="margin-top:0">Target % of your TOTAL Mutual Fund portfolio for each category — the MF equivalent of the Equity targets above. A fund's category is matched from its own Category field on the Mutual Funds tab (matching "index"/"etf" → Index/ETF, "flexi" → Flexi Cap, "small" → Small Cap, "mid" → Mid Cap); anything that matches none of these counts as Other, with no target. Shown on the Rebalance tab's "Mutual Fund Rebalancing" section.</p>
+    <div class="settings-field">
+      <label for="settingsMfTargetIndex">Index Funds / ETFs — target % of portfolio</label>
+      <input type="text" inputmode="decimal" id="settingsMfTargetIndex" value="${escapeAttr(String(state.mfCategoryTargets?.indexEtf ?? DEFAULT_MF_CATEGORY_TARGETS.indexEtf))}">
+    </div>
+    <div class="settings-field">
+      <label for="settingsMfTargetFlexi">Flexi Cap — target % of portfolio</label>
+      <input type="text" inputmode="decimal" id="settingsMfTargetFlexi" value="${escapeAttr(String(state.mfCategoryTargets?.flexiCap ?? DEFAULT_MF_CATEGORY_TARGETS.flexiCap))}">
+    </div>
+    <div class="settings-field">
+      <label for="settingsMfTargetMid">Mid Cap — target % of portfolio</label>
+      <input type="text" inputmode="decimal" id="settingsMfTargetMid" value="${escapeAttr(String(state.mfCategoryTargets?.midCap ?? DEFAULT_MF_CATEGORY_TARGETS.midCap))}">
+    </div>
+    <div class="settings-field">
+      <label for="settingsMfTargetSmall">Small Cap — target % of portfolio</label>
+      <input type="text" inputmode="decimal" id="settingsMfTargetSmall" value="${escapeAttr(String(state.mfCategoryTargets?.smallCap ?? DEFAULT_MF_CATEGORY_TARGETS.smallCap))}">
+    </div>
+
     <h4>Data Sources</h4>
     <p class="settings-note" style="margin-top:0">Every API URL and credential the app reads live data from or imports through, in one place.</p>
     <p class="settings-note" style="margin-top:0"><b>Live Price API</b> — your Google Apps Script Web App URL. Update it here if you ever redeploy and get a new <code>/exec</code> link — no code changes needed.</p>
@@ -9777,11 +10242,18 @@ function openSettingsModal() {
           mid: parseLimit("settingsCapTargetMid", DEFAULT_EQUITY_CAP_ALLOC_TARGETS.mid),
           small: parseLimit("settingsCapTargetSmall", DEFAULT_EQUITY_CAP_ALLOC_TARGETS.small)
         };
+        state.mfCategoryTargets = {
+          indexEtf: parseLimit("settingsMfTargetIndex", DEFAULT_MF_CATEGORY_TARGETS.indexEtf),
+          flexiCap: parseLimit("settingsMfTargetFlexi", DEFAULT_MF_CATEGORY_TARGETS.flexiCap),
+          midCap: parseLimit("settingsMfTargetMid", DEFAULT_MF_CATEGORY_TARGETS.midCap),
+          smallCap: parseLimit("settingsMfTargetSmall", DEFAULT_MF_CATEGORY_TARGETS.smallCap)
+        };
         saveState();
         renderBrand();
         renderEquity();
         renderStockAnalysis();
         renderDashboard();
+        renderRebalance();
         closeModal();
       }
     }
@@ -9868,6 +10340,7 @@ function renderAll() {
   renderGold();
   renderStockAnalysis();
   renderDashboard();
+  renderRebalance();
   const tag = document.getElementById("lastUpdatedTag");
   tag.textContent = state.lastSaved ? "Saved " + new Date(state.lastSaved).toLocaleTimeString() : "Not saved yet";
 }
