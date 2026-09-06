@@ -4993,10 +4993,9 @@ function renderDashGreeting() {
   subEl.textContent = "Here's what's happening with your investments today.";
 }
 
-// Market open/closed — shown both on the Dashboard header (dashMarketLabel/
-// dashMarketDot) and, so it's visible from every tab, as a small pill in
-// the app header (headerMarketLabel/headerMarketDot). Same isIndianMarketOpenNow()
-// call feeds both; only the two DOM targets differ.
+// Market open/closed — shown as a compact status line in the sidebar
+// footer (headerMarketLabel/headerMarketDot, next to the NIFTY/SENSEX
+// ticker). isIndianMarketOpenNow() is the single source of truth.
 function renderMarketStatusInto(labelId, dotId) {
   const labelEl = document.getElementById(labelId);
   const dotEl = document.getElementById(dotId);
@@ -5008,13 +5007,6 @@ function renderMarketStatusInto(labelId, dotId) {
 
 function renderDashHeaderBits() {
   renderDashGreeting();
-  const lastEl = document.getElementById("dashLastUpdated");
-  if (lastEl) lastEl.textContent = "Last updated: " + (state.lastSaved ? new Date(state.lastSaved).toLocaleTimeString() : "—");
-  const open = isIndianMarketOpenNow();
-  const labelEl = document.getElementById("dashMarketLabel");
-  const dotEl = document.getElementById("dashMarketDot");
-  if (labelEl) labelEl.textContent = open ? "Open" : "Closed";
-  if (dotEl) dotEl.className = "dash-market-dot " + (open ? "open" : "closed");
   renderMarketStatusInto("headerMarketLabel", "headerMarketDot");
 }
 
@@ -9356,33 +9348,6 @@ function runExcelExport() {
   }
 }
 
-/* ============================================================
-   WEEKLY AUTO-BACKUP
-   A static page can't run anything while it's closed, so this
-   can only check "has it been a while?" at the moment the app
-   is actually opened — not on a true unattended schedule. If
-   it's Sunday, or 7+ days have passed since the last backup,
-   a JSON download triggers automatically on load.
-   ============================================================ */
-
-function maybeRunWeeklyBackup() {
-  const hasData = state.equity.length || state.debt.length || state.mf.length || state.gold.length || state.cash;
-  if (!hasData) return;
-  const now = new Date();
-  const isSunday = now.getDay() === 0;
-  const daysSinceLastBackup = state.lastBackup
-    ? (now - new Date(state.lastBackup)) / (1000 * 60 * 60 * 24)
-    : Infinity;
-  const due = isSunday || daysSinceLastBackup >= 7;
-  if (!due) return;
-  // Avoid re-triggering multiple times on the same day if the
-  // page is reloaded repeatedly.
-  const today = now.toDateString();
-  if (state.lastBackup && new Date(state.lastBackup).toDateString() === today) return;
-  downloadBackup();
-  state.lastBackup = now.toISOString();
-  saveState();
-}
 
 /* ============================================================
    CLOUD SYNC — Firebase Auth (Google Sign-In) + Firestore
@@ -10093,7 +10058,6 @@ updateDemoButtons();
 updateOfflineBanner();
 renderBrand();
 renderAll();
-maybeRunWeeklyBackup();
 initCloudSync();
 
 // Live-price auto-refresh, per tab (Debt is intentionally skipped —

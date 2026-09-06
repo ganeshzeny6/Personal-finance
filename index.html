@@ -433,7 +433,6 @@
   .dash-header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:18px;}
   .dash-header-title{font-family:var(--font-display);font-size:28px;font-weight:600;color:var(--text);margin:0;letter-spacing:-0.015em;}
   .dash-header-sub{font-size:12.5px;color:var(--text-faint);margin:2px 0 0;}
-  .dash-header-right{text-align:right;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);white-space:nowrap;}
   .dash-market-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-left:5px;}
 
   /* ---------- Portfolio tab: header + category selector ---------- */
@@ -2087,14 +2086,16 @@
     </nav>
 
     <div class="sidebar-footer">
-      <!-- Icon-only handle, right-aligned — no text label, just a
-           chevron (see #sidebarCollapseIcon rotation CSS) that toggles
-           setSidebarCollapsed() in app.js. -->
-      <div class="sidebar-toggle-row">
-        <button class="sidebar-edge-toggle" id="sidebarCollapseBtn" title="Collapse sidebar" aria-label="Collapse sidebar">
-          <span id="sidebarCollapseIcon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></span>
-        </button>
+      <div class="sidebar-market-block">
+        <div class="sidebar-market-status">
+          <span class="dash-market-dot" id="headerMarketDot"></span>
+          <span id="headerMarketLabel">Market closed</span>
+        </div>
+        <!-- Compact live NIFTY 50 / SENSEX ticker — see renderSidebarMarketSnap() -->
+        <div class="sidebar-market-snap" id="sidebarMarketSnap"></div>
       </div>
+      <span class="status-tag" id="lastUpdatedTag">Not saved yet</span>
+      <span class="status-tag" id="offlineTag" style="display:none;color:var(--warning)">⚠️ Offline — read-only until reconnected</span>
       <div class="theme-toggle" id="themeToggle" role="group" aria-label="Theme">
         <button type="button" class="theme-toggle-btn" data-theme-choice="light" title="Light mode" aria-label="Light mode">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
@@ -2106,16 +2107,15 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
         </button>
       </div>
-      <div class="sidebar-market-block">
-        <div class="sidebar-market-status">
-          <span class="dash-market-dot" id="headerMarketDot"></span>
-          <span id="headerMarketLabel">Market closed</span>
-        </div>
-        <!-- Compact live NIFTY 50 / SENSEX ticker — see renderSidebarMarketSnap() -->
-        <div class="sidebar-market-snap" id="sidebarMarketSnap"></div>
+      <!-- Icon-only handle, right-aligned, last in the footer (bottom
+           of the sidebar) — no text label, just a chevron (see
+           #sidebarCollapseIcon rotation CSS) that toggles
+           setSidebarCollapsed() in app.js. -->
+      <div class="sidebar-toggle-row">
+        <button class="sidebar-edge-toggle" id="sidebarCollapseBtn" title="Collapse sidebar" aria-label="Collapse sidebar">
+          <span id="sidebarCollapseIcon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></span>
+        </button>
       </div>
-      <span class="status-tag" id="lastUpdatedTag">Not saved yet</span>
-      <span class="status-tag" id="offlineTag" style="display:none;color:var(--warning)">⚠️ Offline — read-only until reconnected</span>
     </div>
   </aside>
 
@@ -2149,10 +2149,6 @@
       <div>
         <h2 class="dash-header-title" id="dashGreetingTitle">Dashboard</h2>
         <p class="dash-header-sub" id="dashGreetingSub">Your portfolio at a glance</p>
-      </div>
-      <div class="dash-header-right">
-        <div id="dashLastUpdated">Last updated: —</div>
-        <div>Market: <span id="dashMarketLabel">—</span><span class="dash-market-dot" id="dashMarketDot"></span></div>
       </div>
     </div>
 
