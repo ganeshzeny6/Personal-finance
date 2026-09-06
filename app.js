@@ -957,6 +957,19 @@ document.getElementById("navOpportunities")?.addEventListener("click", () => {
   setTimeout(() => document.getElementById("intelligentInsightsCard")?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
 });
 
+// Rebalance compare-row tooltip (target/current bars) — tap-to-toggle
+// so the invested/target/remaining breakdown works on touch, not just
+// desktop hover (CSS :hover alone handles the desktop case). Delegated
+// from the panel itself since #rbOverallRows/#rbStockCapRows/#rbMfRows
+// get their innerHTML replaced wholesale on every renderRebalance().
+document.getElementById("panel-rebalance")?.addEventListener("click", (e) => {
+  const row = e.target.closest(".rb-compare-row.has-tip");
+  document.querySelectorAll("#panel-rebalance .rb-compare-row.tip-open").forEach(r => {
+    if (r !== row) r.classList.remove("tip-open");
+  });
+  if (row) row.classList.toggle("tip-open");
+});
+
 // Notification bell — jumps to Dashboard's "What needs your
 // attention" card. The badge count itself is kept current by
 // renderDashAttention() (see updateNotifBadge() below), so it always
@@ -4608,27 +4621,32 @@ function rebalanceCompareRowHTML(label, targetPct, currentPct, scaleMax, iconNam
   const diffText = onTarget ? "On target" : `${fmtNum(Math.abs(diff), 1)}% ${diff > 0 ? "above" : "below"} target`;
   const diffIcon = onTarget ? "circle-check" : diff > 0 ? "trending-up" : "trending-down";
 
-  // Hover detail: the actual ₹ invested vs ₹ target, and how much more
-  // (or less) that works out to — plain-language, no new UI chrome,
-  // using the same title-attribute pattern the rest of the app already
-  // uses for on-hover detail (see header icon buttons, info glyphs).
-  let hoverText = "";
+  // A small, structured card-style tooltip (not the browser's native
+  // title tooltip) showing the actual ₹ invested vs ₹ target and what
+  // that gap works out to — opens on hover (desktop) or tap (touch,
+  // via the delegated click listener near the top of this file).
+  let tipHTML = "";
   if (basisAmount > 0) {
     const currentAmt = (currentPct / 100) * basisAmount;
     const targetAmt = (targetPct / 100) * basisAmount;
     const remaining = targetAmt - currentAmt;
-    hoverText = `Invested: ${fmtINR(currentAmt)} of ${fmtINR(targetAmt)} target`;
-    if (Math.abs(remaining) >= basisAmount * 0.0005) {
-      hoverText += remaining > 0
-        ? ` — invest about ${fmtINR(remaining)} more to reach target`
-        : ` — about ${fmtINR(Math.abs(remaining))} above target`;
-    } else {
-      hoverText += " — on target";
-    }
+    const isOnTarget = Math.abs(remaining) < basisAmount * 0.0005;
+    const remainCls = isOnTarget ? "ontrack" : remaining > 0 ? "add" : "reduce";
+    const remainText = isOnTarget
+      ? `${icon("circle-check", 12)} On target`
+      : remaining > 0
+        ? `${icon("trending-up", 12)} Add ${fmtINR(remaining)} more`
+        : `${icon("trending-down", 12)} ${fmtINR(Math.abs(remaining))} above target`;
+    tipHTML = `
+      <div class="rb-tip" role="tooltip">
+        <div class="rb-tip-row"><span>Invested</span><b>${fmtINR(currentAmt)}</b></div>
+        <div class="rb-tip-row"><span>Target</span><b>${fmtINR(targetAmt)}</b></div>
+        <div class="rb-tip-remaining ${remainCls}">${remainText}</div>
+      </div>`;
   }
 
   return `
-    <div class="rb-compare-row"${hoverText ? ` title="${escapeAttr(hoverText)}"` : ""}>
+    <div class="rb-compare-row${tipHTML ? " has-tip" : ""}">
       <div class="rb-compare-top">
         <div class="rb-compare-name">${iconName ? icon(iconName, 14) + " " : ""}${escapeAttr(label)}</div>
         <div class="rb-compare-diff ${status}">${icon(diffIcon, 13)} ${diffText}</div>
@@ -4643,6 +4661,7 @@ function rebalanceCompareRowHTML(label, targetPct, currentPct, scaleMax, iconNam
         <div class="rb-bar-track"><div class="rb-bar-fill" style="width:${currentBarPct}%;background:${currentColor}"></div></div>
         <div class="rb-bar-value">${fmtNum(currentPct, 1)}%</div>
       </div>
+      ${tipHTML}
     </div>
   `;
 }

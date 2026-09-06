@@ -929,9 +929,10 @@
      consistently across Overall Portfolio, Stock Rebalancing and
      Mutual Fund Rebalancing, per the redesign brief ("use the same
      visual pattern consistently, no pie/donut charts"). */
-  .rb-compare-row{padding:12px 10px;margin:0 -10px;border-bottom:1px solid var(--border);border-radius:8px;transition:background-color .12s ease;cursor:help;}
-  .rb-compare-row:hover{background:var(--surface-2);}
+  .rb-compare-row{position:relative;padding:12px 0;border-bottom:1px solid var(--border);}
   .rb-compare-row:last-child{border-bottom:none;padding-bottom:2px;}
+  .rb-compare-row.has-tip{padding:12px 10px;margin:0 -10px;border-radius:8px;cursor:pointer;transition:background-color .12s ease;}
+  .rb-compare-row.has-tip:hover{background:var(--surface-2);}
   .rb-compare-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:8px;}
   .rb-compare-name{font-family:var(--font-display);font-size:13px;font-weight:600;color:var(--text);}
   .rb-compare-diff{display:inline-flex;align-items:center;gap:3px;font-family:var(--font-mono);font-size:12px;font-weight:600;white-space:nowrap;}
@@ -940,6 +941,37 @@
   .rb-compare-diff.action{color:var(--negative);}
   .rb-bar-line{display:flex;align-items:center;gap:8px;margin-bottom:5px;}
   .rb-bar-line:last-child{margin-bottom:0;}
+
+  /* Compare-row tooltip — a small card, styled like the rest of the
+     app (surface-2 fill, hairline border, same radius language), not
+     the browser's default title tooltip. Opens on hover on desktop;
+     .tip-open is toggled by a tap on touch devices (see the delegated
+     click listener near the top of app.js). Anchored to the row's
+     left edge (not centered) so it never overflows the viewport on
+     narrow mobile screens. */
+  .rb-tip{
+    position:absolute;left:0;bottom:100%;margin-bottom:10px;
+    min-width:200px;max-width:260px;
+    background:var(--surface-2);border:1px solid var(--border);border-radius:10px;
+    padding:10px 13px;box-shadow:0 10px 28px rgba(0,0,0,.28);
+    opacity:0;visibility:hidden;transform:translateY(4px);pointer-events:none;
+    transition:opacity .14s ease,transform .14s ease;
+    z-index:30;
+  }
+  .rb-compare-row.has-tip:hover .rb-tip,
+  .rb-compare-row.has-tip.tip-open .rb-tip{
+    opacity:1;visibility:visible;transform:translateY(0);pointer-events:auto;
+  }
+  .rb-tip::after{
+    content:"";position:absolute;top:100%;left:22px;
+    border:6px solid transparent;border-top-color:var(--surface-2);
+  }
+  .rb-tip-row{display:flex;justify-content:space-between;align-items:baseline;gap:16px;font-size:12px;color:var(--text-muted);padding:2px 0;}
+  .rb-tip-row b{color:var(--text);font-weight:700;font-family:var(--font-mono);font-size:12.5px;}
+  .rb-tip-remaining{margin-top:7px;padding-top:7px;border-top:1px solid var(--border);font-size:12.5px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:5px;}
+  .rb-tip-remaining.add{color:var(--positive);}
+  .rb-tip-remaining.reduce{color:var(--negative);}
+  .rb-tip-remaining.ontrack{color:var(--positive);}
   .rb-bar-label{width:52px;flex:0 0 auto;font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.03em;}
   .rb-bar-track{flex:1 1 auto;height:7px;border-radius:4px;background:var(--bg);overflow:hidden;}
   .rb-bar-fill{height:100%;border-radius:4px;}
