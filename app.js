@@ -4587,7 +4587,12 @@ function generateRebalanceExplanation(overview) {
 // Rebalancing rows. scaleMax is shared across every row in the same
 // section (computed once by the caller) so bar lengths stay honestly
 // comparable to each other within that section, not just within a row.
-function rebalanceCompareRowHTML(label, targetPct, currentPct, scaleMax, iconName) {
+// basisAmount is the ₹ total the two percentages are computed against
+// (portfolio net worth for Overall Portfolio rows, total Equity
+// invested for the Stock cap-category rows, total Mutual Fund invested
+// for the MF category rows) — optional, so this still degrades
+// gracefully wherever a row is drawn without one.
+function rebalanceCompareRowHTML(label, targetPct, currentPct, scaleMax, iconName, basisAmount) {
   const diff = currentPct - targetPct;
   const status = rebalanceStatusFromDiff(diff);
   const max = scaleMax || Math.max(targetPct, currentPct, 10) * 1.15;
@@ -4602,8 +4607,28 @@ function rebalanceCompareRowHTML(label, targetPct, currentPct, scaleMax, iconNam
   const onTarget = status === "onTrack";
   const diffText = onTarget ? "On target" : `${fmtNum(Math.abs(diff), 1)}% ${diff > 0 ? "above" : "below"} target`;
   const diffIcon = onTarget ? "circle-check" : diff > 0 ? "trending-up" : "trending-down";
+
+  // Hover detail: the actual ₹ invested vs ₹ target, and how much more
+  // (or less) that works out to — plain-language, no new UI chrome,
+  // using the same title-attribute pattern the rest of the app already
+  // uses for on-hover detail (see header icon buttons, info glyphs).
+  let hoverText = "";
+  if (basisAmount > 0) {
+    const currentAmt = (currentPct / 100) * basisAmount;
+    const targetAmt = (targetPct / 100) * basisAmount;
+    const remaining = targetAmt - currentAmt;
+    hoverText = `Invested: ${fmtINR(currentAmt)} of ${fmtINR(targetAmt)} target`;
+    if (Math.abs(remaining) >= basisAmount * 0.0005) {
+      hoverText += remaining > 0
+        ? ` — invest about ${fmtINR(remaining)} more to reach target`
+        : ` — about ${fmtINR(Math.abs(remaining))} above target`;
+    } else {
+      hoverText += " — on target";
+    }
+  }
+
   return `
-    <div class="rb-compare-row">
+    <div class="rb-compare-row"${hoverText ? ` title="${escapeAttr(hoverText)}"` : ""}>
       <div class="rb-compare-top">
         <div class="rb-compare-name">${iconName ? icon(iconName, 14) + " " : ""}${escapeAttr(label)}</div>
         <div class="rb-compare-diff ${status}">${icon(diffIcon, 13)} ${diffText}</div>
@@ -4778,7 +4803,7 @@ function renderRebalance() {
     const overallIcons = { debt: "shield-check", mf: "layers", equity: "chart-candlestick", gold: "gem" };
     const overallMax = Math.max(...overview.level1.map(c => Math.max(c.target, c.current)), 10) * 1.15;
     overallRowsEl.innerHTML = overview.level1.map(c =>
-      rebalanceCompareRowHTML(c.label, c.target, c.current, overallMax, overallIcons[c.key])
+      rebalanceCompareRowHTML(c.label, c.target, c.current, overallMax, overallIcons[c.key], overview.netWorth)
     ).join("");
   }
 
@@ -4786,7 +4811,7 @@ function renderRebalance() {
   if (stockRowsEl) {
     const stockMax = Math.max(...overview.level2Equity.map(c => Math.max(c.target, c.current)), 10) * 1.15;
     stockRowsEl.innerHTML = overview.level2Equity.map(c =>
-      rebalanceCompareRowHTML(c.label, c.target, c.current, stockMax)
+      rebalanceCompareRowHTML(c.label, c.target, c.current, stockMax, null, overview.eqTotals.invested)
     ).join("");
   }
   renderRebalanceStockLimits(overview);
@@ -4795,7 +4820,7 @@ function renderRebalance() {
   if (mfRowsEl) {
     const mfMax = Math.max(...overview.level2Mf.map(c => Math.max(c.target, c.current)), 10) * 1.15;
     mfRowsEl.innerHTML = overview.level2Mf.map(c =>
-      rebalanceCompareRowHTML(c.label, c.target, c.current, mfMax)
+      rebalanceCompareRowHTML(c.label, c.target, c.current, mfMax, null, overview.mfTotals.invested)
     ).join("");
   }
   renderRebalanceMfActions(overview);

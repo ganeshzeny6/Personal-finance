@@ -929,7 +929,8 @@
      consistently across Overall Portfolio, Stock Rebalancing and
      Mutual Fund Rebalancing, per the redesign brief ("use the same
      visual pattern consistently, no pie/donut charts"). */
-  .rb-compare-row{padding:12px 0;border-bottom:1px solid var(--border);}
+  .rb-compare-row{padding:12px 10px;margin:0 -10px;border-bottom:1px solid var(--border);border-radius:8px;transition:background-color .12s ease;cursor:help;}
+  .rb-compare-row:hover{background:var(--surface-2);}
   .rb-compare-row:last-child{border-bottom:none;padding-bottom:2px;}
   .rb-compare-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:8px;}
   .rb-compare-name{font-family:var(--font-display);font-size:13px;font-weight:600;color:var(--text);}
