@@ -48,6 +48,7 @@
     --text-faint:#9b978c;
     --gold:#a3742f;
     --gold-soft:#a3742f1f;
+    --sidebar-active-bg:rgba(163,116,47,.14);
     --positive:#1a8a5f;
     --positive-soft:#1a8a5f16;
     --negative:#c23c4e;
@@ -66,7 +67,7 @@
     --font-display:'Inter',-apple-system,sans-serif;
     --font-body:'Inter',-apple-system,sans-serif;
     --font-mono:'Inter',-apple-system,sans-serif;
-    --sidebar-w:232px;
+    --sidebar-w:216px;
     --sidebar-w-collapsed:76px;
     --header-h:64px;
   }
@@ -83,6 +84,7 @@
     --text-faint:#666d7a;
     --gold:#d4a24e;
     --gold-soft:#d4a24e26;
+    --sidebar-active-bg:rgba(163,116,47,.22);
     --positive:#4cbf8f;
     --positive-soft:#4cbf8f20;
     --negative:#e2707f;
@@ -129,34 +131,37 @@
     position:sticky;top:0;height:100vh;overflow-y:auto;
     z-index:70;
   }
-  .sidebar-brand{display:flex;align-items:center;gap:10px;padding:22px 18px 16px;}
+  .sidebar-brand{display:flex;align-items:center;gap:12px;padding:24px 18px 28px;}
   .sidebar-logo{
-    width:34px;height:34px;border-radius:10px;flex:none;
+    width:46px;height:46px;border-radius:13px;flex:none;
     background:linear-gradient(135deg, var(--gold), #7d5a26);color:#fff;
     display:flex;align-items:center;justify-content:center;
-    font-family:var(--font-display);font-weight:700;font-size:15px;
+    font-family:var(--font-display);font-weight:700;font-size:19px;
+    box-shadow:0 2px 6px rgba(0,0,0,.14);
   }
   .sidebar-brand-text{min-width:0;}
-  .sidebar-brand-name{font-family:var(--font-display);font-weight:700;font-size:14.5px;color:var(--text);letter-spacing:-0.01em;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .sidebar-brand-sub{font-size:11px;color:var(--text-faint);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .sidebar-brand-name{font-family:var(--font-display);font-weight:700;font-size:16.5px;color:var(--text);letter-spacing:-0.01em;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .sidebar-brand-sub{font-size:11.5px;color:var(--text-faint);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
-  .sidebar-nav{display:flex;flex-direction:column;gap:2px;padding:8px 12px;flex:1;}
+  .sidebar-nav{display:flex;flex-direction:column;gap:7px;padding:12px 12px 10px;flex:1;}
   .sidebar-section-label{font-size:10.5px;font-weight:600;color:var(--text-faint);text-transform:uppercase;letter-spacing:.06em;padding:16px 10px 6px;}
-  .sidebar-divider{height:1px;background:var(--border);margin:10px 2px;flex:none;}
+  .sidebar-divider{height:1px;background:var(--border);margin:13px 6px;flex:none;}
   .sidebar-footer{padding:12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:8px;}
   .sidebar-footer .status-tag{padding:0 2px;}
 
   .tab-btn, .sidebar-nav-item{
-    display:flex;align-items:center;gap:11px;
-    font-family:var(--font-body);font-size:13.5px;font-weight:500;
-    color:var(--text-muted);background:none;border:none;border-radius:9px;
-    padding:10px 12px;cursor:pointer;white-space:nowrap;text-align:left;width:100%;
-    transition:background .15s ease, color .15s ease;
+    display:flex;align-items:center;gap:12px;
+    font-family:var(--font-body);font-size:14px;font-weight:500;
+    color:var(--text-muted);background:none;border:none;border-radius:11px;
+    padding:0 20px;min-height:50px;cursor:pointer;white-space:nowrap;text-align:left;width:100%;
+    transition:background .18s ease, color .18s ease;
   }
   .tab-btn:hover, .sidebar-nav-item:hover{background:var(--surface-2);color:var(--text);}
-  .tab-btn.active{background:var(--gold-soft);color:var(--gold);font-weight:600;}
-  .sidebar-nav-item.active{background:var(--gold-soft);color:var(--gold);font-weight:600;}
+  .tab-btn.active, .sidebar-nav-item.active{background:var(--sidebar-active-bg);color:var(--gold);font-weight:600;}
+  .tab-btn:focus-visible, .sidebar-nav-item:focus-visible{outline:2px solid var(--gold);outline-offset:1px;}
   .nav-icon{width:18px;height:18px;flex:none;display:flex;align-items:center;justify-content:center;font-size:15px;line-height:1;}
+  .sidebar-nav .nav-icon{width:20px;height:20px;}
+  .sidebar-nav .nav-icon svg{display:block;}
   .nav-label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;}
 
   .sidebar-backdrop{display:none;position:fixed;inset:0;background:rgba(20,17,10,.45);z-index:65;}
@@ -340,7 +345,7 @@
   .sidebar.collapsed .sidebar-section-label,
   .sidebar.collapsed .sidebar-market-block,
   .sidebar.collapsed .sidebar-footer .status-tag{display:none;}
-  .sidebar.collapsed .sidebar-brand{justify-content:center;padding:22px 0 16px;}
+  .sidebar.collapsed .sidebar-brand{justify-content:center;padding:24px 0 20px;}
   .sidebar.collapsed .tab-btn,
   .sidebar.collapsed .sidebar-nav-item{justify-content:center;padding:10px 0;}
   .sidebar.collapsed #sidebarCollapseIcon svg{transform:rotate(180deg);}
@@ -2251,18 +2256,17 @@
     </div>
 
     <nav class="sidebar-nav" role="tablist">
-      <button class="tab-btn active" data-tab="dashboard"><span class="nav-icon">⌂</span><span class="nav-label">Dashboard</span></button>
-      <button class="tab-btn" data-tab="portfolio"><span class="nav-icon">◧</span><span class="nav-label">Portfolio</span></button>
-      <button class="tab-btn" data-tab="insights"><span class="nav-icon">✦</span><span class="nav-label">Insights</span></button>
-      <button class="tab-btn" data-tab="stockanalysis"><span class="nav-icon">▤</span><span class="nav-label">Stock Analysis</span></button>
+      <button class="tab-btn active" data-tab="dashboard"><span class="nav-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg></span><span class="nav-label">Dashboard</span></button>
+      <button class="tab-btn" data-tab="portfolio"><span class="nav-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 12h.01"/><path d="M16 6V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><path d="M22 13a18.15 18.15 0 0 1-20 0"/><rect width="20" height="14" x="2" y="6" rx="2"/></svg></span><span class="nav-label">Portfolio</span></button>
+      <button class="tab-btn" data-tab="insights"><span class="nav-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/></svg></span><span class="nav-label">Insights</span></button>
+      <button class="tab-btn" data-tab="stockanalysis"><span class="nav-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5v4"/><rect width="4" height="6" x="7" y="9" rx="1"/><path d="M9 15v2"/><path d="M17 3v2"/><rect width="4" height="8" x="15" y="5" rx="1"/><path d="M17 13v3"/><path d="M3 3v18h18"/></svg></span><span class="nav-label">Stock Analysis</span></button>
 
       <div class="sidebar-divider"></div>
-      <div class="sidebar-section-label">Decide</div>
-      <button class="sidebar-nav-item tab-btn" id="navRebalance" data-tab="rebalance"><span class="nav-icon">⇄</span><span class="nav-label">Rebalance</span></button>
-      <button class="sidebar-nav-item" id="navOpportunities"><span class="nav-icon">◎</span><span class="nav-label">Opportunities</span></button>
+      <button class="sidebar-nav-item tab-btn" id="navRebalance" data-tab="rebalance"><span class="nav-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></svg></span><span class="nav-label">Rebalance</span></button>
+      <button class="sidebar-nav-item" id="navOpportunities"><span class="nav-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg></span><span class="nav-label">Opportunities</span></button>
 
       <div class="sidebar-divider"></div>
-      <button class="sidebar-nav-item" id="btnSettings"><span class="nav-icon">⚙</span><span class="nav-label">Settings</span></button>
+      <button class="sidebar-nav-item" id="btnSettings"><span class="nav-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg></span><span class="nav-label">Settings</span></button>
     </nav>
 
     <div class="sidebar-footer">
@@ -2563,9 +2567,9 @@
       <table class="data-table">
         <colgroup>
           <col id="col-eq-name" style="width:230px">
-          <col style="width:100px">
           <col style="width:130px">
           <col style="width:120px">
+          <col style="width:100px">
           <col style="width:130px">
           <col style="width:110px">
           <col style="width:90px">
@@ -2575,9 +2579,9 @@
         <thead>
           <tr>
             <th class="left sortable resizable sticky-col" data-col="name">Stock<span class="col-resizer"></span></th>
-            <th class="sortable" data-col="ltp">LTP</th>
             <th class="left sortable" data-col="sector">Sector / Market Cap</th>
             <th class="sortable" data-col="invested">Invested Amt</th>
+            <th class="sortable" data-col="ltp">LTP</th>
             <th class="sortable" data-col="currentValue">Current Value</th>
             <th class="sortable" data-col="pl">P&amp;L</th>
             <th class="sortable" data-col="plPct">Return %</th>
@@ -2590,8 +2594,8 @@
           <tr>
             <td class="left sticky-col" id="eqTotalLabel">Total</td>
             <td></td>
-            <td></td>
             <td id="eqTotalInvested">₹0</td>
+            <td></td>
             <td id="eqTotalCurrent">₹0</td>
             <td id="eqTotalPL">₹0</td>
             <td id="eqTotalPLPct">0%</td>

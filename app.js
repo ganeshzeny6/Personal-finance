@@ -548,7 +548,12 @@ const ICON_PATHS = {
   "gem": '<path d="M6 3h12l4 6-10 12L2 9Z"/><path d="M11 3 8 9l4 12 4-12-3-6"/><path d="M2 9h20"/>',
   "circle-check": '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
   "triangle-alert": '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
-  "circle-help": '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>'
+  "circle-help": '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
+  "layout-dashboard": '<rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>',
+  "sparkles": '<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/>',
+  "arrow-left-right": '<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>',
+  "target": '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
+  "settings-2": '<path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>'
 };
 function icon(name, size, cls) {
   size = size || 16;
@@ -1900,12 +1905,12 @@ function renderEquity() {
           </div>
         </div>
       </td>
+      <td class="left" data-label="Sector / Market Cap">${sectorCapCellHTML(row.sector, capCategory)}</td>
+      <td data-label="Invested Amt">${fmtINR(row.invested)}</td>
       <td class="eq-ltp-cell" data-label="LTP">
         <div class="eq-ltp-val">${row.ltp ? fmtNum(row.ltp) : "—"}</div>
         ${chgChip}
       </td>
-      <td class="left" data-label="Sector / Market Cap">${sectorCapCellHTML(row.sector, capCategory)}</td>
-      <td data-label="Invested Amt">${fmtINR(row.invested)}</td>
       <td data-label="Current Value">${fmtINR(d.currentValue)}${pendingBadge}</td>
       <td class="${plClass(d.pl)}" data-label="P&amp;L">${fmtINRCompactSigned(d.pl)}</td>
       <td class="${plClass(d.pl)}" data-label="Return %">${fmtPct(d.plPct)}</td>
@@ -10508,6 +10513,7 @@ document.getElementById("mfDrawerOverlay")?.addEventListener("click", (e) => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
+  if (document.getElementById("sidebar")?.classList.contains("open")) setSidebarOpen(false);
   closeMFRowMenu();
   if (document.getElementById("mfDrawerOverlay")?.classList.contains("open")) closeMFDrawer();
   closeEqRowMenu();
