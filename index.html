@@ -69,7 +69,6 @@
     --sidebar-w:232px;
     --sidebar-w-collapsed:76px;
     --header-h:64px;
-    --content-left-offset:232px;
   }
 
   /* Dark theme — opt-in via the toggle, same structure/shadows,
@@ -191,11 +190,6 @@
   }
   .header-spacer{flex:1 1 auto;}
   .header-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap;justify-content:flex-end;}
-  .header-market-pill{
-    display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);
-    background:var(--surface-2);border:1px solid var(--border);border-radius:20px;
-    padding:7px 12px;white-space:nowrap;
-  }
   .header-icon-btn{
     width:36px;height:36px;border-radius:9px;background:var(--surface-2);border:1px solid var(--border);
     display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-muted);
@@ -218,10 +212,26 @@
     position:absolute;top:-4px;right:-4px;min-width:16px;height:16px;padding:0 3px;border-radius:8px;
     background:var(--negative);color:#fff;font-size:9.5px;font-weight:700;line-height:16px;text-align:center;
   }
+  /* Doubles as the sign-in control (see "remove Google sign-in, move
+     it to the G logo" — one round avatar instead of two separate G
+     marks). updateCloudSyncUI() in app.js only ever toggles classes
+     and the title tooltip here, never the letter itself. */
   .header-profile{
-    width:36px;height:36px;border-radius:50%;flex:none;cursor:default;
-    background:linear-gradient(135deg, var(--gold), #7d5a26);color:#fff;
+    width:36px;height:36px;border-radius:50%;flex:none;
+    background:linear-gradient(135deg, var(--gold), #7d5a26);color:#fff;border:none;padding:0;cursor:pointer;
     display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:600;font-size:13px;
+    position:relative;box-shadow:0 0 0 2px transparent;transition:box-shadow .15s ease;
+  }
+  .header-profile:hover{box-shadow:0 0 0 2px var(--border);}
+  .header-profile.synced{box-shadow:0 0 0 2px var(--positive);}
+  .header-profile.synced::after{
+    content:"";position:absolute;bottom:-1px;right:-1px;width:9px;height:9px;
+    border-radius:50%;background:var(--positive);border:2px solid var(--surface);
+  }
+  .header-profile.sync-error{box-shadow:0 0 0 2px var(--negative);}
+  .header-profile.sync-error::after{
+    content:"";position:absolute;bottom:-1px;right:-1px;width:9px;height:9px;
+    border-radius:50%;background:var(--negative);border:2px solid var(--surface);
   }
 
   @media (max-width:900px){
@@ -232,7 +242,6 @@
     .sidebar.open{transform:translateX(0);}
     .sidebar-backdrop.open{display:block;}
     .hamburger-btn{display:flex;}
-    .header-market-pill{display:none;}
   }
   @media (max-width:560px){
     .app-header{padding:10px 14px;gap:8px;}
@@ -287,52 +296,22 @@
   input[type=file]{display:none;}
 
   /* ---------- Theme toggle (Light / Dark / Auto) ----------
-     Floating, bottom-left of the viewport (moved out of the header for
-     a cleaner top bar) — kept flush against the sidebar's live edge via
-     --content-left-offset, which updateFloatingOffsets() in app.js
-     recomputes whenever the sidebar collapses/expands or the viewport
-     crosses the mobile breakpoint. */
+     Lives in the sidebar footer, next to the collapse handle, instead
+     of floating over the page. */
   .theme-toggle{
-    display:inline-flex;background:var(--surface-2);border:1px solid var(--border);
-    border-radius:11px;padding:3px;gap:2px;flex:none;
-  }
-  .theme-toggle-float{
-    position:fixed;left:calc(var(--content-left-offset) + 16px);bottom:16px;
-    z-index:58;box-shadow:var(--shadow-md);background:var(--surface);
-    transition:left .18s ease;
+    display:flex;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:11px;padding:3px;gap:2px;flex:none;margin-bottom:10px;
   }
   .theme-toggle-btn{
-    background:transparent;border:none;color:var(--text-muted);
-    width:30px;height:26px;padding:0;border-radius:7px;cursor:pointer;
+    flex:1;background:transparent;border:none;color:var(--text-muted);
+    height:26px;padding:0;border-radius:7px;cursor:pointer;
     display:flex;align-items:center;justify-content:center;
     font-family:var(--font-body);transition:background .15s ease, color .15s ease;
   }
   .theme-toggle-btn svg{display:block;}
   .theme-toggle-btn:hover{color:var(--text);}
   .theme-toggle-btn.active{background:var(--gold);color:#1b1408;}
-  @media (max-width:900px){
-    .theme-toggle-float{bottom:calc(70px + env(safe-area-inset-bottom, 0px));left:16px;}
-  }
-
-  /* ---------- Google sign-in (icon-only "G" mark) ----------
-     A small light chip behind the mark keeps Google's fixed brand
-     colors readable on both themes; a colored ring communicates
-     signed-in/error state without any text label. */
-  .google-signin-btn{padding:0;}
-  .google-signin-btn .google-g-logo{
-    width:18px;height:18px;border-radius:50%;background:#fff;padding:2px;
-    box-shadow:0 0 0 1px rgba(0,0,0,.04);
-  }
-  .google-signin-btn.synced{border-color:var(--positive);}
-  .google-signin-btn.synced::after{
-    content:"";position:absolute;bottom:1px;right:1px;width:9px;height:9px;
-    border-radius:50%;background:var(--positive);border:2px solid var(--surface);
-  }
-  .google-signin-btn.sync-error{border-color:var(--negative);}
-  .google-signin-btn.sync-error::after{
-    content:"";position:absolute;bottom:1px;right:1px;width:9px;height:9px;
-    border-radius:50%;background:var(--negative);border:2px solid var(--surface);
-  }
+  .sidebar.collapsed .theme-toggle{display:none;}
 
   /* ---------- Lock/Unlock (icon-only) ----------
      Same square icon-button family as the other header icons — the
@@ -340,13 +319,26 @@
      meaning that used to be spelled out in the button's own text. */
   .header-icon-btn.locked{background:var(--negative-soft);border-color:var(--negative);color:var(--negative);}
 
-  /* ---------- Sidebar collapse rail ---------- */
+  /* ---------- Sidebar collapse handle ----------
+     A small icon-only circle, right-aligned at the top of the sidebar
+     footer — no text label, just a chevron that flips direction via
+     the .sidebar.collapsed rule below. In normal document flow (not
+     absolutely positioned) so it's never clipped by the sidebar's own
+     overflow-y:auto scroll box. */
   .sidebar{transition:width .18s ease;}
+  .sidebar-toggle-row{display:flex;justify-content:flex-end;}
+  .sidebar-edge-toggle{
+    width:26px;height:26px;border-radius:50%;padding:0;flex:none;
+    background:var(--surface-2);border:1px solid var(--border);color:var(--text-muted);
+    display:flex;align-items:center;justify-content:center;cursor:pointer;
+  }
+  .sidebar-edge-toggle:hover{border-color:var(--gold);color:var(--text);}
   .sidebar.collapsed{width:var(--sidebar-w-collapsed);}
+  .sidebar.collapsed .sidebar-toggle-row{justify-content:center;}
   .sidebar.collapsed .sidebar-brand-text,
   .sidebar.collapsed .nav-label,
   .sidebar.collapsed .sidebar-section-label,
-  .sidebar.collapsed .sidebar-market-snap,
+  .sidebar.collapsed .sidebar-market-block,
   .sidebar.collapsed .sidebar-footer .status-tag{display:none;}
   .sidebar.collapsed .sidebar-brand{justify-content:center;padding:22px 0 16px;}
   .sidebar.collapsed .tab-btn,
@@ -354,14 +346,19 @@
   .sidebar.collapsed #sidebarCollapseIcon svg{transform:rotate(180deg);}
   #sidebarCollapseIcon svg{transition:transform .18s ease;display:block;}
   @media (max-width:900px){
-    #sidebarCollapseBtn{display:none;}
+    .sidebar-toggle-row{display:none;}
   }
 
-  /* ---------- Sidebar market snap (compact NIFTY 50 / SENSEX ticker) ---------- */
-  .sidebar-market-snap{
-    display:flex;flex-direction:column;gap:4px;padding-bottom:8px;
-    border-bottom:1px solid var(--border);margin-bottom:2px;
+  /* ---------- Sidebar market status + snap (compact NIFTY 50 / SENSEX ticker) ----------
+     The header's old "Market closed" pill now lives here, grouped with
+     the index ticker it describes. */
+  .sidebar-market-block{
+    padding-bottom:8px;border-bottom:1px solid var(--border);margin-bottom:2px;
   }
+  .sidebar-market-status{
+    display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-muted);margin-bottom:6px;
+  }
+  .sidebar-market-snap{display:flex;flex-direction:column;gap:4px;}
   .sidebar-snap-row{display:flex;align-items:center;gap:6px;font-size:11.5px;}
   .sidebar-snap-name{color:var(--text-faint);flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .sidebar-snap-value{color:var(--text);font-weight:600;font-family:var(--font-mono);}
@@ -2087,15 +2084,36 @@
 
       <div class="sidebar-divider"></div>
       <button class="sidebar-nav-item" id="btnSettings"><span class="nav-icon">⚙</span><span class="nav-label">Settings</span></button>
-      <button class="sidebar-nav-item" id="sidebarCollapseBtn" title="Collapse sidebar">
-        <span class="nav-icon" id="sidebarCollapseIcon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></span>
-        <span class="nav-label" id="sidebarCollapseLabel">Collapse sidebar</span>
-      </button>
     </nav>
 
     <div class="sidebar-footer">
-      <!-- Compact live NIFTY 50 / SENSEX ticker — see renderSidebarMarketSnap() -->
-      <div class="sidebar-market-snap" id="sidebarMarketSnap"></div>
+      <!-- Icon-only handle, right-aligned — no text label, just a
+           chevron (see #sidebarCollapseIcon rotation CSS) that toggles
+           setSidebarCollapsed() in app.js. -->
+      <div class="sidebar-toggle-row">
+        <button class="sidebar-edge-toggle" id="sidebarCollapseBtn" title="Collapse sidebar" aria-label="Collapse sidebar">
+          <span id="sidebarCollapseIcon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></span>
+        </button>
+      </div>
+      <div class="theme-toggle" id="themeToggle" role="group" aria-label="Theme">
+        <button type="button" class="theme-toggle-btn" data-theme-choice="light" title="Light mode" aria-label="Light mode">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+        </button>
+        <button type="button" class="theme-toggle-btn" data-theme-choice="dark" title="Dark mode" aria-label="Dark mode">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+        </button>
+        <button type="button" class="theme-toggle-btn" data-theme-choice="auto" title="Match system" aria-label="Match system">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
+        </button>
+      </div>
+      <div class="sidebar-market-block">
+        <div class="sidebar-market-status">
+          <span class="dash-market-dot" id="headerMarketDot"></span>
+          <span id="headerMarketLabel">Market closed</span>
+        </div>
+        <!-- Compact live NIFTY 50 / SENSEX ticker — see renderSidebarMarketSnap() -->
+        <div class="sidebar-market-snap" id="sidebarMarketSnap"></div>
+      </div>
       <span class="status-tag" id="lastUpdatedTag">Not saved yet</span>
       <span class="status-tag" id="offlineTag" style="display:none;color:var(--warning)">⚠️ Offline — read-only until reconnected</span>
     </div>
@@ -2109,25 +2127,13 @@
       </div>
       <div class="header-spacer"></div>
       <div class="header-actions">
-        <div class="header-market-pill">
-          <span class="dash-market-dot" id="headerMarketDot"></span>
-          <span id="headerMarketLabel">Market closed</span>
-        </div>
         <button class="header-icon-btn" id="btnLoadDemo" title="Preview the app with sample data (your data is saved locally first so you can restore it)">🧪</button>
         <button class="header-pill-btn" id="btnExitDemo" style="display:none" title="Exit demo mode and restore your real data">🚪 Exit demo</button>
-        <button class="header-icon-btn google-signin-btn" id="btnCloudSync" title="Sign in with Google to sync your data across devices.">
-          <svg class="google-g-logo" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-            <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z"/>
-            <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332C2.438 15.983 5.482 18 9 18z"/>
-            <path fill="#FBBC05" d="M3.964 10.71c-.18-.54-.282-1.117-.282-1.71s.102-1.17.282-1.71V4.958H.957C.348 6.173 0 7.548 0 9s.348 2.827.957 4.042l3.007-2.332z"/>
-            <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/>
-          </svg>
-        </button>
         <button class="header-icon-btn" id="btnLockPortfolio" title="Click to lock Debt, Cash, Ideal %, and Equity/MF/Gold's Sector/Remarks/Notes fields against accidental edits.">🔓</button>
         <button class="header-icon-btn" id="notifBtn" title="What needs your attention">
           🔔<span class="notif-badge" id="notifBadge" style="display:none">0</span>
         </button>
-        <div class="header-profile" title="Ganesh">G</div>
+        <button class="header-profile" id="btnCloudSync" title="Sign in with Google to sync your data across devices.">G</button>
       </div>
     </header>
 
@@ -2935,22 +2941,6 @@
 
     <footer class="app-footer">All data stays in this browser (localStorage) unless you export it or sign in to sync via Google. Nothing is sent to any server except live price lookups and, if signed in, your own Firestore document.</footer>
   </div>
-</div>
-
-<!-- Floating dark/light/system toggle, bottom-left of the viewport —
-     see updateFloatingOffsets() in app.js, which keeps it flush against
-     the sidebar's current edge (expanded, collapsed, or off-canvas on
-     phone) so it never overlaps the sidebar's own content. -->
-<div class="theme-toggle theme-toggle-float" id="themeToggle" role="group" aria-label="Theme">
-  <button type="button" class="theme-toggle-btn" data-theme-choice="light" title="Light mode" aria-label="Light mode">
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
-  </button>
-  <button type="button" class="theme-toggle-btn" data-theme-choice="dark" title="Dark mode" aria-label="Dark mode">
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
-  </button>
-  <button type="button" class="theme-toggle-btn" data-theme-choice="auto" title="Match system" aria-label="Match system">
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
-  </button>
 </div>
 
 <nav class="mobile-bottom-nav" id="mobileBottomNav">

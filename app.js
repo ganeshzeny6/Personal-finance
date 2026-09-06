@@ -870,45 +870,24 @@ document.getElementById("sidebarBackdrop")?.addEventListener("click", () => setS
 // ---- Sidebar collapse (tablet + desktop, >900px — the phone drawer
 // above is a separate, untouched mechanism) — an icon-only rail the
 // user can toggle to reclaim horizontal space, persisted so it stays
-// collapsed/expanded across reloads. The floating theme toggle (see
-// updateFloatingOffsets()) tracks the sidebar's current width live so
-// it never overlaps it, whichever state it's in.
+// collapsed/expanded across reloads. The toggle itself is a small
+// icon-only handle straddling the sidebar's edge (#sidebarCollapseBtn
+// in index.html) — no text label, just a chevron that flips via the
+// .sidebar.collapsed #sidebarCollapseIcon svg CSS rule.
 const SIDEBAR_COLLAPSED_KEY = "sidebarCollapsed";
 function setSidebarCollapsed(collapsed) {
   const sidebar = document.getElementById("sidebar");
   sidebar?.classList.toggle("collapsed", collapsed);
-  const label = document.getElementById("sidebarCollapseLabel");
   const btn = document.getElementById("sidebarCollapseBtn");
-  if (label) label.textContent = collapsed ? "Expand sidebar" : "Collapse sidebar";
   if (btn) btn.title = collapsed ? "Expand sidebar" : "Collapse sidebar";
   try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0"); } catch (e) {}
-  updateFloatingOffsets();
 }
 document.getElementById("sidebarCollapseBtn")?.addEventListener("click", () => {
   setSidebarCollapsed(!document.getElementById("sidebar")?.classList.contains("collapsed"));
 });
-
-// Keeps the floating theme toggle (position:fixed, bottom-left) flush
-// against the sidebar's actual right edge instead of overlapping it —
-// reads the sidebar's current CSS width (expanded/collapsed) at
-// desktop/tablet widths, or 0 on phone widths where the sidebar is an
-// off-canvas drawer that doesn't occupy layout space either way.
-function updateFloatingOffsets() {
-  const sidebar = document.getElementById("sidebar");
-  const cs = getComputedStyle(document.documentElement);
-  let w = "0px";
-  if (sidebar && window.innerWidth > 900) {
-    w = sidebar.classList.contains("collapsed")
-      ? cs.getPropertyValue("--sidebar-w-collapsed").trim()
-      : cs.getPropertyValue("--sidebar-w").trim();
-  }
-  document.documentElement.style.setProperty("--content-left-offset", w || "0px");
-}
-window.addEventListener("resize", updateFloatingOffsets);
 try {
   if (localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1") setSidebarCollapsed(true);
-  else updateFloatingOffsets();
-} catch (e) { updateFloatingOffsets(); }
+} catch (e) {}
 
 // Keep the mobile bottom bar's active icon in sync with whichever
 // sidebar tab is active, and close the drawer once a destination is
