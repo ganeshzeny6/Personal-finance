@@ -2177,11 +2177,18 @@
   #panel-equity tbody tr.eq-row:hover{background:var(--surface-2);}
   #panel-equity tbody tr.eq-row:hover td.sticky-col{background:var(--surface-2);}
 
-  /* Day-change chip as a subtitle under the stock name (LTP/Units/
-     Avg Price/full OHLC detail all moved to the drawer) — reuses the
+  /* Day-change chip as a subtitle under the stock name (Units/Avg
+     Price/full OHLC detail all moved to the drawer) — reuses the
      existing .dc-chip the old Day Chg % column used, just smaller. */
   .eq-fund-daychg{margin-top:3px;}
   .eq-fund-daychg .dc-chip{font-size:10px;padding:1px 6px;}
+
+  /* LTP column — one combined column (price + the same day-chg chip
+     above, right-aligned like the other numeric columns) rather than
+     two separate columns, so it drops in without widening the table
+     or duplicating the chip that used to only live under the name. */
+  .eq-ltp-val{font-family:var(--font-mono);font-weight:600;font-size:12.5px;color:var(--text);white-space:nowrap;}
+  .eq-ltp-cell .eq-fund-daychg{display:flex;justify-content:flex-end;}
 
   /* Allocation-limit coloring — a modifier Mutual Funds never uses
      (a fund has no "cap category" ceiling the way a stock's
@@ -2556,6 +2563,7 @@
       <table class="data-table">
         <colgroup>
           <col id="col-eq-name" style="width:230px">
+          <col style="width:100px">
           <col style="width:130px">
           <col style="width:120px">
           <col style="width:130px">
@@ -2567,6 +2575,7 @@
         <thead>
           <tr>
             <th class="left sortable resizable sticky-col" data-col="name">Stock<span class="col-resizer"></span></th>
+            <th class="sortable" data-col="ltp">LTP</th>
             <th class="left sortable" data-col="sector">Sector / Market Cap</th>
             <th class="sortable" data-col="invested">Invested Amt</th>
             <th class="sortable" data-col="currentValue">Current Value</th>
@@ -2580,6 +2589,7 @@
         <tfoot>
           <tr>
             <td class="left sticky-col" id="eqTotalLabel">Total</td>
+            <td></td>
             <td></td>
             <td id="eqTotalInvested">₹0</td>
             <td id="eqTotalCurrent">₹0</td>
@@ -3080,13 +3090,13 @@
         <thead>
           <tr>
             <th>#</th>
-            <th class="left sticky-col">Stock</th>
-            <th class="left">Sector / Market Cap</th>
-            <th>Price</th>
-            <th>Today</th>
-            <th class="left">52W Range</th>
-            <th class="left">Recommendation</th>
-            <th>Score</th>
+            <th class="left sticky-col sortable" data-col="name">Stock</th>
+            <th class="left sortable" data-col="sector">Sector / Market Cap</th>
+            <th class="sortable" data-col="ltp">Price</th>
+            <th class="sortable" data-col="dayChange">Today</th>
+            <th class="left sortable" data-col="range52">52W Range</th>
+            <th class="left sortable" data-col="recommendation">Recommendation</th>
+            <th class="sortable" data-col="score">Score</th>
             <th class="row-actions">—</th>
           </tr>
         </thead>

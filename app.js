@@ -623,7 +623,10 @@ const tableUI = {
   debt:   { sortCol: "maturityDate", sortDir: 1, filter: "" },
   mf:     { sortCol: "allocPct", sortDir: -1, filter: "", category: "" },
   gold:   { sortCol: null, sortDir: 1, filter: "" },
-  stockanalysis: { sortCol: null, sortDir: 1, filter: "", page: 1, pageSize: "10" }
+  // Default matches the old "Sort by: Score" dropdown default (highest
+  // fundamental score first) so enabling click-to-sort headers doesn't
+  // change what the tab shows on first load.
+  stockanalysis: { sortCol: "score", sortDir: -1, filter: "", page: 1, pageSize: "10" }
 };
 
 // Desktop Stock Analysis table shows tableUI.stockanalysis.pageSize
@@ -1863,9 +1866,9 @@ function renderEquity() {
   if (totalLabel) totalLabel.textContent = filtered ? "Total (filtered)" : "Total";
 
   if (state.equity.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="8">No stocks yet. Use "Import Holdings" to bring in your Zerodha Console export.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="9">No stocks yet. Use "Import Holdings" to bring in your Zerodha Console export.</td></tr>';
   } else if (displayRows.length === 0) {
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="8">No stocks match this filter.</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="9">No stocks match this filter.</td></tr>';
   }
 
   displayRows.forEach(row => {
@@ -1894,9 +1897,12 @@ function renderEquity() {
           ${eqAvatarHTML(row)}
           <div class="mf-fund-name-wrap">
             <div class="mf-fund-name" title="${escapeAttr(row.name || "")}">${escapeAttr(row.name || "Unnamed stock")}</div>
-            ${chgChip}
           </div>
         </div>
+      </td>
+      <td class="eq-ltp-cell" data-label="LTP">
+        <div class="eq-ltp-val">${row.ltp ? fmtNum(row.ltp) : "—"}</div>
+        ${chgChip}
       </td>
       <td class="left" data-label="Sector / Market Cap">${sectorCapCellHTML(row.sector, capCategory)}</td>
       <td data-label="Invested Amt">${fmtINR(row.invested)}</td>
@@ -7492,8 +7498,12 @@ function renderBankingMetricsSectionHTML(row, d) {
 
 // Pure view state for the new toolbar — never persisted, never fed
 // back into any calculation. Category/cap filters + search box narrow
-// which rows are shown; sort changes only their order.
-let saUI = { catFilter: "All", capFilter: "", sort: "score" };
+// which rows are shown. Sort order itself lives in tableUI.stockanalysis
+// (sortCol/sortDir) now that every column header is click-to-sort, the
+// same convention Equity/Debt/Mutual Funds/Gold already use — the
+// "Sort by" dropdown below is just a shortcut that sets those same
+// fields (see SA_SORT_PRESETS / setupStockAnalysisControls()).
+let saUI = { catFilter: "All", capFilter: "" };
 
 // Reuses the exact same six display buckets (and colors/icons)
 // Intelligent Insights already used — see INSIGHT_CATEGORY_ORDER —
@@ -7606,7 +7616,63 @@ function setupStockAnalysisControls() {
   const capSelect = document.getElementById("saCapFilter");
   const sortSelect = document.getElementById("saSortBy");
   if (capSelect) capSelect.addEventListener("change", () => { saUI.capFilter = capSelect.value; tableUI.stockanalysis.page = 1; renderStockAnalysis(); });
-  if (sortSelect) sortSelect.addEventListener("change", () => { saUI.sort = sortSelect.value; renderStockAnalysis(); });
+  if (sortSelect) sortSelect.addEventListener("change", () => {
+    const preset = SA_SORT_PRESETS[sortSelect.value] || SA_SORT_PRESETS.score;
+    tableUI.stockanalysis.sortCol = preset.col;
+    tableUI.stockanalysis.sortDir = preset.dir;
+    syncStockAnalysisSortHeaders();
+    tableUI.stockanalysis.page = 1;
+    renderStockAnalysis();
+  });
+}
+
+// Translates the "Sort by" dropdown's 3 quick presets into the same
+// (sortCol, sortDir) pair a column-header click would set — one shared
+// source of truth (tableUI.stockanalysis) rather than a second,
+// separate sort mechanism living only in the dropdown.
+const SA_SORT_PRESETS = {
+  score: { col: "score", dir: -1 },
+  priceChange: { col: "dayChange", dir: -1 },
+  name: { col: "name", dir: 1 }
+};
+
+// Keeps the desktop column headers' sort-asc/sort-desc arrow in sync
+// after the "Sort by" dropdown changes tableUI.stockanalysis directly
+// (a header click already updates its own arrow via setupSortAndFilter;
+// this covers the other direction) — same pattern setupMobileSort()
+// uses for Debt/Gold's mobile sort select.
+function syncStockAnalysisSortHeaders() {
+  const ui = tableUI.stockanalysis;
+  document.querySelectorAll("#panel-stockanalysis thead th.sortable").forEach(h => h.classList.remove("sort-asc", "sort-desc"));
+  if (ui.sortCol) {
+    const th = document.querySelector(`#panel-stockanalysis thead th.sortable[data-col="${ui.sortCol}"]`);
+    if (th) th.classList.add(ui.sortDir === 1 ? "sort-asc" : "sort-desc");
+  }
+}
+
+// Sort-value lookup for the Stock Analysis table's own (small, fixed)
+// column set — distinct from the older stockAnalysisGetSortValue()
+// above, which is leftover from a previous 30+-column version of this
+// table and no longer wired to anything.
+function stockAnalysisTableSortValue(ins, col) {
+  const { row, d } = ins;
+  switch (col) {
+    case "name": return row.name || "";
+    case "sector": return d.sector || "";
+    case "ltp": return d.ltp || 0;
+    case "dayChange": return dayChangePct(d.ltp, d.prevClose) ?? -Infinity;
+    // 52W Range has no single natural sort field of its own — sorting
+    // by how close the current price sits to its 52-week low (higher
+    // = closer to/above the high) is the most useful single proxy.
+    case "range52": return d.gainFromLow ?? -Infinity;
+    case "recommendation": {
+      const key = ins.insufficientData ? "Insufficient Data" : ins.category;
+      const idx = SA_CATEGORY_ORDER.findIndex(c => c.key === key);
+      return idx === -1 ? SA_CATEGORY_ORDER.length : idx;
+    }
+    case "score": return ins.insufficientData ? -1 : (computeInsightScoreDisplay(ins.valuation, ins.health, ins.growth).score ?? -1);
+    default: return 0;
+  }
 }
 
 // Recommendation pill — reuses the exact same .ii-cat-* badge classes/
@@ -7762,19 +7828,21 @@ function renderStockAnalysis() {
     filtered = filtered.filter(ins => (ins.capCategory || "Unclassified") === saUI.capFilter);
   }
 
-  filtered = [...filtered].sort((a, b) => {
-    if (saUI.sort === "name") return (a.row.name || "").localeCompare(b.row.name || "");
-    if (saUI.sort === "priceChange") {
-      const ca = dayChangePct(a.d.ltp, a.d.prevClose) ?? -Infinity;
-      const cb = dayChangePct(b.d.ltp, b.d.prevClose) ?? -Infinity;
-      return cb - ca;
-    }
-    // "score" (default): highest fundamental score first; Insufficient
-    // Data rows (score null) always sort last.
-    const sa = a.insufficientData ? -1 : (computeInsightScoreDisplay(a.valuation, a.health, a.growth).score ?? -1);
-    const sb = b.insufficientData ? -1 : (computeInsightScoreDisplay(b.valuation, b.health, b.growth).score ?? -1);
-    return sb - sa;
-  });
+  // Every column header is click-to-sort (same tableUI.sortCol/sortDir
+  // convention as Equity/Debt/Mutual Funds/Gold); the "Sort by"
+  // dropdown is just a shortcut into the same state — see
+  // stockAnalysisTableSortValue()/SA_SORT_PRESETS above.
+  if (ui.sortCol) {
+    filtered = [...filtered].sort((a, b) => {
+      const va = stockAnalysisTableSortValue(a, ui.sortCol);
+      const vb = stockAnalysisTableSortValue(b, ui.sortCol);
+      if (typeof va === "string" || typeof vb === "string") {
+        const sa = String(va ?? "").toLowerCase(), sb = String(vb ?? "").toLowerCase();
+        return sa < sb ? -ui.sortDir : sa > sb ? ui.sortDir : 0;
+      }
+      return ((va || 0) - (vb || 0)) * ui.sortDir;
+    });
+  }
 
   tbody.innerHTML = "";
   if (state.equity.length === 0) {
