@@ -1218,6 +1218,14 @@
   #panel-stockanalysis .stock-cell-sector{font-size:10.5px;color:var(--text-faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   #panel-stockanalysis .sa-row-num{color:var(--text-faint);font-family:var(--font-mono);font-size:11.5px;text-align:center;}
   #panel-stockanalysis .sa-sector-cell{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  /* Combined "Sector / Market Cap" cell — shared by the Stock Analysis
+     and Equity tables (desktop rows and mobile cards): plain sector
+     name on top, full cap-category label muted below. No pill/badge
+     coloring by design — this replaces the old colored sector badge +
+     single-letter cap chip in both tabs' main list. */
+  .sector-cap-cell{display:flex;flex-direction:column;gap:1px;line-height:1.35;}
+  .sector-cap-sector{font-size:12.8px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .sector-cap-cap{font-size:11px;color:var(--text-faint);}
   #panel-stockanalysis td.row-actions{display:flex;align-items:center;justify-content:flex-end;gap:4px;border-bottom:none;}
   #panel-stockanalysis .sa-row-open-btn{
     background:none;border:none;color:var(--text-faint);cursor:pointer;
@@ -2302,7 +2310,7 @@
         <thead>
           <tr>
             <th class="left sortable resizable sticky-col" data-col="name">Stock<span class="col-resizer"></span></th>
-            <th class="left sortable" data-col="sector">Sector</th>
+            <th class="left sortable" data-col="sector">Sector / Market Cap</th>
             <th class="sortable" data-col="invested">Invested Amt</th>
             <th class="sortable" data-col="currentValue">Current Value</th>
             <th class="sortable" data-col="pl">P&amp;L</th>
@@ -2816,7 +2824,7 @@
           <tr>
             <th>#</th>
             <th class="left sticky-col">Stock</th>
-            <th class="left">Sector</th>
+            <th class="left">Sector / Market Cap</th>
             <th>Price</th>
             <th>Today</th>
             <th class="left">52W Range</th>

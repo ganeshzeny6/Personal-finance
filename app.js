@@ -1338,6 +1338,17 @@ function eqCapChipHTML(capCategory) {
   return `<span class="eq-cap-chip ${info.cls}" title="${escapeAttr(capCategory)}">${info.letter}</span>`;
 }
 
+// Plain two-line "Sector / Market Cap" cell — sector name in the normal
+// text color on top, the full cap-category label (spelled out — "Large
+// Cap", not the single-letter chip) in muted text below. Shared by the
+// Stock Analysis and Equity tables' combined Sector/Market Cap column
+// (desktop table cell and mobile card alike) so the two tabs match.
+function sectorCapCellHTML(sector, capCategory) {
+  const sectorText = sector ? escapeAttr(sector) : "Uncategorized";
+  const capText = capCategory ? escapeAttr(capCategory) : "Unclassified";
+  return `<div class="sector-cap-cell"><div class="sector-cap-sector">${sectorText}</div><div class="sector-cap-cap">${capText}</div></div>`;
+}
+
 function renderEquitySummary() {
   const el = document.getElementById("eqSummaryGrid");
   if (!el) return;
@@ -1703,8 +1714,8 @@ function renderEquityMobileList() {
         <div class="mf-mobile-card-top">
           ${eqAvatarHTML(row)}
           <div class="mf-fund-name-wrap">
-            <div class="mf-fund-name">${escapeAttr(row.name || "Unnamed stock")}${eqCapChipHTML(capCategory)}</div>
-            ${eqSectorBadgeHTML(row.sector)}
+            <div class="mf-fund-name">${escapeAttr(row.name || "Unnamed stock")}</div>
+            ${sectorCapCellHTML(row.sector, capCategory)}
             ${chgChip}
           </div>
           <div class="mf-menu-wrap mf-mobile-card-menu">
@@ -1803,12 +1814,12 @@ function renderEquity() {
         <div class="mf-fund-cell">
           ${eqAvatarHTML(row)}
           <div class="mf-fund-name-wrap">
-            <div class="mf-fund-name" title="${escapeAttr(row.name || "")}">${escapeAttr(row.name || "Unnamed stock")}${eqCapChipHTML(capCategory)}</div>
+            <div class="mf-fund-name" title="${escapeAttr(row.name || "")}">${escapeAttr(row.name || "Unnamed stock")}</div>
             ${chgChip}
           </div>
         </div>
       </td>
-      <td class="left" data-label="Sector">${eqSectorBadgeHTML(row.sector)}</td>
+      <td class="left" data-label="Sector / Market Cap">${sectorCapCellHTML(row.sector, capCategory)}</td>
       <td data-label="Invested Amt">${fmtINR(row.invested)}</td>
       <td data-label="Current Value">${fmtINR(d.currentValue)}${pendingBadge}</td>
       <td class="${plClass(d.pl)}" data-label="P&amp;L">${fmtINRCompactSigned(d.pl)}</td>
@@ -7084,8 +7095,8 @@ function saTableRowHTML(ins, rowNumber) {
         <span class="stock-cell-text"><span class="stock-cell-name">${escapeAttr(row.name || "")}</span></span>
       </div>
     </td>
-    <td class="left" data-label="Sector">
-      <div class="sa-sector-cell">${eqSectorBadgeHTML(d.sector)}${eqCapChipHTML(capCategory)}</div>
+    <td class="left" data-label="Sector / Market Cap">
+      ${sectorCapCellHTML(d.sector, capCategory)}
     </td>
     <td data-label="Price">${fmtNum(d.ltp)}</td>
     <td data-label="Today">${renderDayChangeBadgeHTML(d.ltp, d.prevClose, d.marketDataStale)}</td>
@@ -7342,7 +7353,7 @@ function renderStockAnalysisMobileCards(pageInsights) {
             ${eqAvatarHTML(row)}
             <div>
               <div class="sa-mobile-card-name">${escapeAttr(row.name || "")}</div>
-              <div class="sa-mobile-card-sector">${escapeAttr(d.sector || "Sector not set")}${eqCapChipHTML(capCategory)}</div>
+              ${sectorCapCellHTML(d.sector, capCategory)}
             </div>
           </div>
           <div class="mf-menu-wrap mf-mobile-card-menu">
