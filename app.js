@@ -509,7 +509,13 @@ const ICON_PATHS = {
   "chevron-right": '<path d="m9 18 6-6-6-6"/>',
   "x": '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   "users": '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
-  "activity": '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>'
+  "activity": '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  "sun": '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
+  "moon": '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+  "monitor": '<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>',
+  "lock": '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  "unlock": '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>',
+  "chevron-left": '<path d="m15 18-6-6 6-6"/>'
 };
 function icon(name, size, cls) {
   size = size || 16;
@@ -861,6 +867,49 @@ function setSidebarOpen(open) {
 document.getElementById("hamburgerBtn")?.addEventListener("click", () => setSidebarOpen(true));
 document.getElementById("sidebarBackdrop")?.addEventListener("click", () => setSidebarOpen(false));
 
+// ---- Sidebar collapse (tablet + desktop, >900px — the phone drawer
+// above is a separate, untouched mechanism) — an icon-only rail the
+// user can toggle to reclaim horizontal space, persisted so it stays
+// collapsed/expanded across reloads. The floating theme toggle (see
+// updateFloatingOffsets()) tracks the sidebar's current width live so
+// it never overlaps it, whichever state it's in.
+const SIDEBAR_COLLAPSED_KEY = "sidebarCollapsed";
+function setSidebarCollapsed(collapsed) {
+  const sidebar = document.getElementById("sidebar");
+  sidebar?.classList.toggle("collapsed", collapsed);
+  const label = document.getElementById("sidebarCollapseLabel");
+  const btn = document.getElementById("sidebarCollapseBtn");
+  if (label) label.textContent = collapsed ? "Expand sidebar" : "Collapse sidebar";
+  if (btn) btn.title = collapsed ? "Expand sidebar" : "Collapse sidebar";
+  try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0"); } catch (e) {}
+  updateFloatingOffsets();
+}
+document.getElementById("sidebarCollapseBtn")?.addEventListener("click", () => {
+  setSidebarCollapsed(!document.getElementById("sidebar")?.classList.contains("collapsed"));
+});
+
+// Keeps the floating theme toggle (position:fixed, bottom-left) flush
+// against the sidebar's actual right edge instead of overlapping it —
+// reads the sidebar's current CSS width (expanded/collapsed) at
+// desktop/tablet widths, or 0 on phone widths where the sidebar is an
+// off-canvas drawer that doesn't occupy layout space either way.
+function updateFloatingOffsets() {
+  const sidebar = document.getElementById("sidebar");
+  const cs = getComputedStyle(document.documentElement);
+  let w = "0px";
+  if (sidebar && window.innerWidth > 900) {
+    w = sidebar.classList.contains("collapsed")
+      ? cs.getPropertyValue("--sidebar-w-collapsed").trim()
+      : cs.getPropertyValue("--sidebar-w").trim();
+  }
+  document.documentElement.style.setProperty("--content-left-offset", w || "0px");
+}
+window.addEventListener("resize", updateFloatingOffsets);
+try {
+  if (localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1") setSidebarCollapsed(true);
+  else updateFloatingOffsets();
+} catch (e) { updateFloatingOffsets(); }
+
 // Keep the mobile bottom bar's active icon in sync with whichever
 // sidebar tab is active, and close the drawer once a destination is
 // picked — the actual panel switch still happens entirely through
@@ -992,14 +1041,19 @@ document.getElementById("globalSearch")?.addEventListener("keydown", (e) => {
    remarks, category, and add/remove row stay editable either way.
    ============================================================ */
 
+// Icon-only pill (no text label — see the Lock/Unlock UI simplification)
+// that swaps between the lock/unlock glyph and a color cue; the full
+// explanation of what locking actually affects lives in the title
+// tooltip, unchanged from before, so nothing is lost — just decluttered.
 function updateLockButton() {
   const btn = document.getElementById("btnLockPortfolio");
+  if (!btn) return;
   if (state.portfolioLocked) {
-    btn.textContent = "🔒 Locked";
+    btn.innerHTML = icon("lock", 16);
     btn.classList.add("locked");
     btn.title = "Portfolio locked — Debt fields, Cash on hand, Ideal %, and the Sector/Remarks/Notes fields on Equity/Mutual Funds/Gold are read-only until unlocked. (Equity/MF/Gold's other fields are always driven by Import Holdings and live-price refresh, locked or not.) Click to unlock.";
   } else {
-    btn.textContent = "🔓 Unlocked";
+    btn.innerHTML = icon("unlock", 16);
     btn.classList.remove("locked");
     btn.title = "Click to lock Debt, Cash, Ideal %, and Equity/MF/Gold's Sector/Remarks/Notes fields against accidental edits.";
   }
@@ -4127,6 +4181,34 @@ function renderMarketSnapshot() {
         ` : '<div class="ms-empty">52W range not available</div>'}
       </div>
     `;
+  }).join("");
+  renderSidebarMarketSnap();
+}
+
+// Compact NIFTY 50 / SENSEX live ticker pinned to the sidebar footer —
+// visible on every tab, unlike the fuller Market Snapshot cards above
+// which only live on the Dashboard. Reuses the exact same state.indexData
+// this file already populates via refreshIndexData()/fetchPriceData(),
+// so there's no separate fetch or data path to keep in sync.
+const SIDEBAR_SNAP_KEYS = ["nifty50", "sensex"];
+function renderSidebarMarketSnap() {
+  const el = document.getElementById("sidebarMarketSnap");
+  if (!el) return;
+  el.innerHTML = SIDEBAR_SNAP_KEYS.map(key => {
+    const def = INDEX_DEFINITIONS.find(d => d.key === key);
+    const rec = state.indexData[key];
+    if (!rec || rec.value === null || rec.value === undefined) {
+      return `<div class="sidebar-snap-row"><span class="sidebar-snap-name">${escapeAttr(def.label)}</span><span class="sidebar-snap-empty">—</span></div>`;
+    }
+    const chg = dayChangePct(rec.value, rec.prevClose);
+    const chgCls = chg === null ? "muted" : chg > 0 ? "pos" : chg < 0 ? "neg" : "muted";
+    const chgText = chg === null ? "" : `${chg > 0 ? "▲" : chg < 0 ? "▼" : "•"} ${chg >= 0 ? "+" : ""}${fmtNum(chg, 2)}%`;
+    return `
+      <div class="sidebar-snap-row${rec.stale ? " sidebar-snap-stale" : ""}" title="${rec.stale ? "Some fields could not refresh this cycle — showing last known values" : ""}">
+        <span class="sidebar-snap-name">${escapeAttr(def.label)}</span>
+        <span class="sidebar-snap-value">${fmtNum(rec.value, 0)}</span>
+        <span class="sidebar-snap-chg ${chgCls}">${chgText}</span>
+      </div>`;
   }).join("");
 }
 
@@ -7731,11 +7813,15 @@ function openScreenerImportChooser() {
   );
 }
 
-document.getElementById("btnImportScreener").addEventListener("click", openScreenerImportChooser);
+// Import Screener Data now lives in Settings (see openSettingsModal's
+// "Imports" section) rather than as its own button on this tab —
+// settingsBtnImportScreener there wires openScreenerImportChooser
+// instead. The hidden file input below is unchanged and still used
+// by that same chooser.
 
 document.getElementById("importScreenerFile").addEventListener("change", async (e) => {
   const file = e.target.files[0];
-  const statusEl = document.getElementById("screenerImportStatus");
+  const statusEl = document.getElementById("settingsScreenerImportStatus");
   if (!file) return;
   try {
     const rows = await readWorkbookRows(file);
@@ -7761,7 +7847,7 @@ document.getElementById("importScreenerFile").addEventListener("change", async (
 // from Settings, so no separate setup is needed if Holdings import
 // from Drive is already configured.
 async function runScreenerDriveImportPicker() {
-  const statusEl = document.getElementById("screenerImportStatus");
+  const statusEl = document.getElementById("settingsScreenerImportStatus");
   if (!state.googleDriveClientId || !state.googleDriveApiKey) {
     alert('Google Drive import needs a one-time setup: add a "Google Drive Client ID" and "Google Drive API Key" in Settings. See the note there for how to create them in Google Cloud Console.');
     return;
@@ -7987,35 +8073,15 @@ document.getElementById("importDebtFile").addEventListener("change", async (e) =
   e.target.value = "";
 });
 
-// Google Sheet import: reads the same Apps Script Web App already
-// used for live prices (PRICE_API_URL) — the app just expects the
-// JSON payload to also carry a "debt" array now, one object per row
-// on a "Debt" tab, keyed by that tab's own header text (same
-// convention as stocks/mf/gold). See PROJECT_CONTEXT.md for the
-// doGet() change needed on Ganesh's Apps Script to add this.
-document.getElementById("btnImportDebtSheet").addEventListener("click", async () => {
-  const statusEl = document.getElementById("debtImportStatus");
-  statusEl.textContent = "Fetching from Google Sheet...";
-  let data;
-  try {
-    data = await fetchPriceData();
-  } catch (e) {
-    statusEl.textContent = sheetErrorMessage(e);
-    return;
-  }
-  if (!Array.isArray(data.debt)) {
-    statusEl.textContent = "";
-    alert('Your Apps Script doesn\'t return a "debt" array yet. Add a Debt tab to the Sheet and extend doGet() to include it under a "debt" key, the same way Stocks/Mutual Funds/Gold are already returned — see PROJECT_CONTEXT.md for the exact snippet.');
-    return;
-  }
-  const newRows = parseDebtSheetRows(data.debt);
-  statusEl.textContent = "";
-  if (newRows.length === 0) {
-    alert('No valid Debt rows found on the Debt tab of your Google Sheet — check that each row has at least a Name.');
-    return;
-  }
-  showDebtImportPreview(newRows, "Google Sheet", statusEl);
-});
+// Import from Google Sheet now lives in Settings (see openSettingsModal's
+// "Imports" section) rather than as its own button on the Debt tab —
+// settingsBtnImportDebtSheet there wires the equivalent fetch/parse/
+// preview flow, reading the same Apps Script Web App already used for
+// live prices (PRICE_API_URL) — the app just expects the JSON payload
+// to also carry a "debt" array, one object per row on a "Debt" tab,
+// keyed by that tab's own header text (same convention as stocks/mf/
+// gold). See PROJECT_CONTEXT.md for the doGet() change needed on
+// Ganesh's Apps Script to add this.
 
 /* ============================================================
    IMPORT — Zerodha Holdings (single "Import" button per tab)
@@ -9418,17 +9484,27 @@ function isStateEmpty(s) {
     (!s.gold || s.gold.length === 0);
 }
 
+// Icon-only Google "G" button (see the Sign-in UI simplification) — the
+// mark itself never changes, only a small state ring/dot plus the title
+// tooltip communicate signed-in/out/error, since there's no text label
+// to swap anymore. A transient statusOverride (e.g. "Sync failed") is
+// folded into the tooltip and a brief error-colored ring instead of
+// button text.
 function updateCloudSyncUI(statusOverride) {
   const btn = document.getElementById("btnCloudSync");
   if (!btn) return;
+  btn.classList.remove("sync-error");
   if (cloudUser) {
-    btn.textContent = "☁️ " + (statusOverride || cloudUser.email || "Synced");
     btn.classList.add("synced");
-    btn.title = "Signed in as " + (cloudUser.email || cloudUser.uid) + " — data syncs automatically. Click to sign out.";
+    if (statusOverride) {
+      btn.classList.add("sync-error");
+      btn.title = statusOverride + " — signed in as " + (cloudUser.email || cloudUser.uid) + ". Click to sign out.";
+    } else {
+      btn.title = "Signed in as " + (cloudUser.email || cloudUser.uid) + " — data syncs automatically. Click to sign out.";
+    }
   } else {
-    btn.textContent = statusOverride ? "☁️ " + statusOverride : "☁️ Sign in with Google";
     btn.classList.remove("synced");
-    btn.title = "Sign in to sync your data across devices via Firestore.";
+    btn.title = statusOverride || "Sign in with Google to sync your data across devices.";
   }
 }
 
@@ -9654,8 +9730,9 @@ function openSettingsModal() {
       <input type="text" inputmode="decimal" id="settingsCapTargetSmall" value="${escapeAttr(String(state.equityCapAllocTargets?.small ?? DEFAULT_EQUITY_CAP_ALLOC_TARGETS.small))}">
     </div>
 
-    <h4>Live Price API</h4>
-    <p class="settings-note" style="margin-top:0">Your Google Apps Script Web App URL. Update it here if you ever redeploy and get a new <code>/exec</code> link — no code changes needed.</p>
+    <h4>Data Sources</h4>
+    <p class="settings-note" style="margin-top:0">Every API URL and credential the app reads live data from or imports through, in one place.</p>
+    <p class="settings-note" style="margin-top:0"><b>Live Price API</b> — your Google Apps Script Web App URL. Update it here if you ever redeploy and get a new <code>/exec</code> link — no code changes needed.</p>
     <div class="settings-field">
       <label for="settingsPriceApiUrl">Price API URL (Stocks / Mutual Funds / Gold / Debt)</label>
       <input type="text" id="settingsPriceApiUrl" placeholder="https://script.google.com/macros/s/.../exec" value="${escapeAttr(state.priceApiUrl || "")}">
@@ -9664,9 +9741,12 @@ function openSettingsModal() {
       <label for="settingsHoldingsApiUrl">Holdings API URL (legacy — superseded by Google Drive import below)</label>
       <input type="text" id="settingsHoldingsApiUrl" placeholder="https://script.google.com/macros/s/.../exec" value="${escapeAttr(state.holdingsApiUrl || "")}">
     </div>
-
-    <h4>Google Drive Import</h4>
-    <p class="settings-note" style="margin-top:0">"Import from Google Drive" opens a picker so you browse and choose the exact Zerodha Holdings .xlsx file — it never gets standing access to your whole Drive, only the file you pick. One-time setup in <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a>: enable the "Google Picker API" and "Google Drive API", create an OAuth 2.0 Client ID (Web application) with this site's URL under Authorized JavaScript origins, and create an API key (restrict it to the Picker API). Paste both below.</p>
+    <div class="settings-field">
+      <label for="settingsNiftyHistoryApiUrl">Nifty History API URL</label>
+      <input type="text" id="settingsNiftyHistoryApiUrl" placeholder="https://script.google.com/macros/s/.../exec" value="${escapeAttr(state.niftyHistoryApiUrl || "")}">
+    </div>
+    <p class="settings-note" style="margin-top:0">Feeds the Dashboard's "Portfolio performance" chart (your net invested capital vs. a Nifty 50 equivalent), from a separate Apps Script deployment serving your "Nifty History" sheet as JSON. One-time setup: open the "Nifty Live (helper)" sheet → Extensions → Apps Script → make sure it has the <code>doGet()</code> function from the latest <code>nifty_daily_capture.gs</code> → Deploy → New deployment → Web app (Execute as: Me, Who has access: Anyone) → paste the resulting URL above.</p>
+    <p class="settings-note" style="margin-top:0"><b>Google Drive Import</b> — "Import from Google Drive" opens a picker so you browse and choose the exact file — it never gets standing access to your whole Drive, only the file you pick. One-time setup in <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">Google Cloud Console</a>: enable the "Google Picker API" and "Google Drive API", create an OAuth 2.0 Client ID (Web application) with this site's URL under Authorized JavaScript origins, and create an API key (restrict it to the Picker API). Paste both below.</p>
     <div class="settings-field">
       <label for="settingsGoogleDriveClientId">Google Drive OAuth Client ID</label>
       <input type="text" id="settingsGoogleDriveClientId" placeholder="xxxxxxxxxx.apps.googleusercontent.com" value="${escapeAttr(state.googleDriveClientId || DEFAULT_GOOGLE_DRIVE_CLIENT_ID)}">
@@ -9676,15 +9756,27 @@ function openSettingsModal() {
       <input type="text" id="settingsGoogleDriveApiKey" placeholder="AIza..." value="${escapeAttr(state.googleDriveApiKey || DEFAULT_GOOGLE_DRIVE_API_KEY)}">
     </div>
 
-    <h4>Import Investments</h4>
-    <p class="settings-note" style="margin-top:0">Import Zerodha Holdings for Equity, Mutual Funds and Gold together in one step. Pick a source below — local file selection supports choosing several files at once (one per Zerodha account); matching holdings across files are combined automatically and you'll see a full preview before anything is applied.</p>
+    <h4>Imports</h4>
+    <p class="settings-note" style="margin-top:0">Every "bring in fresh data" action, in one place — Screener fundamentals (Stock Analysis) and the Debt Google Sheet import (Debt tab) now live here too instead of on their own tabs.</p>
+    <p class="settings-note" style="margin-top:0"><b>Investments</b> — Zerodha Holdings for Equity, Mutual Funds and Gold together in one step. Local file selection supports choosing several files at once (one per Zerodha account); matching holdings across files are combined automatically and you'll see a full preview before anything is applied.</p>
     <div class="settings-actions">
       <button class="btn" id="settingsBtnImportInvestments">Import Investments</button>
       <span class="status-tag" id="investmentsImportStatus"></span>
     </div>
 
-    <h4>Trade Book (Google Drive sync)</h4>
-    <p class="settings-note" style="margin-top:0">Trade-level history for the Dashboard's "Portfolio performance" chart is read automatically from your trade book CSV on Google Drive every time you open or reload this page — no manual file import anymore. Stored only in this browser — never synced to the cloud — and separate from your Equity/Mutual Funds/Gold holdings above.</p>
+    <p class="settings-note"><b>Screener Data</b> — fundamentals (PE, ROE, growth, etc.) for the Stock Analysis tab, matched to your Equity holdings by Symbol. Re-importing replaces the whole Screener dataset.</p>
+    <div class="settings-actions">
+      <button class="btn" id="settingsBtnImportScreener">Import Screener Data</button>
+      <span class="status-tag" id="settingsScreenerImportStatus"></span>
+    </div>
+
+    <p class="settings-note"><b>Debt</b> — overwrites all existing Debt entries with the Debt tab of your Google Sheet. (A local-file Excel import is still available directly on the Debt tab, for a quick one-off without touching the Sheet.)</p>
+    <div class="settings-actions">
+      <button class="btn btn-ghost" id="settingsBtnImportDebtSheet">Import from Google Sheet</button>
+      <span class="status-tag" id="settingsDebtSheetImportStatus"></span>
+    </div>
+
+    <p class="settings-note"><b>Trade Book (Google Drive sync)</b> — trade-level history for the Dashboard's "Portfolio performance" chart, read automatically from your trade book CSV on Google Drive every time you open or reload this page. Stored only in this browser — never synced to the cloud — and separate from your Equity/Mutual Funds/Gold holdings above.</p>
     <p class="settings-note" style="margin-top:0">${tradeBook.driveFileId
       ? `Connected to <b>${escapeAttr(tradeBook.driveFileName || "")}</b>.`
       : "Not connected yet — click Connect Google Drive and pick your trade book CSV."}</p>
@@ -9697,13 +9789,6 @@ function openSettingsModal() {
     <p class="settings-note">${escapeAttr(tbSummaryText)}${tradeBook.lastSyncedAt ? ` Last synced ${new Date(tradeBook.lastSyncedAt).toLocaleString()}` : ""}${tradeBook.lastSyncConflicts ? ` — ${tradeBook.lastSyncConflicts} row${tradeBook.lastSyncConflicts === 1 ? "" : "s"} on the last sync had different data already stored and were left untouched.` : (tradeBook.lastSyncedAt ? "." : "")}</p>
     ${tradeBook.lastSyncStatus === "error" ? `<p class="settings-note" style="color:var(--negative)">Last sync failed: ${escapeAttr(tradeBook.lastSyncError || "unknown error")}</p>` : ""}
     ${tradeBook.lastSyncStatus === "needs-reconnect" ? `<p class="settings-note" style="color:var(--warning)">Google Drive access needs to be refreshed — click Sync Now or Change File above.</p>` : ""}
-
-    <h4>Portfolio Performance Chart</h4>
-    <p class="settings-note" style="margin-top:0">The Dashboard's "Portfolio performance" card compares your net invested capital (from the Trade Book above) against a Nifty 50 equivalent, using a small Apps Script Web App that serves your "Nifty History" sheet as JSON — same pattern as the Price/Holdings API URLs above, deployed separately. One-time setup: open the "Nifty Live (helper)" sheet → Extensions → Apps Script → make sure it has the <code>doGet()</code> function from the latest <code>nifty_daily_capture.gs</code> → Deploy → New deployment → Web app (Execute as: Me, Who has access: Anyone) → paste the resulting URL below.</p>
-    <div class="settings-field">
-      <label for="settingsNiftyHistoryApiUrl">Nifty History API URL</label>
-      <input type="text" id="settingsNiftyHistoryApiUrl" placeholder="https://script.google.com/macros/s/.../exec" value="${escapeAttr(state.niftyHistoryApiUrl || "")}">
-    </div>
 
     <h4>Backup &amp; Restore</h4>
     <div class="settings-actions">
@@ -9764,6 +9849,30 @@ function openSettingsModal() {
   document.getElementById("settingsBtnImportInvestments").addEventListener("click", () => {
     closeModal();
     openImportChooser();
+  });
+  document.getElementById("settingsBtnImportScreener").addEventListener("click", openScreenerImportChooser);
+  document.getElementById("settingsBtnImportDebtSheet").addEventListener("click", async () => {
+    const statusEl = document.getElementById("settingsDebtSheetImportStatus");
+    statusEl.textContent = "Fetching from Google Sheet...";
+    let data;
+    try {
+      data = await fetchPriceData();
+    } catch (e) {
+      statusEl.textContent = sheetErrorMessage(e);
+      return;
+    }
+    if (!Array.isArray(data.debt)) {
+      statusEl.textContent = "";
+      alert('Your Apps Script doesn\'t return a "debt" array yet. Add a Debt tab to the Sheet and extend doGet() to include it under a "debt" key, the same way Stocks/Mutual Funds/Gold are already returned — see PROJECT_CONTEXT.md for the exact snippet.');
+      return;
+    }
+    const newRows = parseDebtSheetRows(data.debt);
+    statusEl.textContent = "";
+    if (newRows.length === 0) {
+      alert('No valid Debt rows found on the Debt tab of your Google Sheet — check that each row has at least a Name.');
+      return;
+    }
+    showDebtImportPreview(newRows, "Google Sheet", statusEl);
   });
   document.getElementById("settingsBtnConnectTradeBookDrive").addEventListener("click", () => {
     connectTradeBookDrive();
