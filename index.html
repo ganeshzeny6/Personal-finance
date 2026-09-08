@@ -932,15 +932,34 @@
 
   /* ---------- Watchlist ---------- */
   .wl-card{margin-bottom:18px;}
-  .wl-add-row{display:flex;gap:8px;margin-bottom:14px;}
+  .wl-add-row{display:flex;gap:8px;margin-bottom:14px;align-items:flex-start;}
+  .wl-suggest-wrap{position:relative;flex:1 1 auto;min-width:0;}
   .wl-add-row input{
-    flex:1 1 auto;min-width:0;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;
+    width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;
     padding:8px 12px;font-family:var(--font-body);font-size:13px;color:var(--text);
   }
   .wl-add-row input:focus{border-color:var(--gold);outline:none;background:var(--surface);}
   .wl-add-row .btn{flex:none;}
   .wl-return{font-family:var(--font-mono);font-size:10px;margin-top:2px;}
   #panel-watchlist table.data-table{min-width:640px;}
+
+  /* Stock/fund-name typeahead on the Watchlist "add" boxes — suggests
+     from a bundled NIFTY 500 list plus whatever you already hold, so
+     picking a suggestion also guarantees an exact-name match with any
+     live holding (see watchlistFindHoldingRow() in app.js). */
+  .wl-suggest-list{
+    display:none;position:absolute;top:100%;left:0;right:0;margin-top:4px;
+    background:var(--surface);border:1px solid var(--border);border-radius:10px;
+    box-shadow:var(--shadow-md);z-index:40;max-height:260px;overflow-y:auto;
+  }
+  .wl-suggest-list.open{display:block;}
+  .wl-suggest-item{
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+    padding:8px 12px;cursor:pointer;font-size:13px;color:var(--text);
+  }
+  .wl-suggest-item:hover, .wl-suggest-item.active{background:var(--surface-2);}
+  .wl-suggest-symbol{font-family:var(--font-mono);font-size:10.5px;color:var(--text-faint);flex:none;}
+  .wl-suggest-empty{padding:10px 12px;font-size:12.5px;color:var(--text-faint);}
 
   /* Target-vs-current comparison row — the one visual pattern used
      consistently across Overall Portfolio, Stock Rebalancing and
@@ -3211,7 +3230,10 @@
     <div class="card rb-section wl-card">
       <h3>Stocks <span class="hint" id="wlStockCount"></span></h3>
       <div class="wl-add-row">
-        <input type="text" id="wlAddStockName" placeholder="Stock name (e.g. TCS, HDFC Bank)...">
+        <div class="wl-suggest-wrap">
+          <input type="text" id="wlAddStockName" placeholder="Stock name (e.g. TCS, HDFC Bank)..." autocomplete="off">
+          <div class="wl-suggest-list" id="wlAddStockNameSuggest"></div>
+        </div>
         <button type="button" class="btn btn-sm" id="wlAddStockBtn">+ Add to Watchlist</button>
       </div>
       <div class="table-scroll">
@@ -3240,7 +3262,10 @@
     <div class="card rb-section wl-card">
       <h3>Mutual Funds <span class="hint" id="wlMfCount"></span></h3>
       <div class="wl-add-row">
-        <input type="text" id="wlAddMfName" placeholder="Fund name...">
+        <div class="wl-suggest-wrap">
+          <input type="text" id="wlAddMfName" placeholder="Fund name..." autocomplete="off">
+          <div class="wl-suggest-list" id="wlAddMfNameSuggest"></div>
+        </div>
         <button type="button" class="btn btn-sm" id="wlAddMfBtn">+ Add to Watchlist</button>
       </div>
       <div class="table-scroll">

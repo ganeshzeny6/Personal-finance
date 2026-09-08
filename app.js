@@ -516,6 +516,487 @@ function plClass(n) {
   return n > 0 ? "pos" : n < 0 ? "neg" : "muted";
 }
 
+// Static NIFTY 500 constituent list (Symbol, Company Name), captured
+// from NSE's own published index-constituent file. This exists ONLY to
+// power the Watchlist "add" boxes' as-you-type name suggestions (see
+// getStockSuggestionPool() near the Watchlist section below) — it's a
+// point-in-time snapshot for typeahead convenience, not live data, and
+// nothing else in the app reads from it or computes anything from it.
+const NSE_STOCK_SUGGESTIONS = [
+  ["360ONE","360 ONE WAM Ltd."],
+  ["3MINDIA","3M India Ltd."],
+  ["ABB","ABB India Ltd."],
+  ["ABBOTINDIA","Abbott India Ltd."],
+  ["ABDL","Allied Blenders and Distillers Ltd."],
+  ["ABFRL","Aditya Birla Fashion and Retail Ltd."],
+  ["ABCAPITAL","Aditya Birla Capital Ltd."],
+  ["ABLBL","Aditya Birla Lifestyle Brands Ltd."],
+  ["ABREL","Aditya Birla Real Estate Ltd."],
+  ["ABSLAMC","Aditya Birla Sun Life AMC Ltd."],
+  ["ACC","ACC Ltd."],
+  ["ACE","Action Construction Equipment Ltd."],
+  ["ACME","ACME Solar Holdings Ltd."],
+  ["ACUTAAS","Acutaas Chemicals Ltd."],
+  ["ADANIENSOL","Adani Energy Solutions Ltd."],
+  ["ADANIENT","Adani Enterprises Ltd."],
+  ["ADANIGREEN","Adani Green Energy Ltd."],
+  ["ADANIPORTS","Adani Ports and Special Economic Zone Ltd."],
+  ["ADANIPOWER","Adani Power Ltd."],
+  ["AFCONS","Afcons Infrastructure Ltd."],
+  ["AFFLE","Affle 3i Ltd."],
+  ["AEGISLOG","Aegis Logistics Ltd."],
+  ["AEGISVOPAK","Aegis Vopak Terminals Ltd."],
+  ["AIAENG","AIA Engineering Ltd."],
+  ["AIIL","Authum Investment & Infrastructure Ltd."],
+  ["AJANTPHARM","Ajanta Pharmaceuticals Ltd."],
+  ["ALKEM","Alkem Laboratories Ltd."],
+  ["APLAPOLLO","APL Apollo Tubes Ltd."],
+  ["APARINDS","Apar Industries Ltd."],
+  ["APTUS","Aptus Value Housing Finance India Ltd."],
+  ["ARE&M","Amara Raja Energy & Mobility Ltd."],
+  ["AARTIIND","Aarti Industries Ltd."],
+  ["AADHARHFC","Aadhar Housing Finance Ltd."],
+  ["AAVAS","Aavas Financiers Ltd."],
+  ["ASAHIINDIA","Asahi India Glass Ltd."],
+  ["ASIANPAINT","Asian Paints Ltd."],
+  ["ASHOKLEY","Ashok Leyland Ltd."],
+  ["ASTERDM","Aster DM Quality Care Ltd."],
+  ["ASTRAL","Astral Ltd."],
+  ["ATHERENERG","Ather Energy Ltd."],
+  ["ATUL","Atul Ltd."],
+  ["ATGL","Adani Total Gas Ltd."],
+  ["AUBANK","AU Small Finance Bank Ltd."],
+  ["AUROPHARMA","Aurobindo Pharma Ltd."],
+  ["AWL","AWL Agri Business Ltd."],
+  ["AXISBANK","Axis Bank Ltd."],
+  ["BBTC","Bombay Burmah Trading Corporation Ltd."],
+  ["BAJAJ-AUTO","Bajaj Auto Ltd."],
+  ["BAJAJFINSV","Bajaj Finserv Ltd."],
+  ["BAJAJHFL","Bajaj Housing Finance Ltd."],
+  ["BAJAJHLDNG","Bajaj Holdings & Investment Ltd."],
+  ["BAJFINANCE","Bajaj Finance Ltd."],
+  ["BALKRISIND","Balkrishna Industries Ltd."],
+  ["BALRAMCHIN","Balrampur Chini Mills Ltd."],
+  ["BANDHANBNK","Bandhan Bank Ltd."],
+  ["BANKBARODA","Bank of Baroda"],
+  ["BANKINDIA","Bank of India"],
+  ["BAYERCROP","Bayer Cropscience Ltd."],
+  ["BATAINDIA","Bata India Ltd."],
+  ["BDL","Bharat Dynamics Ltd."],
+  ["BEML","BEML Ltd."],
+  ["BEL","Bharat Electronics Ltd."],
+  ["BELRISE","Belrise Industries Ltd."],
+  ["BERGEPAINT","Berger Paints India Ltd."],
+  ["BHARATFORG","Bharat Forge Ltd."],
+  ["BHARTIARTL","Bharti Airtel Ltd."],
+  ["BHARTIHEXA","Bharti Hexacom Ltd."],
+  ["BHEL","Bharat Heavy Electricals Ltd."],
+  ["BIKAJI","Bikaji Foods International Ltd."],
+  ["BIOCON","Biocon Ltd."],
+  ["BLS","BLS International Services Ltd."],
+  ["BLUEDARCO","Blue Dart Express Ltd."],
+  ["BLUEJET","Blue Jet Healthcare Ltd."],
+  ["BLUESTARCO","Blue Star Ltd."],
+  ["BPCL","Bharat Petroleum Corporation Ltd."],
+  ["BSOFT","Birlasoft Ltd."],
+  ["BSE","BSE Ltd."],
+  ["CANBK","Canara Bank"],
+  ["CANFINHOME","Can Fin Homes Ltd."],
+  ["CANHLIFE","Canara HSBC Life Insurance Company Ltd."],
+  ["CAPLIPOINT","Caplin Point Laboratories Ltd."],
+  ["CARBORUNIV","Carborundum Universal Ltd."],
+  ["CARTRADE","Cartrade Tech Ltd."],
+  ["CASTROLIND","Castrol India Ltd."],
+  ["CEATLTD","Ceat Ltd."],
+  ["CDSL","Central Depository Services (India) Ltd."],
+  ["CESC","CESC Ltd."],
+  ["CGCL","Capri Global Capital Ltd."],
+  ["CGPOWER","CG Power and Industrial Solutions Ltd."],
+  ["CHALET","Chalet Hotels Ltd."],
+  ["CHAMBLFERT","Chambal Fertilizers & Chemicals Ltd."],
+  ["CHENNPETRO","Chennai Petroleum Corporation Ltd."],
+  ["CHOICEIN","Choice International Ltd."],
+  ["CHOLAFIN","Cholamandalam Investment and Finance Company Ltd."],
+  ["CHOLAHLDNG","Cholamandalam Financial Holdings Ltd."],
+  ["CIEINDIA","CIE Automotive India Ltd."],
+  ["CIPLA","Cipla Ltd."],
+  ["CLEAN","Clean Science and Technology Ltd."],
+  ["COALINDIA","Coal India Ltd."],
+  ["COCHINSHIP","Cochin Shipyard Ltd."],
+  ["COFORGE","Coforge Ltd."],
+  ["COHANCE","Cohance Lifesciences Ltd."],
+  ["COLPAL","Colgate Palmolive (India) Ltd."],
+  ["CAMS","Computer Age Management Services Ltd."],
+  ["CONCOR","Container Corporation of India Ltd."],
+  ["CONCORDBIO","Concord Biotech Ltd."],
+  ["COROMANDEL","Coromandel International Ltd."],
+  ["CRAFTSMAN","Craftsman Automation Ltd."],
+  ["CREDITACC","CreditAccess Grameen Ltd."],
+  ["CRISIL","CRISIL Ltd."],
+  ["CROMPTON","Crompton Greaves Consumer Electricals Ltd."],
+  ["CPPLUS","Aditya Infotech Ltd."],
+  ["CUB","City Union Bank Ltd."],
+  ["CUMMINSIND","Cummins India Ltd."],
+  ["CYIENT","Cyient Ltd."],
+  ["DABUR","Dabur India Ltd."],
+  ["DALBHARAT","Dalmia Bharat Ltd."],
+  ["DATAPATTNS","Data Patterns (India) Ltd."],
+  ["DCMSHRIRAM","DCM Shriram Ltd."],
+  ["DEEPAKFERT","Deepak Fertilisers & Petrochemicals Corp. Ltd."],
+  ["DEEPAKNTR","Deepak Nitrite Ltd."],
+  ["DELHIVERY","Delhivery Ltd."],
+  ["DEVYANI","Devyani International Ltd."],
+  ["DIVISLAB","Divi's Laboratories Ltd."],
+  ["DIXON","Dixon Technologies (India) Ltd."],
+  ["DLF","DLF Ltd."],
+  ["DMART","Avenue Supermarts Ltd."],
+  ["DOMS","DOMS Industries Ltd."],
+  ["DRREDDY","Dr. Reddy's Laboratories Ltd."],
+  ["EIHOTEL","EIH Ltd."],
+  ["EICHERMOT","Eicher Motors Ltd."],
+  ["EIDPARRY","E.I.D. Parry (India) Ltd."],
+  ["ELECON","Elecon Engineering Co. Ltd."],
+  ["ELGIEQUIP","Elgi Equipments Ltd."],
+  ["EMAMILTD","Emami Ltd."],
+  ["EMCURE","Emcure Pharmaceuticals Ltd."],
+  ["EMMVEE","Emmvee Photovoltaic Power Ltd."],
+  ["ENDURANCE","Endurance Technologies Ltd."],
+  ["ENGINERSIN","Engineers India Ltd."],
+  ["ENRIN","Siemens Energy India Ltd."],
+  ["ERIS","Eris Lifesciences Ltd."],
+  ["ESCORTS","Escorts Kubota Ltd."],
+  ["ETERNAL","Eternal Ltd."],
+  ["EXIDEIND","Exide Industries Ltd."],
+  ["FACT","Fertilisers and Chemicals Travancore Ltd."],
+  ["FEDERALBNK","Federal Bank Ltd."],
+  ["FINCABLES","Finolex Cables Ltd."],
+  ["FIRSTCRY","Brainbees Solutions Ltd."],
+  ["FIVESTAR","Five-Star Business Finance Ltd."],
+  ["FLUOROCHEM","Gujarat Fluorochemicals Ltd."],
+  ["FORCEMOT","Force Motors Ltd."],
+  ["FORTIS","Fortis Healthcare Ltd."],
+  ["FSL","Firstsource Solutions Ltd."],
+  ["GAIL","GAIL (India) Ltd."],
+  ["GABRIEL","Gabriel India Ltd."],
+  ["GALLANTT","Gallantt Ispat Ltd."],
+  ["GICRE","General Insurance Corporation of India"],
+  ["GILLETTE","Gillette India Ltd."],
+  ["GLAND","Gland Pharma Ltd."],
+  ["GLAXO","Glaxosmithkline Pharmaceuticals Ltd."],
+  ["GLENMARK","Glenmark Pharmaceuticals Ltd."],
+  ["GMRAIRPORT","GMR Airports Ltd."],
+  ["GODIGIT","Go Digit General Insurance Ltd."],
+  ["GODREJCP","Godrej Consumer Products Ltd."],
+  ["GODREJIND","Godrej Industries Ltd."],
+  ["GODREJPROP","Godrej Properties Ltd."],
+  ["GODFRYPHLP","Godfrey Phillips India Ltd."],
+  ["GPIL","Godawari Power & Ispat Ltd."],
+  ["GRANULES","Granules India Ltd."],
+  ["GRAPHITE","Graphite India Ltd."],
+  ["GRASIM","Grasim Industries Ltd."],
+  ["GRAVITA","Gravita India Ltd."],
+  ["GRSE","Garden Reach Shipbuilders & Engineers Ltd."],
+  ["GROWW","Billionbrains Garage Ventures Ltd."],
+  ["GSHIP","Great Eastern Shipping Co. Ltd."],
+  ["GVT&D","GE Vernova T&D India Ltd."],
+  ["HAL","Hindustan Aeronautics Ltd."],
+  ["HAVELLS","Havells India Ltd."],
+  ["HBLENGINE","HBL Engineering Ltd."],
+  ["HCLTECH","HCL Technologies Ltd."],
+  ["HDBFS","HDB Financial Services Ltd."],
+  ["HDFCAMC","HDFC Asset Management Company Ltd."],
+  ["HDFCBANK","HDFC Bank Ltd."],
+  ["HDFCLIFE","HDFC Life Insurance Company Ltd."],
+  ["HEG","HEG Ltd."],
+  ["HEROMOTOCO","Hero MotoCorp Ltd."],
+  ["HEXT","Hexaware Technologies Ltd."],
+  ["HFCL","HFCL Ltd."],
+  ["HINDCOPPER","Hindustan Copper Ltd."],
+  ["HINDALCO","Hindalco Industries Ltd."],
+  ["HINDPETRO","Hindustan Petroleum Corporation Ltd."],
+  ["HINDUNILVR","Hindustan Unilever Ltd."],
+  ["HINDZINC","Hindustan Zinc Ltd."],
+  ["HOMEFIRST","Home First Finance Company India Ltd."],
+  ["HONASA","Honasa Consumer Ltd."],
+  ["HONAUT","Honeywell Automation India Ltd."],
+  ["HSCL","Himadri Speciality Chemical Ltd."],
+  ["HUDCO","Housing & Urban Development Corporation Ltd."],
+  ["HYUNDAI","Hyundai Motor India Ltd."],
+  ["ICICIBANK","ICICI Bank Ltd."],
+  ["ICICIGI","ICICI Lombard General Insurance Company Ltd."],
+  ["ICICIAMC","ICICI Prudential Asset Management Company Ltd."],
+  ["ICICIPRULI","ICICI Prudential Life Insurance Company Ltd."],
+  ["IDBI","IDBI Bank Ltd."],
+  ["IDFCFIRSTB","IDFC First Bank Ltd."],
+  ["IDEA","Vodafone Idea Ltd."],
+  ["IDGN","Indegene Ltd."],
+  ["IEX","Indian Energy Exchange Ltd."],
+  ["IFCI","IFCI Ltd."],
+  ["IGIL","International Gemological Institute Ltd."],
+  ["IGL","Indraprastha Gas Ltd."],
+  ["IIFL","IIFL Finance Ltd."],
+  ["IKS","Inventurus Knowledge Solutions Ltd."],
+  ["INDHOTEL","Indian Hotels Co. Ltd."],
+  ["INDIACEM","India Cements Ltd."],
+  ["INDIAMART","Indiamart Intermesh Ltd."],
+  ["INDIANB","Indian Bank"],
+  ["INDIGO","InterGlobe Aviation Ltd."],
+  ["INFY","Infosys Ltd."],
+  ["INDUSTOWER","Indus Towers Ltd."],
+  ["INDUSINDBK","IndusInd Bank Ltd."],
+  ["INOXWIND","Inox Wind Ltd."],
+  ["INTELLECT","Intellect Design Arena Ltd."],
+  ["IOB","Indian Overseas Bank"],
+  ["IOC","Indian Oil Corporation Ltd."],
+  ["IPCALAB","Ipca Laboratories Ltd."],
+  ["IRCON","IRCON International Ltd."],
+  ["IRCTC","Indian Railway Catering And Tourism Corporation Ltd."],
+  ["IREDA","Indian Renewable Energy Development Agency Ltd."],
+  ["IRFC","Indian Railway Finance Corporation Ltd."],
+  ["IRB","IRB Infrastructure Developers Ltd."],
+  ["ITC","ITC Ltd."],
+  ["ITCHOTELS","ITC Hotels Ltd."],
+  ["ITI","ITI Ltd."],
+  ["J&KBANK","Jammu & Kashmir Bank Ltd."],
+  ["JAINREC","Jain Resource Recycling Ltd."],
+  ["JBMA","JBM Auto Ltd."],
+  ["JKCEMENT","J.K. Cement Ltd."],
+  ["JKTYRE","JK Tyre & Industries Ltd."],
+  ["JIOFIN","Jio Financial Services Ltd."],
+  ["JINDALSAW","Jindal Saw Ltd."],
+  ["JINDALSTEL","Jindal Steel Ltd."],
+  ["JMFINANCIL","JM Financial Ltd."],
+  ["JPPOWER","Jaiprakash Power Ventures Ltd."],
+  ["JSL","Jindal Stainless Ltd."],
+  ["JSWCEMENT","JSW Cement Ltd."],
+  ["JSWENERGY","JSW Energy Ltd."],
+  ["JSWINFRA","JSW Infrastructure Ltd."],
+  ["JSWSTEEL","JSW Steel Ltd."],
+  ["JUBLFOOD","Jubilant Foodworks Ltd."],
+  ["JUBLINGREA","Jubilant Ingrevia Ltd."],
+  ["JUBLPHARMA","Jubilant Pharmova Ltd."],
+  ["JWL","Jupiter Wagons Ltd."],
+  ["JYOTICNC","Jyoti CNC Automation Ltd."],
+  ["KAJARIACER","Kajaria Ceramics Ltd."],
+  ["KALYANKJIL","Kalyan Jewellers India Ltd."],
+  ["KARURVYSYA","Karur Vysya Bank Ltd."],
+  ["KAYNES","Kaynes Technology India Ltd."],
+  ["KEC","Kec International Ltd."],
+  ["KEI","KEI Industries Ltd."],
+  ["KFINTECH","Kfin Technologies Ltd."],
+  ["KIMS","Krishna Institute of Medical Sciences Ltd."],
+  ["KIRLOSENG","Kirloskar Oil Eng Ltd."],
+  ["KOTAKBANK","Kotak Mahindra Bank Ltd."],
+  ["KPIL","Kalpataru Projects International Ltd."],
+  ["KPITTECH","KPIT Technologies Ltd."],
+  ["KPRMILL","K.P.R. Mill Ltd."],
+  ["LAURUSLABS","Laurus Labs Ltd."],
+  ["LALPATHLAB","Dr. Lal Path Labs Ltd."],
+  ["LATENTVIEW","Latent View Analytics Ltd."],
+  ["LENSKART","Lenskart Solutions Ltd."],
+  ["LEMONTREE","Lemon Tree Hotels Ltd."],
+  ["LGEINDIA","LG Electronics India Ltd."],
+  ["LICHSGFIN","LIC Housing Finance Ltd."],
+  ["LICI","Life Insurance Corporation of India"],
+  ["LINDEINDIA","Linde India Ltd."],
+  ["LLOYDSME","Lloyds Metals And Energy Ltd."],
+  ["LODHA","Lodha Developers Ltd."],
+  ["LTFOODS","LT Foods Ltd."],
+  ["LT","Larsen & Toubro Ltd."],
+  ["LTFS","L&T Finance Ltd."],
+  ["LTTS","L&T Technology Services Ltd."],
+  ["LUPIN","Lupin Ltd."],
+  ["MAHABANK","Bank of Maharashtra"],
+  ["MAPMYINDIA","C.E. Info Systems Ltd."],
+  ["M&M","Mahindra & Mahindra Ltd."],
+  ["M&MFIN","Mahindra & Mahindra Financial Services Ltd."],
+  ["MANAPPURAM","Manappuram Finance Ltd."],
+  ["MANKIND","Mankind Pharma Ltd."],
+  ["MARUTI","Maruti Suzuki India Ltd."],
+  ["MARICO","Marico Ltd."],
+  ["MAZDOCK","Mazagoan Dock Shipbuilders Ltd."],
+  ["MCX","Multi Commodity Exchange of India Ltd."],
+  ["MEDANTA","Global Health Ltd."],
+  ["MEESHO","Meesho Ltd."],
+  ["MFSL","Max Financial Services Ltd."],
+  ["MGL","Mahanagar Gas Ltd."],
+  ["MINDACORP","Minda Corporation Ltd."],
+  ["MMTC","MMTC Ltd."],
+  ["MOTHERSON","Samvardhana Motherson International Ltd."],
+  ["MOTILALOFS","Motilal Oswal Financial Services Ltd."],
+  ["MPHASIS","MphasiS Ltd."],
+  ["MRPL","Mangalore Refinery & Petrochemicals Ltd."],
+  ["MRF","MRF Ltd."],
+  ["MSUMI","Motherson Sumi Wiring India Ltd."],
+  ["MUTHOOTFIN","Muthoot Finance Ltd."],
+  ["NAM-INDIA","Nippon Life India Asset Management Ltd."],
+  ["NAUKRI","Info Edge (India) Ltd."],
+  ["NATCOPHARM","NATCO Pharma Ltd."],
+  ["NAVA","Nava Ltd."],
+  ["NAVINFLUOR","Navin Fluorine International Ltd."],
+  ["NBCC","NBCC (India) Ltd."],
+  ["NCC","NCC Ltd."],
+  ["NESTLEIND","Nestle India Ltd."],
+  ["NETWEB","Netweb Technologies India Ltd."],
+  ["NEULANDLAB","Neuland Laboratories Ltd."],
+  ["NEWGEN","Newgen Software Technologies Ltd."],
+  ["NH","Narayana Hrudayalaya Ltd."],
+  ["NHPC","NHPC Ltd."],
+  ["NIACL","The New India Assurance Company Ltd."],
+  ["NIVABUPA","Niva Bupa Health Insurance Company Ltd."],
+  ["NLCINDIA","NLC India Ltd."],
+  ["NMDC","NMDC Ltd."],
+  ["NSLNISP","NMDC Steel Ltd."],
+  ["NTPC","NTPC Ltd."],
+  ["NTPCGREEN","NTPC Green Energy Ltd."],
+  ["NUVAMA","Nuvama Wealth Management Ltd."],
+  ["NUVOCO","Nuvoco Vistas Corporation Ltd."],
+  ["NYKAA","FSN E-Commerce Ventures Ltd."],
+  ["OBEROIRLTY","Oberoi Realty Ltd."],
+  ["OFSS","Oracle Financial Services Software Ltd."],
+  ["OLAELEC","Ola Electric Mobility Ltd."],
+  ["OLECTRA","Olectra Greentech Ltd."],
+  ["OIL","Oil India Ltd."],
+  ["ONGC","Oil & Natural Gas Corporation Ltd."],
+  ["ONESOURCE","Onesource Specialty Pharma Ltd."],
+  ["PAYTM","One 97 Communications Ltd."],
+  ["PAGEIND","Page Industries Ltd."],
+  ["PARADEEP","Paradeep Phosphates Ltd."],
+  ["PATANJALI","Patanjali Foods Ltd."],
+  ["PCBL","PCBL Chemical Ltd."],
+  ["PERSISTENT","Persistent Systems Ltd."],
+  ["PETRONET","Petronet LNG Ltd."],
+  ["PFIZER","Pfizer Ltd."],
+  ["PFOCUS","Prime Focus Ltd."],
+  ["PGEL","PG Electroplast Ltd."],
+  ["PHOENIXLTD","Phoenix Mills Ltd."],
+  ["PIIND","PI Industries Ltd."],
+  ["PIDILITIND","Pidilite Industries Ltd."],
+  ["PINELABS","Pine Labs Ltd."],
+  ["PIRAMALFIN","Piramal Finance Ltd."],
+  ["PNB","Punjab National Bank"],
+  ["PNBHOUSING","PNB Housing Finance Ltd."],
+  ["POLICYBZR","PB Fintech Ltd."],
+  ["POLYMED","Poly Medicure Ltd."],
+  ["POLYCAB","Polycab India Ltd."],
+  ["POONAWALLA","Poonawalla Fincorp Ltd."],
+  ["POWERINDIA","Hitachi Energy India Ltd."],
+  ["POWERGRID","Power Grid Corporation of India Ltd."],
+  ["PFC","Power Finance Corporation Ltd."],
+  ["PPLPHARMA","Piramal Pharma Ltd."],
+  ["PREMIERENE","Premier Energies Ltd."],
+  ["PRESTIGE","Prestige Estates Projects Ltd."],
+  ["PTCIL","PTC Industries Ltd."],
+  ["PVRINOX","PVR INOX Ltd."],
+  ["PWL","Physicswallah Ltd."],
+  ["RADICO","Radico Khaitan Ltd"],
+  ["RAINBOW","Rainbow Childrens Medicare Ltd."],
+  ["RAMCOCEM","The Ramco Cements Ltd."],
+  ["RBLBANK","RBL Bank Ltd."],
+  ["RECLTD","REC Ltd."],
+  ["REDINGTON","Redington Ltd."],
+  ["RELIANCE","Reliance Industries Ltd."],
+  ["RHIM","RHI Magnesita India Ltd."],
+  ["RITES","RITES Ltd."],
+  ["RKFORGE","Ramkrishna Forgings Ltd."],
+  ["RPOWER","Reliance Power Ltd."],
+  ["RRKABEL","R R Kabel Ltd."],
+  ["RVNL","Rail Vikas Nigam Ltd."],
+  ["SAIFLLIFE","Sai Life Sciences Ltd."],
+  ["SAIL","Steel Authority of India Ltd."],
+  ["SAREGAMA","Saregama India Ltd."],
+  ["SARDAEN","Sarda Energy and Minerals Ltd."],
+  ["SAGILITY","Sagility Ltd."],
+  ["SBIN","State Bank of India"],
+  ["SBICARD","SBI Cards and Payment Services Ltd."],
+  ["SBILIFE","SBI Life Insurance Company Ltd."],
+  ["SBFC","SBFC Finance Ltd."],
+  ["SCHAEFFLER","Schaeffler India Ltd."],
+  ["SCHNEIDER","Schneider Electric Infrastructure Ltd."],
+  ["SCI","Shipping Corporation of India Ltd."],
+  ["SHREECEM","Shree Cement Ltd."],
+  ["SHRIRAMFIN","Shriram Finance Ltd."],
+  ["SHYAMMETL","Shyam Metalics and Energy Ltd."],
+  ["SIEMENS","Siemens Ltd."],
+  ["SIGNATURE","Signatureglobal (India) Ltd."],
+  ["SJVN","SJVN Ltd."],
+  ["SOBHA","Sobha Ltd."],
+  ["SOLARINDS","Solar Industries India Ltd."],
+  ["SONACOMS","Sona BLW Precision Forgings Ltd."],
+  ["SONATSOFTW","Sonata Software Ltd."],
+  ["SRF","SRF Ltd."],
+  ["STARHEALTH","Star Health and Allied Insurance Company Ltd."],
+  ["SUMICHEM","Sumitomo Chemical India Ltd."],
+  ["SUNPHARMA","Sun Pharmaceutical Industries Ltd."],
+  ["SUNTV","Sun TV Network Ltd."],
+  ["SUNDARMFIN","Sundaram Finance Ltd."],
+  ["SUPREMEIND","Supreme Industries Ltd."],
+  ["SPLPETRO","Supreme Petrochem Ltd."],
+  ["SUZLON","Suzlon Energy Ltd."],
+  ["SWANCORP","Swan Corp Ltd."],
+  ["SWIGGY","Swiggy Ltd."],
+  ["SYNGENE","Syngene International Ltd."],
+  ["SYRMA","Syrma SGS Technology Ltd."],
+  ["TATACOMM","Tata Communications Ltd."],
+  ["TATACAP","Tata Capital Ltd."],
+  ["TATACHEM","Tata Chemicals Ltd."],
+  ["TATAINVEST","Tata Investment Corporation Ltd."],
+  ["TATASTEEL","Tata Steel Ltd."],
+  ["TATATECH","Tata Technologies Ltd."],
+  ["TATACONSUM","Tata Consumer Products Ltd."],
+  ["TATAELXSI","Tata Elxsi Ltd."],
+  ["TATAPOWER","Tata Power Co. Ltd."],
+  ["TATAMOTORS","Tata Motors Ltd."],
+  ["TCS","Tata Consultancy Services Ltd."],
+  ["TECHM","Tech Mahindra Ltd."],
+  ["TECHNOE","Techno Electric & Engineering Company Ltd."],
+  ["TEGA","Tega Industries Ltd."],
+  ["TEJASNET","Tejas Networks Ltd."],
+  ["TENNIND","Tenneco Clean Air India Ltd."],
+  ["THELEELA","Leela Palaces Hotels & Resorts Ltd."],
+  ["THERMAX","Thermax Ltd."],
+  ["TIINDIA","Tube Investments of India Ltd."],
+  ["TIMKEN","Timken India Ltd."],
+  ["TITAN","Titan Company Ltd."],
+  ["TITAGARH","Titagarh Rail Systems Ltd."],
+  ["TORNTPHARM","Torrent Pharmaceuticals Ltd."],
+  ["TORNTPOWER","Torrent Power Ltd."],
+  ["TTML","Tata Teleservices (Maharashtra) Ltd."],
+  ["TRAVELFOOD","Travel Food Services Ltd."],
+  ["TRENT","Trent Ltd."],
+  ["TRIDENT","Trident Ltd."],
+  ["TRITURBINE","Triveni Turbine Ltd."],
+  ["TVSMOTOR","TVS Motor Company Ltd."],
+  ["UCOBANK","UCO Bank"],
+  ["UNOMINDA","UNO Minda Ltd."],
+  ["UPL","UPL Ltd."],
+  ["USHAMART","Usha Martin Ltd."],
+  ["UTIAMC","UTI Asset Management Company Ltd."],
+  ["ULTRACEMCO","UltraTech Cement Ltd."],
+  ["UNITDSPR","United Spirits Ltd."],
+  ["UNIONBANK","Union Bank of India"],
+  ["VEDL","Vedanta Ltd."],
+  ["VBL","Varun Beverages Ltd."],
+  ["VTL","Vardhman Textiles Ltd."],
+  ["VIJAYA","Vijaya Diagnostic Centre Ltd."],
+  ["VMM","Vishal Mega Mart Ltd."],
+  ["VOLTAS","Voltas Ltd."],
+  ["WAAREEENER","Waaree Energies Ltd."],
+  ["WELCORP","Welspun Corp Ltd."],
+  ["WELSPUNLIV","Welspun Living Ltd."],
+  ["WHIRLPOOL","Whirlpool of India Ltd."],
+  ["WIPRO","Wipro Ltd."],
+  ["WOCKPHARMA","Wockhardt Ltd."],
+  ["YESBANK","Yes Bank Ltd."],
+  ["ZEEL","Zee Entertainment Enterprises Ltd."],
+  ["ZENTEC","Zen Technologies Ltd."],
+  ["ZENSARTECH","Zensar Technolgies Ltd."],
+  ["ZFDYUSLIFE","Zydus Lifesciences Ltd."],
+  ["ZYDUSWELL","Zydus Wellness Ltd."],
+  ["ECLERX","eClerx Services Ltd."]
+];
+
+
 /* ============================================================
    ICONS
    Small hand-built Lucide-style inline SVGs (stroke-based, 24x24
@@ -4931,14 +5412,17 @@ function toggleWatchlistFromHolding(type, name, symbol) {
 }
 
 // Used by the Watchlist page's own "+ Add" row — the name may not
-// match any current holding at all.
-function addFreeformWatchlistItem(type, rawName) {
+// match any current holding at all. `symbolOverride` is passed when
+// the name came from picking a typeahead suggestion (see
+// setupWatchlistAddRow() below) rather than being typed free-hand.
+function addFreeformWatchlistItem(type, rawName, symbolOverride) {
   const name = (rawName || "").trim();
   if (!name) return;
   if (isWatchlisted(type, name)) return;
   if (!state.watchlist) state.watchlist = [];
   const holding = watchlistFindHoldingRow(type, name);
-  state.watchlist.push({ id: uid(), type, name, symbol: holding ? (holding.symbol || "") : "", note: "", addedAt: new Date().toISOString() });
+  const symbol = symbolOverride || (holding ? (holding.symbol || "") : "");
+  state.watchlist.push({ id: uid(), type, name, symbol, note: "", addedAt: new Date().toISOString() });
   saveState();
   renderWatchlist();
   if (type === "stock") { renderEquity(); renderStockAnalysis(); }
@@ -5029,20 +5513,115 @@ function renderWatchlist() {
   renderWatchlistSection("mf", "wlMfTableBody", 5);
 }
 
-function setupWatchlistAddRow(inputId, btnId, type) {
+// Suggestion pool for the Stock "add" box: the bundled NIFTY 500 list
+// (see NSE_STOCK_SUGGESTIONS above) plus every name already in your
+// Equity holdings (so a holding outside the NIFTY 500 — a smaller
+// stock, say — is still suggestable). Deduped by name, first match
+// wins, so your own holding's exact spelling/symbol takes priority
+// over the bundled list when both exist.
+function getStockSuggestionPool() {
+  const seen = new Map();
+  state.equity.forEach(row => {
+    const key = (row.name || "").trim().toUpperCase();
+    if (key && !seen.has(key)) seen.set(key, { name: row.name.trim(), symbol: row.symbol || "" });
+  });
+  NSE_STOCK_SUGGESTIONS.forEach(([symbol, name]) => {
+    const key = name.trim().toUpperCase();
+    if (!seen.has(key)) seen.set(key, { name, symbol });
+  });
+  return [...seen.values()];
+}
+
+// Mutual Funds have no bundled universe here (AMFI's full scheme list
+// runs into the thousands of variants) — suggestions are limited to
+// funds you already hold, which still gets the "exact name match"
+// benefit described on addFreeformWatchlistItem() above.
+function getFundSuggestionPool() {
+  const seen = new Map();
+  state.mf.forEach(row => {
+    const key = (row.name || "").trim().toUpperCase();
+    if (key && !seen.has(key)) seen.set(key, { name: row.name.trim(), symbol: "" });
+  });
+  return [...seen.values()];
+}
+
+// Wires one Watchlist "add" box: as-you-type suggestions (from
+// poolFn(), matched by name or symbol) rendered into `${inputId}Suggest`,
+// full keyboard support (Up/Down/Enter/Escape), and the existing
+// type-and-click-Add / press-Enter flow for anything not in the list —
+// picking a suggestion adds it immediately with its canonical
+// name+symbol rather than just filling the box.
+function setupWatchlistAddRow(inputId, btnId, type, poolFn) {
   const input = document.getElementById(inputId);
   const btn = document.getElementById(btnId);
+  const list = document.getElementById(inputId + "Suggest");
   if (!input || !btn) return;
+
+  let items = [];
+  let activeIdx = -1;
+
+  function closeSuggestions() {
+    if (list) { list.classList.remove("open"); list.innerHTML = ""; }
+    items = [];
+    activeIdx = -1;
+  }
+
+  function pick(item) {
+    addFreeformWatchlistItem(type, item.name, item.symbol);
+    input.value = "";
+    closeSuggestions();
+    input.focus();
+  }
+
+  function updateHighlight() {
+    if (!list) return;
+    list.querySelectorAll(".wl-suggest-item").forEach((el, i) => el.classList.toggle("active", i === activeIdx));
+  }
+
+  function renderSuggestions(query) {
+    if (!list) return;
+    const pool = poolFn();
+    const q = query.toLowerCase();
+    items = pool.filter(m => m.name.toLowerCase().includes(q) || (m.symbol && m.symbol.toLowerCase().includes(q))).slice(0, 8);
+    activeIdx = -1;
+    if (items.length === 0) { closeSuggestions(); return; }
+    list.innerHTML = items.map((m, i) =>
+      `<div class="wl-suggest-item" data-idx="${i}"><span class="wl-suggest-name">${escapeAttr(m.name)}</span>${m.symbol ? `<span class="wl-suggest-symbol">${escapeAttr(m.symbol)}</span>` : ""}</div>`
+    ).join("");
+    list.classList.add("open");
+    list.querySelectorAll(".wl-suggest-item").forEach(el => {
+      // mousedown (not click) fires before the input's blur handler,
+      // so the suggestion is still there to read when the tap lands.
+      el.addEventListener("mousedown", (e) => { e.preventDefault(); pick(items[Number(el.dataset.idx)]); });
+    });
+  }
+
   const submit = () => {
     if (!input.value.trim()) return;
     addFreeformWatchlistItem(type, input.value);
     input.value = "";
+    closeSuggestions();
   };
+
+  input.addEventListener("input", () => {
+    const q = input.value.trim();
+    if (q.length < 2) { closeSuggestions(); return; }
+    renderSuggestions(q);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (list && list.classList.contains("open")) {
+      if (e.key === "ArrowDown") { e.preventDefault(); activeIdx = Math.min(activeIdx + 1, items.length - 1); updateHighlight(); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); activeIdx = Math.max(activeIdx - 1, 0); updateHighlight(); return; }
+      if (e.key === "Escape") { closeSuggestions(); return; }
+      if (e.key === "Enter" && activeIdx >= 0) { e.preventDefault(); pick(items[activeIdx]); return; }
+    }
+    if (e.key === "Enter") submit();
+  });
+  input.addEventListener("blur", () => setTimeout(closeSuggestions, 120));
   btn.addEventListener("click", submit);
-  input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
 }
-setupWatchlistAddRow("wlAddStockName", "wlAddStockBtn", "stock");
-setupWatchlistAddRow("wlAddMfName", "wlAddMfBtn", "mf");
+setupWatchlistAddRow("wlAddStockName", "wlAddStockBtn", "stock", getStockSuggestionPool);
+setupWatchlistAddRow("wlAddMfName", "wlAddMfBtn", "mf", getFundSuggestionPool);
 
 // Portfolio Health — a new composite score (not present before this
 // redesign), built entirely from numbers the app already computes
