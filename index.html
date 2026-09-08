@@ -930,6 +930,18 @@
     .rb-grid{grid-template-columns:1fr;grid-template-areas:"attn" "overall" "stock" "mf";}
   }
 
+  /* ---------- Watchlist ---------- */
+  .wl-card{margin-bottom:18px;}
+  .wl-add-row{display:flex;gap:8px;margin-bottom:14px;}
+  .wl-add-row input{
+    flex:1 1 auto;min-width:0;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;
+    padding:8px 12px;font-family:var(--font-body);font-size:13px;color:var(--text);
+  }
+  .wl-add-row input:focus{border-color:var(--gold);outline:none;background:var(--surface);}
+  .wl-add-row .btn{flex:none;}
+  .wl-return{font-family:var(--font-mono);font-size:10px;margin-top:2px;}
+  #panel-watchlist table.data-table{min-width:640px;}
+
   /* Target-vs-current comparison row — the one visual pattern used
      consistently across Overall Portfolio, Stock Rebalancing and
      Mutual Fund Rebalancing, per the redesign brief ("use the same
@@ -2263,7 +2275,7 @@
 
       <div class="sidebar-divider"></div>
       <button class="sidebar-nav-item tab-btn" id="navRebalance" data-tab="rebalance"><span class="nav-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></svg></span><span class="nav-label">Rebalance</span></button>
-      <button class="sidebar-nav-item" id="navOpportunities"><span class="nav-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg></span><span class="nav-label">Opportunities</span></button>
+      <button class="sidebar-nav-item tab-btn" id="navWatchlist" data-tab="watchlist"><span class="nav-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"/></svg></span><span class="nav-label">Watchlist</span></button>
 
       <div class="sidebar-divider"></div>
       <button class="sidebar-nav-item" id="btnSettings"><span class="nav-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg></span><span class="nav-label">Settings</span></button>
@@ -3190,6 +3202,69 @@
         </ol>
       </div>
     </details>
+  </section>
+
+  <section class="panel" id="panel-watchlist">
+    <h2 class="section-title">Watchlist</h2>
+    <p class="section-sub">Stocks and mutual funds you're keeping an eye on — owned or not — with your own notes on each. Star a row on the Equity, Mutual Funds or Stock Analysis tab to add it here, or add a name directly below.</p>
+
+    <div class="card rb-section wl-card">
+      <h3>Stocks <span class="hint" id="wlStockCount"></span></h3>
+      <div class="wl-add-row">
+        <input type="text" id="wlAddStockName" placeholder="Stock name (e.g. TCS, HDFC Bank)...">
+        <button type="button" class="btn btn-sm" id="wlAddStockBtn">+ Add to Watchlist</button>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table wl-table">
+          <colgroup>
+            <col style="width:220px">
+            <col style="width:150px">
+            <col>
+            <col style="width:110px">
+            <col style="width:44px">
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="left sticky-col">Stock</th>
+              <th>Price / Chg</th>
+              <th class="left">Notes</th>
+              <th class="left">Added</th>
+              <th class="row-actions">—</th>
+            </tr>
+          </thead>
+          <tbody id="wlStockTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card rb-section wl-card">
+      <h3>Mutual Funds <span class="hint" id="wlMfCount"></span></h3>
+      <div class="wl-add-row">
+        <input type="text" id="wlAddMfName" placeholder="Fund name...">
+        <button type="button" class="btn btn-sm" id="wlAddMfBtn">+ Add to Watchlist</button>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table wl-table">
+          <colgroup>
+            <col style="width:220px">
+            <col style="width:150px">
+            <col>
+            <col style="width:110px">
+            <col style="width:44px">
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="left sticky-col">Fund</th>
+              <th>NAV / Return</th>
+              <th class="left">Notes</th>
+              <th class="left">Added</th>
+              <th class="row-actions">—</th>
+            </tr>
+          </thead>
+          <tbody id="wlMfTableBody"></tbody>
+        </table>
+      </div>
+    </div>
   </section>
 
     </main>

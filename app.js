@@ -252,6 +252,14 @@ function blankState() {
     debt: [],
     mf: [],
     gold: [],
+    // Watchlist tab: a personal shortlist of stocks/mutual funds, each
+    // { id, type: "stock"|"mf", name, symbol, note, addedAt }. Items
+    // are matched to a live Equity/MF holding by name at render time
+    // (see watchlistFindHoldingRow()) rather than stored by row id, so
+    // this never goes stale if a holding is renamed or removed — it
+    // just shows "Not currently held" until/unless the name matches
+    // again. Can include names you don't currently hold at all.
+    watchlist: [],
     // Stock Analysis tab: one row per imported Screener export, keyed
     // for lookup by `symbol` (uppercased at import time). Values are
     // cleaned to plain numbers where possible (currency/comma/%
@@ -553,12 +561,23 @@ const ICON_PATHS = {
   "sparkles": '<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/>',
   "arrow-left-right": '<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>',
   "target": '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
-  "settings-2": '<path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>'
+  "settings-2": '<path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>',
+  "star": '<path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"/>'
 };
 function icon(name, size, cls) {
   size = size || 16;
   const body = ICON_PATHS[name] || "";
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="${cls || ""}" style="vertical-align:-3px">${body}</svg>`;
+}
+
+// The Watchlist star toggle (Equity/Mutual Funds/Stock Analysis rows)
+// needs a filled-vs-outline state the plain icon() helper doesn't
+// support (it always renders fill="none") — this is the one place in
+// the app that needs that, so it's kept separate rather than adding a
+// "filled" param to every icon() call site.
+function starIcon(filled, size) {
+  size = size || 16;
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="${filled ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px">${ICON_PATHS.star}</svg>`;
 }
 
 // Rounds a numeric field to 2 decimal places FOR DISPLAY ONLY (e.g. an
@@ -875,6 +894,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     if (btn.dataset.tab === "insights") renderInsights();
     if (btn.dataset.tab === "stockanalysis") renderStockAnalysis();
     if (btn.dataset.tab === "rebalance") renderRebalance();
+    if (btn.dataset.tab === "watchlist") renderWatchlist();
   });
 });
 
@@ -953,17 +973,11 @@ document.querySelectorAll(".mobile-bottom-nav-item[data-tab]").forEach(btn => {
 });
 document.getElementById("mobileMoreBtn")?.addEventListener("click", () => setSidebarOpen(true));
 
-// Opportunities sidebar entry — a real, existing feature (Intelligent
-// Insights) surfaced as a top-level nav item. Rebalance used to be a
-// shortcut into the ideal-% editor modal the same way, but is now a
-// full tab in its own right — #navRebalance carries the .tab-btn class
-// so it's wired up by the generic tab-switch handler above instead
-// (panel switch + renderRebalance(), same as Dashboard/Insights/etc.).
-document.getElementById("navOpportunities")?.addEventListener("click", () => {
-  setSidebarOpen(false);
-  goToTab("stockanalysis");
-  setTimeout(() => document.getElementById("intelligentInsightsCard")?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
-});
+// Watchlist sidebar entry (formerly "Opportunities", which just
+// jumped into Stock Analysis's Intelligent Insights) is now a full
+// tab in its own right, same as Rebalance — #navWatchlist carries the
+// .tab-btn class so it's wired up by the generic tab-switch handler
+// above instead (panel switch + renderWatchlist()).
 
 // Rebalance compare-row tooltip (target/current bars) — tap-to-toggle
 // so the invested/target/remaining breakdown works on touch, not just
@@ -1576,6 +1590,7 @@ function openEqRowMenu(btn, rowId) {
   if (!row) return;
   eqMenuOpenRowId = rowId;
 
+  const watched = isWatchlisted("stock", row.name);
   const menu = document.createElement("div");
   menu.id = "eqRowMenu";
   menu.className = "mf-menu-dropdown open";
@@ -1583,6 +1598,7 @@ function openEqRowMenu(btn, rowId) {
     <button type="button" class="mf-menu-item" data-act="view">${icon("eye", 15)} View Details</button>
     <button type="button" class="mf-menu-item" data-act="transactions">${icon("list", 15)} View Transactions</button>
     <button type="button" class="mf-menu-item" data-act="sector">${icon("edit-3", 15)} Edit Sector</button>
+    <button type="button" class="mf-menu-item" data-act="watchlist">${starIcon(watched, 15)} ${watched ? "Remove from Watchlist" : "Add to Watchlist"}</button>
     <button type="button" class="mf-menu-item danger" data-act="remove">${icon("trash-2", 15)} Remove Holding</button>
   `;
   document.body.appendChild(menu);
@@ -1602,6 +1618,10 @@ function openEqRowMenu(btn, rowId) {
   menu.querySelector('[data-act="view"]').addEventListener("click", () => { closeEqRowMenu(); openEqDrawer(rowId); });
   menu.querySelector('[data-act="transactions"]').addEventListener("click", () => { closeEqRowMenu(); openEqTransactionsModal(rowId); });
   menu.querySelector('[data-act="sector"]').addEventListener("click", () => { closeEqRowMenu(); openEqDrawer(rowId, { focusSector: true }); });
+  menu.querySelector('[data-act="watchlist"]').addEventListener("click", () => {
+    closeEqRowMenu();
+    toggleWatchlistFromHolding("stock", row.name, row.symbol);
+  });
   menu.querySelector('[data-act="remove"]').addEventListener("click", () => {
     closeEqRowMenu();
     eqRemoveHolding(rowId);
@@ -3459,6 +3479,7 @@ function openMFRowMenu(btn, rowId) {
   if (!row) return;
   mfMenuOpenRowId = rowId;
 
+  const watched = isWatchlisted("mf", row.name);
   const menu = document.createElement("div");
   menu.id = "mfRowMenu";
   menu.className = "mf-menu-dropdown open";
@@ -3466,6 +3487,7 @@ function openMFRowMenu(btn, rowId) {
     <button type="button" class="mf-menu-item" data-act="view">${icon("eye", 15)} View Details</button>
     <button type="button" class="mf-menu-item" data-act="transactions">${icon("list", 15)} View Transactions</button>
     <button type="button" class="mf-menu-item" data-act="remarks">${icon("edit-3", 15)} Edit Remarks</button>
+    <button type="button" class="mf-menu-item" data-act="watchlist">${starIcon(watched, 15)} ${watched ? "Remove from Watchlist" : "Add to Watchlist"}</button>
     <button type="button" class="mf-menu-item danger" data-act="remove">${icon("trash-2", 15)} Remove Holding</button>
   `;
   document.body.appendChild(menu);
@@ -3485,6 +3507,10 @@ function openMFRowMenu(btn, rowId) {
   menu.querySelector('[data-act="view"]').addEventListener("click", () => { closeMFRowMenu(); openMFDrawer(rowId); });
   menu.querySelector('[data-act="transactions"]').addEventListener("click", () => { closeMFRowMenu(); openMFTransactionsModal(rowId); });
   menu.querySelector('[data-act="remarks"]').addEventListener("click", () => { closeMFRowMenu(); openMFDrawer(rowId, { focusRemarks: true }); });
+  menu.querySelector('[data-act="watchlist"]').addEventListener("click", () => {
+    closeMFRowMenu();
+    toggleWatchlistFromHolding("mf", row.name, row.symbol);
+  });
   menu.querySelector('[data-act="remove"]').addEventListener("click", () => {
     closeMFRowMenu();
     mfRemoveHolding(rowId);
@@ -4857,6 +4883,166 @@ function renderRebalance() {
 
   renderRebalancePlanContent();
 }
+
+/* ============================================================
+   WATCHLIST
+   A personal shortlist of stocks and mutual funds — added from a
+   star toggle on the Equity, Mutual Funds or Stock Analysis rows
+   (state.watchlist entries matching a current holding by name stay
+   live-synced with that holding's price/return, since Equity/MF
+   holdings are import-only and this app has no other way to look up
+   a live quote), or typed in directly here for something not
+   currently held (e.g. a stock you're considering buying — those
+   just show "Not currently held" instead of price/return until you
+   actually hold it, at which point they auto-link by name). Each
+   entry carries a freeform note. Matching is always by trimmed,
+   case-insensitive name — no stored row-id link — so a renamed or
+   removed holding can never leave a stale reference behind.
+   ============================================================ */
+
+function watchlistFindHoldingRow(type, name) {
+  const key = (name || "").trim().toUpperCase();
+  if (!key) return null;
+  const arr = type === "mf" ? state.mf : state.equity;
+  return arr.find(r => (r.name || "").trim().toUpperCase() === key) || null;
+}
+
+function isWatchlisted(type, name) {
+  const key = (name || "").trim().toUpperCase();
+  return (state.watchlist || []).some(w => w.type === type && w.name.trim().toUpperCase() === key);
+}
+
+// Used by the star toggle on Equity/Mutual Funds/Stock Analysis rows —
+// those always refer to a holding that already exists, so name +
+// symbol are known.
+function toggleWatchlistFromHolding(type, name, symbol) {
+  if (!state.watchlist) state.watchlist = [];
+  const key = (name || "").trim().toUpperCase();
+  const idx = state.watchlist.findIndex(w => w.type === type && w.name.trim().toUpperCase() === key);
+  if (idx >= 0) {
+    state.watchlist.splice(idx, 1);
+  } else {
+    state.watchlist.push({ id: uid(), type, name: (name || "").trim(), symbol: symbol || "", note: "", addedAt: new Date().toISOString() });
+  }
+  saveState();
+  renderWatchlist();
+  if (type === "stock") { renderEquity(); renderStockAnalysis(); }
+  else { renderMF(); }
+}
+
+// Used by the Watchlist page's own "+ Add" row — the name may not
+// match any current holding at all.
+function addFreeformWatchlistItem(type, rawName) {
+  const name = (rawName || "").trim();
+  if (!name) return;
+  if (isWatchlisted(type, name)) return;
+  if (!state.watchlist) state.watchlist = [];
+  const holding = watchlistFindHoldingRow(type, name);
+  state.watchlist.push({ id: uid(), type, name, symbol: holding ? (holding.symbol || "") : "", note: "", addedAt: new Date().toISOString() });
+  saveState();
+  renderWatchlist();
+  if (type === "stock") { renderEquity(); renderStockAnalysis(); }
+  else { renderMF(); }
+}
+
+function removeWatchlistItem(id) {
+  if (!state.watchlist) return;
+  const item = state.watchlist.find(w => w.id === id);
+  state.watchlist = state.watchlist.filter(w => w.id !== id);
+  saveState();
+  renderWatchlist();
+  if (item && item.type === "stock") { renderEquity(); renderStockAnalysis(); }
+  else if (item) { renderMF(); }
+}
+
+function updateWatchlistNote(id, note) {
+  const item = (state.watchlist || []).find(w => w.id === id);
+  if (!item) return;
+  item.note = note;
+  saveState();
+}
+
+// The little price/return block shown per watchlist row when the
+// item currently matches a real holding — reuses the exact same
+// derived-value functions and Day Change chip markup as the Equity/
+// Mutual Funds tables so the numbers are never computed twice.
+function watchlistPriceBlockHTML(type, name) {
+  const row = watchlistFindHoldingRow(type, name);
+  if (!row) return `<span class="muted">Not currently held</span>`;
+  if (type === "stock") {
+    const d = equityDerived(row);
+    return `
+      <div class="eq-ltp-val">${row.ltp ? fmtNum(row.ltp) : "—"}</div>
+      ${renderEquityDayChangeCellHTML(row)}
+      <div class="wl-return ${plClass(d.pl)}">${fmtPct(d.plPct)} return</div>
+    `;
+  }
+  const d = mfDerived(row);
+  return `
+    <div class="eq-ltp-val">${row.unitPrice ? fmtNum(row.unitPrice) : "—"}</div>
+    <div class="wl-return ${plClass(d.pl)}">${fmtPct(d.plPct)} return</div>
+  `;
+}
+
+function watchlistRowHTML(item) {
+  const addedLabel = item.addedAt ? new Date(item.addedAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "—";
+  return `
+    <tr data-id="${item.id}">
+      <td class="left sticky-col" data-label="${item.type === "mf" ? "Fund" : "Stock"}">
+        <div class="mf-fund-name" title="${escapeAttr(item.name)}">${escapeAttr(item.name)}</div>
+      </td>
+      <td class="wl-price-cell" data-label="Price">${watchlistPriceBlockHTML(item.type, item.name)}</td>
+      <td class="left" data-label="Notes"><input type="text" value="${escapeAttr(item.note || "")}" data-field="note" placeholder="Add a note..."></td>
+      <td class="left" data-label="Added">${addedLabel}</td>
+      <td class="row-actions">
+        <button type="button" class="mf-menu-btn wl-remove-btn" title="Remove from Watchlist" aria-label="Remove from Watchlist">${icon("trash-2", 15)}</button>
+      </td>
+    </tr>
+  `;
+}
+
+function renderWatchlistSection(type, tbodyId, emptyColspan) {
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody) return;
+  const items = (state.watchlist || []).filter(w => w.type === type)
+    .sort((a, b) => new Date(b.addedAt || 0) - new Date(a.addedAt || 0));
+  if (items.length === 0) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="${emptyColspan}">${type === "mf" ? "No mutual funds shortlisted yet — star one on the Mutual Funds tab, or add a name above." : "No stocks shortlisted yet — star one on the Equity or Stock Analysis tab, or add a name above."}</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = items.map(watchlistRowHTML).join("");
+  tbody.querySelectorAll("tr[data-id]").forEach(tr => {
+    const id = tr.dataset.id;
+    tr.querySelector('[data-field="note"]').addEventListener("change", (e) => updateWatchlistNote(id, e.target.value));
+    tr.querySelector(".wl-remove-btn").addEventListener("click", () => removeWatchlistItem(id));
+  });
+}
+
+function renderWatchlist() {
+  if (!document.getElementById("panel-watchlist")) return;
+  const all = state.watchlist || [];
+  const stockCountEl = document.getElementById("wlStockCount");
+  if (stockCountEl) stockCountEl.textContent = `(${all.filter(w => w.type === "stock").length})`;
+  const mfCountEl = document.getElementById("wlMfCount");
+  if (mfCountEl) mfCountEl.textContent = `(${all.filter(w => w.type === "mf").length})`;
+  renderWatchlistSection("stock", "wlStockTableBody", 5);
+  renderWatchlistSection("mf", "wlMfTableBody", 5);
+}
+
+function setupWatchlistAddRow(inputId, btnId, type) {
+  const input = document.getElementById(inputId);
+  const btn = document.getElementById(btnId);
+  if (!input || !btn) return;
+  const submit = () => {
+    if (!input.value.trim()) return;
+    addFreeformWatchlistItem(type, input.value);
+    input.value = "";
+  };
+  btn.addEventListener("click", submit);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+}
+setupWatchlistAddRow("wlAddStockName", "wlAddStockBtn", "stock");
+setupWatchlistAddRow("wlAddMfName", "wlAddMfBtn", "mf");
 
 // Portfolio Health — a new composite score (not present before this
 // redesign), built entirely from numbers the app already computes
@@ -7745,11 +7931,14 @@ function openSaRowMenu(btn, rowKey) {
   if (!rowKey) return;
   saMenuOpenRowId = rowKey;
 
+  const holdingRow = state.equity.find(r => (r.name || "").trim().toUpperCase() === rowKey);
+  const watched = isWatchlisted("stock", rowKey);
   const menu = document.createElement("div");
   menu.id = "saRowMenu";
   menu.className = "mf-menu-dropdown open";
   menu.innerHTML = `
     <button type="button" class="mf-menu-item" data-act="view">${icon("eye", 15)} View Details</button>
+    <button type="button" class="mf-menu-item" data-act="watchlist">${starIcon(watched, 15)} ${watched ? "Remove from Watchlist" : "Add to Watchlist"}</button>
     <button type="button" class="mf-menu-item danger" data-act="remove">${icon("trash-2", 15)} Remove from Stock Analysis</button>
   `;
   document.body.appendChild(menu);
@@ -7765,6 +7954,10 @@ function openSaRowMenu(btn, rowKey) {
   });
 
   menu.querySelector('[data-act="view"]').addEventListener("click", () => { closeSaRowMenu(); openSaDrawer(rowKey); });
+  menu.querySelector('[data-act="watchlist"]').addEventListener("click", () => {
+    closeSaRowMenu();
+    toggleWatchlistFromHolding("stock", holdingRow ? holdingRow.name : rowKey, holdingRow ? holdingRow.symbol : "");
+  });
   menu.querySelector('[data-act="remove"]').addEventListener("click", () => {
     closeSaRowMenu();
     // Preserves the exact same "hide from Stock Analysis without
@@ -10458,6 +10651,7 @@ function renderAll() {
   renderStockAnalysis();
   renderDashboard();
   renderRebalance();
+  renderWatchlist();
   const tag = document.getElementById("lastUpdatedTag");
   tag.textContent = state.lastSaved ? "Saved " + new Date(state.lastSaved).toLocaleTimeString() : "Not saved yet";
 }
