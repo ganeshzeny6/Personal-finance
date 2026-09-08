@@ -6465,7 +6465,6 @@ function renderDashboard() {
 
   renderDashHeaderBits();
   renderDashAttention();
-  renderDashHealth();
   renderDashAllocation();
   renderDashOpportunities();
   renderDashPerformers();

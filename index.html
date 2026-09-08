@@ -554,21 +554,6 @@
   .attn-card .attn-filter-wrap{display:none;}
   .attn-card.expanded .attn-filter-wrap{display:inline-flex;}
 
-  /* ---------- Portfolio health ---------- */
-  .dash-health-score-row{display:flex;align-items:baseline;gap:8px;margin-bottom:14px;}
-  .dash-health-score{font-family:var(--font-mono);font-size:28px;font-weight:600;color:var(--text);}
-  .dash-health-score.good{color:var(--positive);}
-  .dash-health-score.fair{color:var(--warning);}
-  .dash-health-score.poor{color:var(--negative);}
-  .dash-health-label{font-size:12px;color:var(--text-muted);}
-  .dash-health-row{display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-bottom:3px;}
-  .dash-health-track{height:5px;background:var(--surface-2);border-radius:3px;margin-bottom:9px;overflow:hidden;}
-  .dash-health-fill{height:100%;border-radius:3px;}
-  .dash-health-fill.good{background:var(--positive);}
-  .dash-health-fill.fair{background:var(--warning);}
-  .dash-health-fill.poor{background:var(--negative);}
-  .dash-health-note{font-size:11.5px;color:var(--text-faint);margin-top:6px;line-height:1.5;}
-
   /* ---------- Asset allocation bars (still used by Debt's
      per-category breakdown — Dashboard's own allocation card below
      uses the donut+table design instead) ---------- */
@@ -2546,11 +2531,6 @@
       </div>
     </div>
 
-    <div class="card dash-section">
-      <h3>Portfolio health</h3>
-      <div id="dashHealthBody"></div>
-    </div>
-
     <div class="dash-section card dash-perf-chart-card">
       <div class="dash-alloc-card-header">
         <h3>Portfolio performance <span class="hint">invested capital vs a Nifty 50 equivalent, using your real trade dates</span></h3>
@@ -2874,7 +2854,7 @@
 
     <div class="dash-section card">
       <h3>Debt health</h3>
-      <div class="debt-health-placeholder">Debt health scoring isn't implemented yet — once finalized, this will combine allocation, rate quality, diversification, liquidity spread and maturity concentration into a single score, the same way Portfolio Health works on the Dashboard.</div>
+      <div class="debt-health-placeholder">Debt health scoring isn't implemented yet — once finalized, this will combine allocation, rate quality, diversification, liquidity spread and maturity concentration into a single score.</div>
     </div>
 
     <details class="debt-classic-details" id="debtClassicTableDetails">
@@ -3421,6 +3401,6 @@
   </div>
 </div>
 
-<script src="app.js?v=2026-09-05-sa-redesign"></script>
+<script src="app.js?v=2026-09-08-alloc-redesign"></script>
 </body>
 </html>
