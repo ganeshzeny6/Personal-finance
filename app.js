@@ -5446,59 +5446,99 @@ function updateWatchlistNote(id, note) {
   saveState();
 }
 
-// The little price/return block shown per watchlist row when the
-// item currently matches a real holding — reuses the exact same
+// Card avatar for one watchlist item — reuses the exact same colored
+// initial-circle component as the Equity/Mutual Funds tables
+// (eqAvatarHTML()/mfAvatarHTML(), including the sector/category color
+// and logo-image fallback chain) when the item currently matches a
+// real holding, so it looks identical to that stock/fund everywhere
+// else in the app. An item with no matching holding gets the plain
+// "uncategorized" gray circle (mf-cat-7) — the same treatment any
+// holding without a sector/category gets — which doubles as a quiet
+// visual cue that it isn't live-tracked yet.
+function watchlistAvatarHTML(type, name) {
+  const row = watchlistFindHoldingRow(type, name);
+  if (row) return type === "stock" ? eqAvatarHTML(row) : mfAvatarHTML(row);
+  const initial = (name.trim().charAt(0) || "?").toUpperCase();
+  return `<div class="mf-avatar mf-cat-7">${escapeAttr(initial)}</div>`;
+}
+
+// The price/return line shown per watchlist card when the item
+// currently matches a real holding — reuses the exact same
 // derived-value functions and Day Change chip markup as the Equity/
 // Mutual Funds tables so the numbers are never computed twice.
 function watchlistPriceBlockHTML(type, name) {
   const row = watchlistFindHoldingRow(type, name);
-  if (!row) return `<span class="muted">Not currently held</span>`;
+  if (!row) return `<div class="wl-item-price"><span class="wl-not-held">Not currently held</span></div>`;
   if (type === "stock") {
     const d = equityDerived(row);
+    const chg = dayChangePct(row.ltp, row.prevClose);
+    const chgChip = chg === null ? "" : `<span class="dc-chip ${chg > 0 ? "pos" : chg < 0 ? "neg" : "muted"}">${chg > 0 ? "▲" : chg < 0 ? "▼" : "•"} ${chg >= 0 ? "+" : ""}${fmtNum(chg, 2)}%</span>`;
     return `
-      <div class="eq-ltp-val">${row.ltp ? fmtNum(row.ltp) : "—"}</div>
-      ${renderEquityDayChangeCellHTML(row)}
-      <div class="wl-return ${plClass(d.pl)}">${fmtPct(d.plPct)} return</div>
+      <div class="wl-item-price">
+        <span class="wl-price-val">${row.ltp ? fmtNum(row.ltp) : "—"}</span>
+        ${chgChip}
+        <span class="wl-return-badge ${plClass(d.pl)}">${d.pl >= 0 ? "+" : ""}${fmtPct(d.plPct)}</span>
+      </div>
     `;
   }
   const d = mfDerived(row);
   return `
-    <div class="eq-ltp-val">${row.unitPrice ? fmtNum(row.unitPrice) : "—"}</div>
-    <div class="wl-return ${plClass(d.pl)}">${fmtPct(d.plPct)} return</div>
+    <div class="wl-item-price">
+      <span class="wl-price-val">${row.unitPrice ? fmtNum(row.unitPrice) : "—"}</span>
+      <span class="wl-return-badge ${plClass(d.pl)}">${d.pl >= 0 ? "+" : ""}${fmtPct(d.plPct)}</span>
+    </div>
   `;
 }
 
-function watchlistRowHTML(item) {
+function watchlistCardHTML(item) {
   const addedLabel = item.addedAt ? new Date(item.addedAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "—";
+  const row = watchlistFindHoldingRow(item.type, item.name);
+  const subLine = row ? (item.type === "stock" ? (row.sector || "Stock") : (row.category || "Mutual Fund")) : "Not currently held";
   return `
-    <tr data-id="${item.id}">
-      <td class="left sticky-col" data-label="${item.type === "mf" ? "Fund" : "Stock"}">
-        <div class="mf-fund-name" title="${escapeAttr(item.name)}">${escapeAttr(item.name)}</div>
-      </td>
-      <td class="wl-price-cell" data-label="Price">${watchlistPriceBlockHTML(item.type, item.name)}</td>
-      <td class="left" data-label="Notes"><input type="text" value="${escapeAttr(item.note || "")}" data-field="note" placeholder="Add a note..."></td>
-      <td class="left" data-label="Added">${addedLabel}</td>
-      <td class="row-actions">
-        <button type="button" class="mf-menu-btn wl-remove-btn" title="Remove from Watchlist" aria-label="Remove from Watchlist">${icon("trash-2", 15)}</button>
-      </td>
-    </tr>
+    <div class="wl-item-card" data-id="${item.id}">
+      <div class="wl-item-top">
+        ${watchlistAvatarHTML(item.type, item.name)}
+        <div class="wl-item-titles">
+          <div class="wl-item-name" title="${escapeAttr(item.name)}">${escapeAttr(item.name)}</div>
+          <div class="wl-item-sub">${escapeAttr(subLine)}</div>
+        </div>
+        <button type="button" class="wl-item-remove" title="Remove from Watchlist" aria-label="Remove from Watchlist">${icon("trash-2", 15)}</button>
+      </div>
+      ${watchlistPriceBlockHTML(item.type, item.name)}
+      <div class="wl-item-notes">
+        <textarea rows="2" placeholder="Add a note..." data-field="note">${escapeAttr(item.note || "")}</textarea>
+      </div>
+      <div class="wl-item-added">Added ${addedLabel}</div>
+    </div>
   `;
 }
 
-function renderWatchlistSection(type, tbodyId, emptyColspan) {
-  const tbody = document.getElementById(tbodyId);
-  if (!tbody) return;
+function watchlistEmptyStateHTML(type) {
+  const label = type === "mf" ? "mutual funds" : "stocks";
+  const source = type === "mf" ? "Mutual Funds tab" : "Equity or Stock Analysis tab";
+  return `
+    <div class="wl-empty">
+      <div class="wl-empty-icon">${icon("star", 26)}</div>
+      <div class="wl-empty-title">No ${label} shortlisted yet</div>
+      <div class="wl-empty-sub">Star one on the ${source}, or add a name above.</div>
+    </div>
+  `;
+}
+
+function renderWatchlistSection(type, gridId) {
+  const grid = document.getElementById(gridId);
+  if (!grid) return;
   const items = (state.watchlist || []).filter(w => w.type === type)
     .sort((a, b) => new Date(b.addedAt || 0) - new Date(a.addedAt || 0));
   if (items.length === 0) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="${emptyColspan}">${type === "mf" ? "No mutual funds shortlisted yet — star one on the Mutual Funds tab, or add a name above." : "No stocks shortlisted yet — star one on the Equity or Stock Analysis tab, or add a name above."}</td></tr>`;
+    grid.innerHTML = watchlistEmptyStateHTML(type);
     return;
   }
-  tbody.innerHTML = items.map(watchlistRowHTML).join("");
-  tbody.querySelectorAll("tr[data-id]").forEach(tr => {
-    const id = tr.dataset.id;
-    tr.querySelector('[data-field="note"]').addEventListener("change", (e) => updateWatchlistNote(id, e.target.value));
-    tr.querySelector(".wl-remove-btn").addEventListener("click", () => removeWatchlistItem(id));
+  grid.innerHTML = items.map(watchlistCardHTML).join("");
+  grid.querySelectorAll(".wl-item-card[data-id]").forEach(card => {
+    const id = card.dataset.id;
+    card.querySelector('[data-field="note"]').addEventListener("change", (e) => updateWatchlistNote(id, e.target.value));
+    card.querySelector(".wl-item-remove").addEventListener("click", () => removeWatchlistItem(id));
   });
 }
 
@@ -5509,8 +5549,8 @@ function renderWatchlist() {
   if (stockCountEl) stockCountEl.textContent = `(${all.filter(w => w.type === "stock").length})`;
   const mfCountEl = document.getElementById("wlMfCount");
   if (mfCountEl) mfCountEl.textContent = `(${all.filter(w => w.type === "mf").length})`;
-  renderWatchlistSection("stock", "wlStockTableBody", 5);
-  renderWatchlistSection("mf", "wlMfTableBody", 5);
+  renderWatchlistSection("stock", "wlStockGrid");
+  renderWatchlistSection("mf", "wlMfGrid");
 }
 
 // Suggestion pool for the Stock "add" box: the bundled NIFTY 500 list

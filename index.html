@@ -932,7 +932,7 @@
 
   /* ---------- Watchlist ---------- */
   .wl-card{margin-bottom:18px;}
-  .wl-add-row{display:flex;gap:8px;margin-bottom:14px;align-items:flex-start;}
+  .wl-add-row{display:flex;gap:8px;margin-bottom:16px;align-items:flex-start;}
   .wl-suggest-wrap{position:relative;flex:1 1 auto;min-width:0;}
   .wl-add-row input{
     width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:9px;
@@ -940,8 +940,6 @@
   }
   .wl-add-row input:focus{border-color:var(--gold);outline:none;background:var(--surface);}
   .wl-add-row .btn{flex:none;}
-  .wl-return{font-family:var(--font-mono);font-size:10px;margin-top:2px;}
-  #panel-watchlist table.data-table{min-width:640px;}
 
   /* Stock/fund-name typeahead on the Watchlist "add" boxes — suggests
      from a bundled NIFTY 500 list plus whatever you already hold, so
@@ -960,6 +958,54 @@
   .wl-suggest-item:hover, .wl-suggest-item.active{background:var(--surface-2);}
   .wl-suggest-symbol{font-family:var(--font-mono);font-size:10.5px;color:var(--text-faint);flex:none;}
   .wl-suggest-empty{padding:10px 12px;font-size:12.5px;color:var(--text-faint);}
+
+  /* Card grid — replaces the old spreadsheet-style table. auto-fill
+     with a minmax floor is what makes this "just work" at every width
+     without extra breakpoints: 1 column on a phone, 2 on a tablet,
+     3-4 on desktop, purely from how many 220px+ cards fit. */
+  .wl-grid{display:grid;grid-template-columns:repeat(auto-fill, minmax(220px, 1fr));gap:12px;}
+  .wl-item-card{
+    background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);
+    padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0;
+    transition:border-color .15s ease;
+  }
+  .wl-item-card:focus-within{border-color:var(--gold);}
+  .wl-item-top{display:flex;align-items:flex-start;gap:10px;}
+  .wl-item-titles{flex:1 1 auto;min-width:0;}
+  .wl-item-name{font-family:var(--font-display);font-weight:600;font-size:13.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .wl-item-sub{font-size:11px;color:var(--text-faint);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .wl-item-remove{
+    flex:none;width:28px;height:28px;border-radius:8px;background:transparent;border:none;padding:0;
+    color:var(--text-faint);cursor:pointer;display:flex;align-items:center;justify-content:center;
+    transition:background .15s ease, color .15s ease;
+  }
+  .wl-item-remove:hover{background:var(--negative-soft);color:var(--negative);}
+  .wl-item-price{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-family:var(--font-mono);}
+  .wl-item-price .wl-not-held{font-family:var(--font-body);font-size:12px;color:var(--text-faint);}
+  .wl-price-val{font-weight:600;font-size:13.5px;color:var(--text);}
+  .wl-return-badge{font-family:var(--font-mono);font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:20px;white-space:nowrap;}
+  .wl-return-badge.pos{background:var(--positive-soft);color:var(--positive);}
+  .wl-return-badge.neg{background:var(--negative-soft);color:var(--negative);}
+  .wl-return-badge.muted{background:var(--surface);color:var(--text-faint);}
+  .wl-item-notes textarea{
+    width:100%;min-height:50px;resize:vertical;box-sizing:border-box;
+    background:var(--surface);border:1px solid var(--border);border-radius:8px;
+    padding:8px 10px;font-family:var(--font-body);font-size:12.5px;line-height:1.45;color:var(--text);
+  }
+  .wl-item-notes textarea:focus{border-color:var(--gold);outline:none;}
+  .wl-item-notes textarea::placeholder{color:var(--text-faint);}
+  .wl-item-added{font-size:10.5px;color:var(--text-faint);}
+  .wl-empty{
+    grid-column:1/-1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:6px;padding:32px 20px;text-align:center;color:var(--text-faint);
+    border:1px dashed var(--border);border-radius:var(--radius-sm);
+  }
+  .wl-empty-icon{color:var(--text-faint);opacity:.55;margin-bottom:2px;}
+  .wl-empty-title{font-size:13px;font-weight:600;color:var(--text-muted);}
+  .wl-empty-sub{font-size:12px;max-width:320px;}
+  @media (max-width:480px){
+    .wl-grid{grid-template-columns:1fr;}
+  }
 
   /* Target-vs-current comparison row — the one visual pattern used
      consistently across Overall Portfolio, Stock Rebalancing and
@@ -3236,27 +3282,7 @@
         </div>
         <button type="button" class="btn btn-sm" id="wlAddStockBtn">+ Add to Watchlist</button>
       </div>
-      <div class="table-scroll">
-        <table class="data-table wl-table">
-          <colgroup>
-            <col style="width:220px">
-            <col style="width:150px">
-            <col>
-            <col style="width:110px">
-            <col style="width:44px">
-          </colgroup>
-          <thead>
-            <tr>
-              <th class="left sticky-col">Stock</th>
-              <th>Price / Chg</th>
-              <th class="left">Notes</th>
-              <th class="left">Added</th>
-              <th class="row-actions">—</th>
-            </tr>
-          </thead>
-          <tbody id="wlStockTableBody"></tbody>
-        </table>
-      </div>
+      <div class="wl-grid" id="wlStockGrid"></div>
     </div>
 
     <div class="card rb-section wl-card">
@@ -3268,27 +3294,7 @@
         </div>
         <button type="button" class="btn btn-sm" id="wlAddMfBtn">+ Add to Watchlist</button>
       </div>
-      <div class="table-scroll">
-        <table class="data-table wl-table">
-          <colgroup>
-            <col style="width:220px">
-            <col style="width:150px">
-            <col>
-            <col style="width:110px">
-            <col style="width:44px">
-          </colgroup>
-          <thead>
-            <tr>
-              <th class="left sticky-col">Fund</th>
-              <th>NAV / Return</th>
-              <th class="left">Notes</th>
-              <th class="left">Added</th>
-              <th class="row-actions">—</th>
-            </tr>
-          </thead>
-          <tbody id="wlMfTableBody"></tbody>
-        </table>
-      </div>
+      <div class="wl-grid" id="wlMfGrid"></div>
     </div>
   </section>
 
