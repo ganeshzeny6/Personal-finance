@@ -10809,6 +10809,113 @@ function runExcelExport() {
   }
 }
 
+/* ============================================================
+   CSV EXPORT — every tab's holdings in one plain-text .csv
+   A third backup/export option alongside Excel and JSON, for
+   whenever a spreadsheet-agnostic, plain-text format is wanted
+   (e.g. importing individual tabs into another tool). CSV has no
+   concept of multiple sheets, so all tabs are stacked into one
+   file, each preceded by a section title row and its own header
+   row, separated by a blank line — same row data and column
+   layout as the Excel export's sheets, just flattened.
+   ============================================================ */
+
+function csvEscapeField(val) {
+  if (val === null || val === undefined) return "";
+  const s = String(val);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function rowsToCSVBlock(title, rows) {
+  const lines = [csvEscapeField(title)];
+  rows.forEach(row => lines.push(row.map(csvEscapeField).join(",")));
+  return lines.join("\r\n");
+}
+
+function buildCSVExport() {
+  const eq = equityTotals(), debt = debtTotals(), mf = mfTotals(), gold = goldTotals();
+  const cash = Number(state.cash) || 0;
+  const netWorth = cash + debt.invested + mf.current + eq.current + gold.current;
+
+  const blocks = [];
+
+  blocks.push(rowsToCSVBlock("Ganesh's Net Worth & Allocation Tracker — Summary", [
+    ["Exported", new Date().toLocaleString()],
+    [],
+    ["Asset Class", "Current Value", "Invested Amount", "P&L", "Ideal %"],
+    ["Cash", cash, cash, 0, state.ideal.cash],
+    ["Debt / Fixed Income", debt.invested, debt.invested, debt.profit, state.ideal.debt],
+    ["Equity Mutual Funds", mf.current, mf.invested, mf.pl, state.ideal.mf],
+    ["Equity Stocks", eq.current, eq.invested, eq.pl, state.ideal.equity],
+    ["Gold", gold.current, gold.invested, gold.pl, state.ideal.gold],
+    [],
+    ["Net Worth", netWorth]
+  ]));
+
+  const eqRows = [["Name/Symbol", "Invested Amount", "Units", "Avg Price", "LTP", "Current Value", "P&L", "P&L %", "Alloc %", "Sector"]];
+  state.equity.forEach(r => {
+    const d = equityDerived(r);
+    const allocPct = eq.invested > 0 ? (Number(r.invested) / eq.invested) * 100 : 0;
+    eqRows.push([r.name, r.invested, r.units, d.avgPrice, r.ltp, d.currentValue, d.pl, d.plPct, allocPct, r.sector]);
+  });
+  blocks.push(rowsToCSVBlock("Stock Holdings", eqRows));
+
+  const mfRows = [["Name", "Symbol", "Category", "Invested Amount", "Units", "Avg Price", "NAV", "Current Value", "P&L", "P&L %", "Remarks"]];
+  state.mf.forEach(r => {
+    const d = mfDerived(r);
+    mfRows.push([r.name, r.symbol, r.category, r.invested, r.units, d.avgPrice, r.unitPrice, d.currentValue, d.pl, d.plPct, r.remarks]);
+  });
+  blocks.push(rowsToCSVBlock("Mutual Funds", mfRows));
+
+  const goldRows = [["Name/Symbol", "Form", "Weight/Units", "Purchase Rate", "Invested Amount", "Current Rate", "Current Value", "P&L", "P&L %", "Notes"]];
+  state.gold.forEach(r => {
+    const d = goldDerived(r);
+    goldRows.push([r.name, r.form, r.weight, r.purchaseRate, r.invested, r.currentRate, d.currentValue, d.pl, d.plPct, r.notes]);
+  });
+  blocks.push(rowsToCSVBlock("Gold", goldRows));
+
+  const debtRows = [["Name", "Category", "Sub-category", "Account No.", "Invested Amount", "ROI %", "Maturity Amount", "Profit", "Invested Date", "Maturity Date", "Tenure (Months)", "Tenure (Years)", "Notes"]];
+  state.debt.forEach(r => {
+    const d = debtDerived(r);
+    debtRows.push([r.name, r.category, r.subcategory, r.account, r.invested, r.roi, r.maturityAmount, d.profit, r.investedDate, r.maturityDate, r.tenureMonths, d.years, r.notes]);
+  });
+  blocks.push(rowsToCSVBlock("Debt", debtRows));
+
+  blocks.push(rowsToCSVBlock("Settings", [
+    ["Setting", "Value"],
+    ["Cash on hand", state.cash],
+    ["Ideal % - Cash", state.ideal.cash],
+    ["Ideal % - Debt", state.ideal.debt],
+    ["Ideal % - Mutual Funds", state.ideal.mf],
+    ["Ideal % - Equity", state.ideal.equity],
+    ["Ideal % - Gold", state.ideal.gold],
+    ["Portfolio Locked", state.portfolioLocked ? "Yes" : "No"],
+    ["Last Saved", state.lastSaved],
+    ["Last Backup", state.lastBackup]
+  ]));
+
+  // ﻿ BOM so Excel (Windows in particular) opens the ₹ symbol and
+  // any non-ASCII text correctly instead of mangling the encoding.
+  return "﻿" + blocks.join("\r\n\r\n") + "\r\n";
+}
+
+// Called from the Settings modal's "Export CSV" button.
+function runCsvExport() {
+  try {
+    const csv = buildCSVExport();
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `networth-backup-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    console.error("CSV export failed:", e);
+    alert("Could not build the CSV export: " + (e && e.message ? e.message : "unknown error"));
+  }
+}
+
 
 /* ============================================================
    CLOUD SYNC — Firebase Auth (Google Sign-In) + Firestore
@@ -11217,6 +11324,7 @@ function openSettingsModal() {
     <h4>Backup &amp; Restore</h4>
     <div class="settings-actions">
       <button class="btn" id="settingsBtnExportExcel">Export Excel</button>
+      <button class="btn" id="settingsBtnExportCSV">Export CSV</button>
       <button class="btn" id="settingsBtnExportJSON">Export JSON</button>
       <label class="btn btn-ghost" for="importFile">Import JSON</label>
       <button class="btn btn-ghost" id="settingsBtnRestorePreCloudSync" style="display:none">Restore Pre-Sync Backup</button>
@@ -11276,6 +11384,7 @@ function openSettingsModal() {
   // The buttons above are re-created every time this modal opens, so
   // wire them fresh each time rather than once at page load.
   document.getElementById("settingsBtnExportExcel").addEventListener("click", runExcelExport);
+  document.getElementById("settingsBtnExportCSV").addEventListener("click", runCsvExport);
   document.getElementById("settingsBtnExportJSON").addEventListener("click", runJsonExport);
   document.getElementById("settingsBtnImportInvestments").addEventListener("click", () => {
     closeModal();
