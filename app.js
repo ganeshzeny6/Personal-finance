@@ -1042,6 +1042,7 @@ const ICON_PATHS = {
   "sparkles": '<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/>',
   "arrow-left-right": '<path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>',
   "target": '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
+  "arrow-right": '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
   "settings-2": '<path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>',
   "star": '<path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"/>'
 };
@@ -1383,10 +1384,14 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
 // both open the same allocation-target editor; "View opportunities"
 // (both the attention-panel and footer buttons) and "View all
 // opportunities" jump to Stock Analysis, where Intelligent Insights
-// lives in full.
+// lives in full. The Asset Allocation card's own alert banner is the
+// one exception: its "View Rebalance Plan" button jumps straight to
+// the existing Rebalance tab (not the target editor) since that's
+// where the actual rebalancing plan/action lives — the editor is one
+// click away from there if targets need adjusting first.
 document.getElementById("btnEditTargets")?.addEventListener("click", openIdealTargetsModal);
 document.getElementById("btnDashRebalance")?.addEventListener("click", openIdealTargetsModal);
-document.getElementById("dashAllocAlertBtn")?.addEventListener("click", openIdealTargetsModal);
+document.getElementById("dashAllocAlertBtn")?.addEventListener("click", () => goToTab("rebalance"));
 document.getElementById("btnDashAddMoney")?.addEventListener("click", openAddMoneyModal);
 document.getElementById("btnDashViewOpportunities")?.addEventListener("click", () => goToTab("stockanalysis"));
 document.getElementById("dashAttnFilter")?.addEventListener("change", (e) => {
@@ -5813,6 +5818,30 @@ function renderDashAllocDonut(classes, netWorth) {
   }
 }
 
+// Per-asset icon shown in the table's colored badge — purely
+// decorative/identifying, reuses the same ASSET_COLORS as the donut
+// slices so the badge, the ring segment and the mini current-% bar
+// all read as the same asset class at a glance.
+const ALLOC_ICONS = { cash: "wallet", debt: "shield-check", mf: "layers", equity: "chart-candlestick", gold: "gem" };
+
+// Status-badge thresholds — deliberately finer-grained than
+// ATTENTION_DRIFT_THRESHOLD (which only gates the "What needs your
+// attention" list and the rebalance alert banner with a single
+// over/under signal). Here we want a smoother readout per row: a
+// small drift reads as "On target", a moderate one as "Slightly
+// above/below", and only a meaningful drift earns the stronger
+// "Above/Below target" wording — deliberately avoiding jargon like
+// "overweight"/"underweight".
+const ALLOC_STATUS_ON_TARGET_BAND = 1;
+const ALLOC_STATUS_SLIGHT_BAND = 5;
+
+function allocRowStatus(diffPct) {
+  const abs = Math.abs(diffPct);
+  if (abs < ALLOC_STATUS_ON_TARGET_BAND) return { label: "On target", cls: "on" };
+  if (abs < ALLOC_STATUS_SLIGHT_BAND) return { label: diffPct > 0 ? "Slightly above" : "Slightly below", cls: "warn" };
+  return { label: diffPct > 0 ? "Above target" : "Below target", cls: diffPct > 0 ? "over" : "under" };
+}
+
 function renderDashAllocation() {
   const { classes, netWorth } = computeAssetClassesAndNetWorth();
   renderDashAllocDonut(classes, netWorth);
@@ -5820,39 +5849,84 @@ function renderDashAllocation() {
   const totalEl = document.getElementById("dashAllocDonutTotal");
   if (totalEl) totalEl.textContent = fmtINRCompact(netWorth, 2);
 
+  const updatedEl = document.getElementById("dashAllocUpdatedAt");
+  if (updatedEl) {
+    updatedEl.textContent = `Updated ${new Date().toLocaleString(undefined, { hour: "numeric", minute: "2-digit", hour12: true })}`;
+  }
+
   const tbody = document.getElementById("dashAllocTableBody");
   if (!tbody) return;
 
-  let worstOver = null;
-  tbody.innerHTML = classes.map(c => {
+  // One pass to compute every row's numbers, so the table markup and
+  // the alert-banner logic below both read from the same values
+  // instead of recalculating current%/target%/diff twice.
+  const rows = classes.map(c => {
     const currentPct = netWorth > 0 ? (c.current / netWorth) * 100 : 0;
     const idealPct = Number(state.ideal[c.key]) || 0;
     const diffPct = currentPct - idealPct;
     const diffAmount = c.current - (idealPct / 100) * netWorth;
     const varCls = diffPct > ATTENTION_DRIFT_THRESHOLD ? "over" : diffPct < -ATTENTION_DRIFT_THRESHOLD ? "under" : "";
+    return { ...c, currentPct, idealPct, diffPct, diffAmount, varCls, status: allocRowStatus(diffPct) };
+  });
 
-    if (diffPct > ATTENTION_DRIFT_THRESHOLD && (!worstOver || diffAmount > worstOver.diffAmount)) {
-      worstOver = { label: c.label, diffAmount };
-    }
-
+  tbody.innerHTML = rows.map(r => {
+    const amountSub = r.status.cls === "on"
+      ? ""
+      : `<div class="dash-alloc-amount-sub">${r.diffPct >= 0 ? "above target" : "below target"}</div>`;
     return `
       <tr>
-        <td data-label="Asset Class"><span class="dash-alloc-dot" style="background:${ASSET_COLORS[c.key]}"></span>${escapeAttr(c.label)}</td>
-        <td data-label="Invested">${fmtINR(c.current)}</td>
-        <td data-label="Current">${fmtNum(currentPct, 1)}%</td>
-        <td data-label="Target">${fmtNum(idealPct, 1)}%</td>
-        <td data-label="Variance" class="dash-alloc-var ${varCls}">${diffPct >= 0 ? "+" : ""}${fmtNum(diffPct, 1)}%</td>
-        <td data-label="Amount" class="dash-alloc-var ${varCls}">${fmtINRCompactSigned(diffAmount, 1)}</td>
+        <td data-label="Asset Class">
+          <div class="dash-alloc-name-cell">
+            <span class="dash-alloc-icon-badge" style="background:${ASSET_COLORS[r.key]}22;color:${ASSET_COLORS[r.key]}">${icon(ALLOC_ICONS[r.key], 15)}</span>
+            <span>${escapeAttr(r.label)}</span>
+          </div>
+        </td>
+        <td data-label="Current">
+          <div class="dash-alloc-current-wrap">
+            <div class="dash-alloc-current-val">${fmtNum(r.currentPct, 1)}%</div>
+            <div class="dash-alloc-current-track"><div class="dash-alloc-current-fill" style="width:${Math.max(0, Math.min(100, r.currentPct))}%;background:${ASSET_COLORS[r.key]}"></div></div>
+          </div>
+        </td>
+        <td data-label="Target" class="dash-alloc-target-cell">${fmtNum(r.idealPct, 1)}%</td>
+        <td data-label="Difference" class="dash-alloc-var ${r.varCls}">${r.diffPct >= 0 ? "+" : ""}${fmtNum(r.diffPct, 1)}%</td>
+        <td data-label="Amount" class="dash-alloc-var ${r.varCls}">
+          <div class="dash-alloc-amount-wrap">
+            <div>${fmtINRCompactSigned(r.diffAmount, 1)}</div>
+            ${amountSub}
+          </div>
+        </td>
+        <td data-label="Status"><span class="dash-alloc-status-badge ${r.status.cls}">${r.status.label}</span></td>
       </tr>
     `;
   }).join("");
+
+  // Worst offender above target drives the single alert banner
+  // (unchanged trigger: ATTENTION_DRIFT_THRESHOLD, largest diffAmount
+  // wins ties) — now paired with up to two below-target classes so
+  // the message can name where new money should actually go instead
+  // of a generic "consider rebalancing".
+  const worstOver = rows
+    .filter(r => r.diffPct > ATTENTION_DRIFT_THRESHOLD)
+    .sort((a, b) => b.diffAmount - a.diffAmount)[0] || null;
+
+  const belowLabels = rows
+    .filter(r => r.diffPct < -ATTENTION_DRIFT_THRESHOLD)
+    .sort((a, b) => a.diffPct - b.diffPct)
+    .slice(0, 2)
+    .map(r => r.label);
 
   const alertEl = document.getElementById("dashAllocAlert");
   if (alertEl) {
     if (worstOver) {
       alertEl.style.display = "";
-      document.getElementById("dashAllocAlertText").textContent =
-        `${worstOver.label} is ${fmtINRCompact(worstOver.diffAmount, 1)} above your target. Consider rebalancing.`;
+      const textEl = document.getElementById("dashAllocAlertText");
+      const subEl = document.getElementById("dashAllocAlertSub");
+      if (textEl) textEl.textContent = `${worstOver.label} is ${fmtNum(Math.abs(worstOver.diffPct), 1)}% above your target.`;
+      if (subEl) {
+        subEl.textContent = belowLabels.length
+          ? `Consider directing your next investments toward ${belowLabels.join(" or ")}.`
+          : `Consider directing your next investments elsewhere to bring it back in line.`;
+      }
     } else {
       alertEl.style.display = "none";
     }

@@ -587,41 +587,66 @@
   .dash-alloc-footer{display:flex;justify-content:flex-end;margin-top:12px;}
 
   /* ---------- Asset Allocation card (Dashboard): donut + table + alert ---------- */
-  .dash-alloc-card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;}
+  .dash-alloc-card{padding:24px 26px;}
+  .dash-alloc-card-header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:20px;}
   .dash-alloc-card-header h3{margin:0;flex:1;min-width:0;}
-  .dash-alloc-info{
-    display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;
-    border-radius:50%;border:1px solid var(--text-faint);color:var(--text-faint);
-    font-size:10px;font-style:normal;margin-left:5px;cursor:help;vertical-align:middle;
-  }
-  .dash-alloc-edit-link{background:transparent;border:none;color:var(--text-muted);font-size:11.5px;cursor:pointer;text-decoration:underline;padding:0;}
-  .dash-alloc-edit-link:hover{color:var(--gold);}
-  .dash-alloc-layout{display:flex;gap:28px;align-items:center;}
-  .dash-alloc-donut-wrap{position:relative;width:170px;height:170px;flex:none;}
+  .dash-alloc-heading{flex:1;min-width:0;}
+  .dash-alloc-heading h3{display:block;font-size:22px;font-weight:700;margin:0 0 4px;letter-spacing:-0.01em;}
+  .dash-alloc-subtitle{margin:0;font-size:13px;color:var(--text-faint);}
+  .dash-alloc-edit-btn{display:inline-flex;align-items:center;gap:6px;flex:none;color:var(--text-muted);}
+  .dash-alloc-edit-btn:hover{color:var(--gold);}
+  .dash-alloc-edit-btn svg{flex:none;}
+  .dash-alloc-layout{display:flex;gap:32px;align-items:flex-start;}
+  .dash-alloc-left{display:flex;flex-direction:column;align-items:center;gap:16px;flex:none;width:210px;}
+  .dash-alloc-donut-wrap{position:relative;width:200px;height:200px;flex:none;}
   #dashAllocDonut{width:100% !important;height:100% !important;display:block;}
   .dash-alloc-donut-center{
     position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
     text-align:center;pointer-events:none;
   }
-  .dash-alloc-donut-total{font-family:var(--font-mono);font-size:17px;font-weight:600;color:var(--text);white-space:nowrap;}
-  .dash-alloc-donut-label{font-size:10.5px;color:var(--text-faint);margin-top:2px;}
+  .dash-alloc-donut-total{font-family:var(--font-mono);font-size:23px;font-weight:700;color:var(--text);white-space:nowrap;}
+  .dash-alloc-donut-label{font-size:12px;color:var(--text-faint);margin-top:3px;}
+  .dash-alloc-info-card{
+    width:100%;box-sizing:border-box;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:12px;padding:11px 13px;font-size:12.5px;color:var(--text-faint);line-height:1.5;text-align:center;
+  }
+  .dash-alloc-updated{display:flex;align-items:center;justify-content:center;gap:5px;margin-top:6px;color:var(--text-faint);}
+  .dash-alloc-updated svg{flex:none;}
   .dash-alloc-table-wrap{flex:1;min-width:0;overflow-x:auto;}
-  .dash-alloc-table{width:100%;min-width:0;border-collapse:collapse;font-size:12.5px;}
-  .dash-alloc-table th{text-align:right;font-weight:500;font-size:10.5px;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-faint);padding:0 0 10px;white-space:nowrap;}
+  .dash-alloc-table{width:100%;min-width:0;border-collapse:collapse;font-size:13px;}
+  .dash-alloc-table th{text-align:right;font-weight:500;font-size:10.5px;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-faint);padding:0 10px 12px 0;white-space:nowrap;}
+  .dash-alloc-table th:last-child{padding-right:0;}
   .dash-alloc-table th.left, .dash-alloc-table td:first-child{text-align:left;}
-  .dash-alloc-table td{padding:9px 0;border-top:1px solid var(--border);white-space:nowrap;text-align:right;color:var(--text);}
-  .dash-alloc-table td:first-child{display:flex;align-items:center;gap:8px;font-weight:500;}
-  .dash-alloc-dot{width:9px;height:9px;border-radius:50%;flex:none;}
+  .dash-alloc-table td{padding:13px 8px 13px 0;border-top:1px solid var(--border);white-space:nowrap;text-align:right;color:var(--text);vertical-align:middle;}
+  .dash-alloc-name-cell{display:flex;align-items:center;gap:10px;font-weight:600;font-size:14px;}
+  .dash-alloc-icon-badge{width:32px;height:32px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:none;}
+  .dash-alloc-icon-badge svg{vertical-align:middle;}
+  .dash-alloc-current-val{font-weight:600;color:var(--text);}
+  .dash-alloc-current-track{height:4px;width:100%;max-width:96px;margin:6px 0 0 auto;background:var(--surface-2);border-radius:3px;overflow:hidden;}
+  .dash-alloc-current-fill{height:100%;border-radius:3px;}
+  .dash-alloc-target-cell{color:var(--text-muted);}
   .dash-alloc-var{font-family:var(--font-mono);color:var(--text-muted);}
   .dash-alloc-var.over{color:var(--negative);}
   .dash-alloc-var.under{color:var(--positive);}
+  .dash-alloc-amount-sub{font-family:var(--font-body);font-size:10.5px;color:var(--text-faint);margin-top:2px;}
+  .dash-alloc-status-badge{
+    display:inline-block;font-family:var(--font-body);font-size:11px;font-weight:600;
+    padding:3px 10px;border-radius:20px;white-space:nowrap;
+  }
+  .dash-alloc-status-badge.on{background:transparent;border:1px solid var(--border);color:var(--text-muted);}
+  .dash-alloc-status-badge.warn{background:var(--warning-soft);color:var(--warning);}
+  .dash-alloc-status-badge.over{background:var(--negative-soft);color:var(--negative);}
+  .dash-alloc-status-badge.under{background:var(--positive-soft);color:var(--positive);}
   .dash-alloc-alert{
-    display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
-    margin-top:18px;padding:12px 16px;border-radius:9px;
+    display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+    margin-top:20px;padding:14px 18px;border-radius:12px;
     background:var(--negative-soft);border:1px solid #e0667a44;
   }
-  .dash-alloc-alert span{font-size:12.5px;color:var(--negative);}
-  .dash-alloc-alert .btn{flex:none;}
+  .dash-alloc-alert-icon{flex:none;color:var(--negative);}
+  .dash-alloc-alert-body{flex:1;min-width:200px;}
+  .dash-alloc-alert-title{font-size:13px;font-weight:600;color:var(--negative);}
+  .dash-alloc-alert-sub{font-size:12px;color:var(--text-muted);margin-top:2px;}
+  .dash-alloc-alert .btn{flex:none;display:inline-flex;align-items:center;gap:6px;}
 
   /* ---------- Portfolio performance ---------- */
   /* The header can hold a title+hint AND a 6-button period group —
@@ -657,36 +682,47 @@
   }
 
   /* This card responds to its OWN width, not just the viewport —
-     it sits in a 1.6fr grid column next to Portfolio Health on
-     desktop, so the donut+table can be squeezed even on a wide
-     screen, not only on an actual mobile viewport. */
+     it's now a full-width dash-section, but still worth reacting to
+     its own box (a narrower centered viewport, a shrunk sidebar-open
+     desktop) rather than only an actual mobile viewport. */
   #dashAllocCard{container-type:inline-size;}
 
-  @container (max-width:560px){
+  /* Six data columns (name, current+bar, target, difference, amount+
+     sub-label, status badge) need real room — side-by-side with the
+     donut only works past ~920px of card width. Below that (which
+     covers portrait AND most landscape tablets once the sidebar and
+     card padding are accounted for, not just phones), stack the
+     donut above a card-per-asset-class layout instead of squeezing
+     the table into a sliver that would force its own inner scroll. */
+  @container (max-width:920px){
+    .dash-alloc-card{padding:20px 16px;}
+    .dash-alloc-card-header{flex-wrap:wrap;}
+    .dash-alloc-heading h3{font-size:19px;}
     .dash-alloc-layout{flex-direction:column;align-items:stretch;gap:18px;}
-    .dash-alloc-donut-wrap{width:150px;height:150px;align-self:center;}
+    .dash-alloc-left{width:100%;max-width:260px;margin:0 auto;}
+    .dash-alloc-donut-wrap{width:150px;height:150px;}
+    .dash-alloc-donut-total{font-size:18px;}
     .dash-alloc-table-wrap{overflow-x:hidden;}
-    .dash-alloc-table{font-size:12px;width:100%;table-layout:fixed;}
+    .dash-alloc-table{font-size:12.5px;width:100%;table-layout:fixed;}
     .dash-alloc-table thead{display:none;}
     .dash-alloc-table, .dash-alloc-table tbody, .dash-alloc-table tr{display:block;width:100%;}
-    .dash-alloc-table tr{border-top:1px solid var(--border);padding:9px 0;}
-    .dash-alloc-table tr:first-child{border-top:none;}
+    .dash-alloc-table tbody{display:flex;flex-direction:column;gap:10px;}
+    .dash-alloc-table tr{
+      background:var(--surface-2);border:1px solid var(--border);border-radius:12px;
+      padding:12px 14px 8px;box-sizing:border-box;
+    }
     .dash-alloc-table td{
       display:flex;width:100%;box-sizing:border-box;justify-content:space-between;align-items:center;
-      border-top:none;padding:3px 0;text-align:right;white-space:normal;
+      border-top:none;padding:4px 0;text-align:right;white-space:normal;
     }
-    .dash-alloc-table td:first-child{font-weight:600;font-size:13px;}
+    .dash-alloc-table td:first-child{padding:0 0 10px;margin-bottom:8px;border-bottom:1px solid var(--border);}
     #panel-dashboard .dash-alloc-table td:first-child::before{content:none;}
-    .dash-alloc-table td:not(:first-child)::before{content:attr(data-label);color:var(--text-faint);font-weight:400;font-size:11.5px;}
+    .dash-alloc-table td:not(:first-child)::before{content:attr(data-label);color:var(--text-faint);font-weight:400;font-size:11.5px;flex:none;}
+    .dash-alloc-current-wrap, .dash-alloc-amount-wrap{display:flex;flex-direction:column;align-items:flex-end;}
+    .dash-alloc-current-track{margin:5px 0 0;}
     .dash-alloc-alert{flex-direction:column;align-items:stretch;text-align:center;}
-    .dash-alloc-alert .btn{width:100%;}
-  }
-  @container (min-width:561px) and (max-width:680px){
-    /* Medium width: keep the side-by-side layout but shrink the
-       donut and tighten the table so nothing crowds the edge. */
-    .dash-alloc-donut-wrap{width:130px;height:130px;}
-    .dash-alloc-layout{gap:16px;}
-    .dash-alloc-table{font-size:11.5px;}
+    .dash-alloc-alert-body{text-align:center;}
+    .dash-alloc-alert .btn{width:100%;justify-content:center;}
   }
 
   /* ---------- Investment opportunities ---------- */
@@ -2006,31 +2042,34 @@
     .panel.active .fab-add, .portfolio-subpanel.active .fab-add{display:flex;}
   }
 
-  /* Dashboard's allocation table and Insights' MF Category Breakdown
-     table — same card-list treatment, scoped to these plain tables so
-     it never touches the fixed-width .data-table layout the four
-     asset-class tabs use. */
+  /* Insights' MF Category Breakdown table — card-list treatment on
+     narrow viewports, scoped to this plain table so it never touches
+     the fixed-width .data-table layout the four asset-class tabs
+     use. (Dashboard's own allocation table used to share this generic
+     rule too, but now has its own dedicated container-query card
+     layout right below the Asset Allocation card's styles — driven by
+     the card's own width, not just the viewport — so it's been
+     dropped from this selector list to avoid the two rulesets
+     fighting over the same row/cell.) */
   @media (max-width:700px){
-    #panel-dashboard .table-scroll table, #panel-insights .table-scroll table{table-layout:auto;}
-    #panel-dashboard table thead, #panel-dashboard table tfoot,
+    #panel-insights .table-scroll table{table-layout:auto;}
     #panel-insights table thead, #panel-insights table tfoot{display:none;}
-    #panel-dashboard table tbody, #panel-insights table tbody{display:block;}
-    #panel-dashboard table tbody tr, #panel-insights table tbody tr{
+    #panel-insights table tbody{display:block;}
+    #panel-insights table tbody tr{
       display:block;background:var(--surface);border:1px solid var(--border);
       border-radius:12px;padding:12px 14px;margin-bottom:10px;
     }
-    #panel-dashboard table tbody td, #panel-insights table tbody td{
+    #panel-insights table tbody td{
       display:flex;align-items:center;justify-content:space-between;gap:10px;
       border-bottom:none;padding:5px 0;
     }
-    #panel-dashboard table tbody td:first-child, #panel-insights table tbody td:first-child{
+    #panel-insights table tbody td:first-child{
       padding:0 0 10px;margin-bottom:8px;border-bottom:1px solid var(--border);
     }
-    #panel-dashboard table tbody td[data-label]::before, #panel-insights table tbody td[data-label]::before{
+    #panel-insights table tbody td[data-label]::before{
       content:attr(data-label);color:var(--text-faint);font-size:10.5px;
       text-transform:uppercase;letter-spacing:.04em;
     }
-    #panel-dashboard table tbody td .ideal-input{width:70px;}
   }
 
   /* ============================================================
@@ -2457,39 +2496,59 @@
       <div id="dashAttentionList"></div>
     </div>
 
-    <div class="dash-grid dash-section">
-      <div class="card" id="dashAllocCard">
-        <div class="dash-alloc-card-header">
-          <h3>Asset Allocation <span class="dash-alloc-info" title="Target % is editable — used only to compute the drift shown here. Debt is valued at amount invested (FDs don't fluctuate day-to-day); Equity, Mutual Fund, and Gold values use live prices where available.">ⓘ</span></h3>
-          <button class="dash-alloc-edit-link" id="btnEditTargets">Edit targets</button>
+    <div class="card dash-section dash-alloc-card" id="dashAllocCard">
+      <div class="dash-alloc-card-header">
+        <div class="dash-alloc-heading">
+          <h3>Asset Allocation</h3>
+          <p class="dash-alloc-subtitle">Current investment mix vs your target</p>
         </div>
-        <div class="dash-alloc-layout">
+        <button class="btn btn-ghost btn-sm dash-alloc-edit-btn" id="btnEditTargets" title="Target % is editable — used only to compute the drift shown here. Debt is valued at amount invested (FDs don't fluctuate day-to-day); Equity, Mutual Fund, and Gold values use live prices where available.">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+          Edit Targets
+        </button>
+      </div>
+      <div class="dash-alloc-layout">
+        <div class="dash-alloc-left">
           <div class="dash-alloc-donut-wrap">
             <canvas id="dashAllocDonut"></canvas>
             <div class="dash-alloc-donut-center">
               <div class="dash-alloc-donut-total" id="dashAllocDonutTotal">₹0</div>
-              <div class="dash-alloc-donut-label">Total Value</div>
+              <div class="dash-alloc-donut-label">Total Portfolio</div>
             </div>
           </div>
-          <div class="dash-alloc-table-wrap">
-            <table class="dash-alloc-table">
-              <thead>
-                <tr><th class="left">Asset Class</th><th>Invested</th><th>Current</th><th>Target</th><th>Variance</th><th>Amount</th></tr>
-              </thead>
-              <tbody id="dashAllocTableBody"></tbody>
-            </table>
+          <div class="dash-alloc-info-card">
+            <div>Values and allocations are based on current market prices.</div>
+            <div class="dash-alloc-updated">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+              <span id="dashAllocUpdatedAt">Updated just now</span>
+            </div>
           </div>
         </div>
-        <div class="dash-alloc-alert" id="dashAllocAlert" style="display:none">
-          <span id="dashAllocAlertText"></span>
-          <button class="btn btn-ghost btn-sm" id="dashAllocAlertBtn">View Rebalance Plan</button>
+        <div class="dash-alloc-table-wrap">
+          <table class="dash-alloc-table">
+            <thead>
+              <tr><th class="left">Asset Class</th><th>Current</th><th>Target</th><th>Difference</th><th>Amount</th><th>Status</th></tr>
+            </thead>
+            <tbody id="dashAllocTableBody"></tbody>
+          </table>
         </div>
       </div>
-
-      <div class="card">
-        <h3>Portfolio health</h3>
-        <div id="dashHealthBody"></div>
+      <div class="dash-alloc-alert" id="dashAllocAlert" style="display:none">
+        <svg class="dash-alloc-alert-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+        <div class="dash-alloc-alert-body">
+          <div class="dash-alloc-alert-title" id="dashAllocAlertText"></div>
+          <div class="dash-alloc-alert-sub" id="dashAllocAlertSub"></div>
+        </div>
+        <button class="btn btn-ghost btn-sm" id="dashAllocAlertBtn">
+          View Rebalance Plan
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+        </button>
       </div>
+    </div>
+
+    <div class="card dash-section">
+      <h3>Portfolio health</h3>
+      <div id="dashHealthBody"></div>
     </div>
 
     <div class="dash-section card dash-perf-chart-card">
