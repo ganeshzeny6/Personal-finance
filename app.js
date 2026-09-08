@@ -449,6 +449,19 @@ function fmtNum(n, decimals = 2) {
   return n.toLocaleString("en-IN", { maximumFractionDigits: decimals, minimumFractionDigits: decimals });
 }
 
+// Formats a "YYYY-MM-DD" date string (the value shape used throughout
+// state.debt) as "YYYY-Mon-DD", e.g. "2026-Aug-24" — used for read-only
+// date displays (holdings list, detail modal, import preview) on the
+// Debt tab. Native <input type="date"> fields are left untouched since
+// their value attribute must stay ISO format for the browser to parse it.
+const FMT_DATE_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function fmtDateLong(dateStr) {
+  if (!dateStr) return "";
+  const d = new Date(dateStr + "T00:00:00");
+  if (isNaN(d.getTime())) return dateStr;
+  return `${d.getFullYear()}-${FMT_DATE_MONTHS[d.getMonth()]}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 // Small numeric clamp used by the Dashboard's Portfolio Health scoring
 // (keeps every 0-100 sub-score actually within 0-100).
 function clamp(n, min, max) {
@@ -3477,7 +3490,7 @@ function renderDebtHoldingsList() {
         </div>
         <div class="debt-holding-col"><div class="debt-holding-label">Principal</div><div class="debt-holding-val">${fmtINR(row.invested)}</div></div>
         <div class="debt-holding-col"><div class="debt-holding-label">Rate</div><div class="debt-holding-val">${fmtNum(row.roi, 2)}%</div></div>
-        <div class="debt-holding-col"><div class="debt-holding-label">Maturity</div><div class="debt-holding-val">${row.maturityDate || "—"}</div></div>
+        <div class="debt-holding-col"><div class="debt-holding-label">Maturity</div><div class="debt-holding-val">${fmtDateLong(row.maturityDate) || "—"}</div></div>
         <div class="debt-holding-col"><div class="debt-holding-label">Maturity Value</div><div class="debt-holding-val">${fmtINR(row.maturityAmount)}</div></div>
         <div class="debt-status-badge ${meta.cls}">${escapeAttr(meta.label)}</div>
         <button class="debt-holding-more" data-id="${row.id}" aria-label="More actions">•••</button>
@@ -3514,8 +3527,8 @@ function openDebtDetailModal(id) {
     <div class="debt-detail-grid">
       <div><div class="debt-holding-label">Principal</div><div class="debt-detail-val">${fmtINR(row.invested)}</div></div>
       <div><div class="debt-holding-label">Interest Rate</div><div class="debt-detail-val">${fmtNum(row.roi, 2)}%</div></div>
-      <div><div class="debt-holding-label">Start Date</div><div class="debt-detail-val">${row.investedDate || "—"}</div></div>
-      <div><div class="debt-holding-label">Maturity Date</div><div class="debt-detail-val">${row.maturityDate || "—"}</div></div>
+      <div><div class="debt-holding-label">Start Date</div><div class="debt-detail-val">${fmtDateLong(row.investedDate) || "—"}</div></div>
+      <div><div class="debt-holding-label">Maturity Date</div><div class="debt-detail-val">${fmtDateLong(row.maturityDate) || "—"}</div></div>
       <div><div class="debt-holding-label">Estimated Maturity Value</div><div class="debt-detail-val">${fmtINR(row.maturityAmount)}</div></div>
       <div><div class="debt-holding-label">Interest (at maturity)</div><div class="debt-detail-val ${plClass(d.profit)}">${fmtINR(d.profit)}</div></div>
       <div><div class="debt-holding-label">Remaining</div><div class="debt-detail-val">${days === null ? "—" : days < 0 ? `${Math.abs(days)} days overdue` : `${days} days`}</div></div>
@@ -4859,7 +4872,7 @@ function computeAttentionItems() {
       kind: "maturity",
       severity: "warn",
       title: `${maturingSoon.length} ${maturingSoon.length === 1 ? "investment is" : "investments are"} maturing in the next 30 days`,
-      detail: `Next maturity: ${fmtINR(Number(nearest.maturityAmount) || 0)} on ${nearest.maturityDate || "—"}`,
+      detail: `Next maturity: ${fmtINR(Number(nearest.maturityAmount) || 0)} on ${fmtDateLong(nearest.maturityDate) || "—"}`,
       actionLabel: "View debt",
       onAction: () => goToTab("debt"),
       sortKey: 50
@@ -9438,7 +9451,7 @@ function showDebtImportPreview(newRows, sourceLabel, statusEl) {
       <td class="left">${escapeAttr(r.name)}</td>
       <td class="left">${escapeAttr(r.category || "—")}</td>
       <td class="left">${fmtINR(r.invested)}</td>
-      <td class="left">${escapeAttr(r.maturityDate || "—")}</td>
+      <td class="left">${escapeAttr(fmtDateLong(r.maturityDate) || "—")}</td>
     </tr>`).join("");
   const html = `
     <div class="import-stat-row">
