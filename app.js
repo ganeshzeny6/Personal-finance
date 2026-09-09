@@ -125,6 +125,16 @@ const DEFAULT_NIFTY_HISTORY_API_URL = "";
 
 const DEFAULT_IDEAL = { cash: 0, debt: 45, mf: 35, equity: 15, gold: 5 };
 
+// Account code -> person name, for the Consolidated Holdings import
+// (see CONSOLIDATED HOLDINGS IMPORT below). This is the ONE place
+// ownership is mapped — every other part of the app (import, Insights
+// person view) reads state.accountOwners rather than hardcoding names,
+// so adding a family member later is just one new entry, editable from
+// Settings -> People. The account code itself is always kept alongside
+// the person name in the imported data (never replaced by it) — see
+// each holding's `sourceAccounts` array.
+const DEFAULT_ACCOUNT_OWNERS = { QM8317: "Poornima", RNN177: "Usha", ZZ9852: "Ganesh" };
+
 // Equity tab: maximum recommended allocation % (of total Equity Invested
 // Amount) per market-cap category — editable under Settings -> Equity
 // Allocation Limits. Never hardcoded elsewhere; every place that needs a
@@ -320,7 +330,18 @@ function blankState() {
     // everything else in `state` so the snapshot still has something to
     // show (marked stale) immediately after a reload, before the next
     // 30-second live refresh lands. Populated by refreshIndexData().
-    indexData: {}
+    indexData: {},
+    // Account code -> person name (see DEFAULT_ACCOUNT_OWNERS above).
+    // Editable from Settings -> People; used by the Consolidated
+    // Holdings import to attribute each holding's accounts to a person.
+    accountOwners: { ...DEFAULT_ACCOUNT_OWNERS },
+    // Metadata about the most recent Consolidated Holdings import —
+    // drives the compact "Last Import" status in Settings. Null until
+    // the first import. Shape: { fileName, importedAt, source
+    // ("Local"|"Google Drive"), accounts: [{code, person}], counts:
+    // {equity, mf, gold}, totals: {invested, current, pl},
+    // unmappedAccounts: [code, ...], mismatches: [text, ...] }.
+    lastImport: null
   };
 }
 
@@ -347,7 +368,14 @@ function mergeIntoState(saved) {
     // rather than letting a blank string win.
     googleDriveClientId: saved.googleDriveClientId || DEFAULT_GOOGLE_DRIVE_CLIENT_ID,
     googleDriveApiKey: saved.googleDriveApiKey || DEFAULT_GOOGLE_DRIVE_API_KEY,
-    indexData: { ...(saved.indexData || {}) }
+    indexData: { ...(saved.indexData || {}) },
+    // Only fall back to the hardcoded defaults for a state that has
+    // literally never been saved with this field (undefined) — e.g. an
+    // old backup from before this feature existed. Once it's been saved
+    // even once, an explicitly-emptied {} must stay empty rather than
+    // having the defaults silently reappear on next load (which a plain
+    // `{...DEFAULT, ...saved}` merge would do).
+    accountOwners: saved.accountOwners !== undefined ? { ...saved.accountOwners } : { ...DEFAULT_ACCOUNT_OWNERS }
   };
 }
 
@@ -7300,6 +7328,200 @@ function setupIntelligentInsightsControls() {
   if (sortSelect) sortSelect.addEventListener("change", () => { iiUI.sort = sortSelect.value; renderIntelligentInsights(); });
 }
 
+/* ============================================================
+   INSIGHTS — PERSON VIEW ("Who owns what")
+   Reads each Equity/MF/Gold row's `sourceAccounts` (written by the
+   Consolidated Holdings Import — see that section) and aggregates by
+   person. Rows with no sourceAccounts (added by hand, or left from the
+   older raw-file importer) simply have no ownership info and are
+   excluded here — they still show normally on their own tabs and in
+   the consolidated Dashboard totals.
+
+   Deliberately scoped to Equity + Mutual Funds + Gold only: Debt is
+   manually entered with no account field, and Cash is a single
+   household number, so there is no real per-person source for either
+   — inventing one would violate the same "don't overwrite source data
+   with a guess" rule the import pipeline follows.
+   ============================================================ */
+
+const insightsUI = { selectedPerson: "All" };
+
+// One asset class's rows -> Map<personKey, { invested, current,
+// holdings: Map<name, {name, invested, current, estimated}> }>.
+// `estimated` on a holding means at least one of its owning accounts
+// came from an evenly-split shared holding (see buildSourceAccounts).
+function aggregatePersonHoldings(rows, qtyField, priceField) {
+  const byPerson = new Map();
+  (rows || []).forEach(row => {
+    const accounts = row.sourceAccounts;
+    if (!accounts || !accounts.length) return;
+    const price = Number(row[priceField]) || 0;
+    accounts.forEach(a => {
+      const personKey = a.personName || "Unassigned";
+      const current = (Number(a.qty) || 0) * price;
+      const invested = Number(a.invested) || 0;
+      if (!byPerson.has(personKey)) byPerson.set(personKey, { invested: 0, current: 0, holdings: new Map() });
+      const p = byPerson.get(personKey);
+      p.invested += invested;
+      p.current += current;
+      const h = p.holdings.get(row.name) || { name: row.name, invested: 0, current: 0, estimated: false };
+      h.invested += invested;
+      h.current += current;
+      h.estimated = h.estimated || !!a.estimated;
+      p.holdings.set(row.name, h);
+    });
+  });
+  return byPerson;
+}
+
+// Combines Equity + Mutual Funds + Gold into one per-person portfolio —
+// the single computation both the "All" comparison and the per-person
+// detail view read from, so they can never disagree with each other.
+function computePersonPortfolios() {
+  const eqByPerson = aggregatePersonHoldings(state.equity, "units", "ltp");
+  const mfByPerson = aggregatePersonHoldings(state.mf, "units", "unitPrice");
+  const goldByPerson = aggregatePersonHoldings(state.gold, "weight", "currentRate");
+  const allPersons = new Set([...eqByPerson.keys(), ...mfByPerson.keys(), ...goldByPerson.keys()]);
+  const emptyGroup = () => ({ invested: 0, current: 0, holdings: new Map() });
+
+  const results = [...allPersons].map(person => {
+    const eq = eqByPerson.get(person) || emptyGroup();
+    const mf = mfByPerson.get(person) || emptyGroup();
+    const gold = goldByPerson.get(person) || emptyGroup();
+    const invested = eq.invested + mf.invested + gold.invested;
+    const current = eq.current + mf.current + gold.current;
+    const toList = (m) => [...m.values()].sort((a, b) => b.current - a.current);
+    return {
+      person, invested, current, pl: current - invested,
+      plPct: invested > 0 ? ((current - invested) / invested) * 100 : 0,
+      equity: { invested: eq.invested, current: eq.current, holdings: toList(eq.holdings) },
+      mf: { invested: mf.invested, current: mf.current, holdings: toList(mf.holdings) },
+      gold: { invested: gold.invested, current: gold.current, holdings: toList(gold.holdings) }
+    };
+  });
+
+  // Known people (Settings -> People, in configured order) first,
+  // "Unassigned" always last, anything else by current value.
+  const orderedNames = Object.values(state.accountOwners);
+  results.sort((a, b) => {
+    if (a.person === "Unassigned") return 1;
+    if (b.person === "Unassigned") return -1;
+    const ai = orderedNames.indexOf(a.person), bi = orderedNames.indexOf(b.person);
+    if (ai !== -1 && bi !== -1) return ai - bi;
+    if (ai !== -1) return -1;
+    if (bi !== -1) return 1;
+    return b.current - a.current;
+  });
+  return results;
+}
+
+// One person's Equity/MF/Gold split, as allocation bars — reuses the
+// exact dash-alloc-row/top/name/pct/amounts/track/fill markup the Debt
+// tab's category allocation already uses (renderDebtAllocation()), and
+// the same ASSET_COLORS as the Dashboard's Asset Allocation card, so
+// this reads as the same kind of UI without any new CSS or a second
+// color scheme.
+function personAllocationBarsHTML(p) {
+  const entries = [
+    { label: "Equity", value: p.equity.current, color: ASSET_COLORS.equity },
+    { label: "Mutual Funds", value: p.mf.current, color: ASSET_COLORS.mf },
+    { label: "Gold", value: p.gold.current, color: ASSET_COLORS.gold }
+  ].filter(e => e.value > 0);
+  const total = entries.reduce((s, e) => s + e.value, 0);
+  if (total <= 0) return `<div class="dash-attn-empty">No Equity, Mutual Fund or Gold value for this person yet.</div>`;
+  return entries.map(e => {
+    const pct = (e.value / total) * 100;
+    return `
+      <div class="dash-alloc-row">
+        <div class="dash-alloc-top">
+          <span class="dash-alloc-name"><span class="swatch" style="background:${e.color}"></span>${escapeAttr(e.label)}</span>
+          <span class="dash-alloc-pct">${fmtNum(pct, 1)}%</span>
+        </div>
+        <div class="dash-alloc-amounts"><span>${fmtINR(e.value)}</span></div>
+        <div class="dash-alloc-track"><div class="dash-alloc-fill" style="width:${pct}%;background:${e.color}"></div></div>
+      </div>
+    `;
+  }).join("");
+}
+
+function personHoldingsListHTML(label, group) {
+  if (!group.holdings.length) return "";
+  const rows = group.holdings.map(h => `
+    <div class="insights-person-holding-row">
+      <span class="insights-person-holding-name">${escapeAttr(h.name)}${h.estimated ? " *" : ""}</span>
+      <span class="insights-person-holding-val">${fmtINR(h.current)}</span>
+    </div>
+  `).join("");
+  return `<div><div class="debt-holding-label" style="margin-bottom:6px;">${escapeAttr(label)}</div>${rows}</div>`;
+}
+
+function renderInsightsPersonView() {
+  const tabsEl = document.getElementById("insightsPersonTabs");
+  const bodyEl = document.getElementById("insightsPersonBody");
+  if (!tabsEl || !bodyEl) return;
+
+  const persons = computePersonPortfolios();
+  if (persons.length === 0) {
+    tabsEl.innerHTML = "";
+    bodyEl.innerHTML = `<div class="dash-attn-empty">Import your consolidated holdings workbook (Settings → Import Investments) to see who owns what.</div>`;
+    return;
+  }
+
+  const names = ["All", ...persons.map(p => p.person)];
+  if (!names.includes(insightsUI.selectedPerson)) insightsUI.selectedPerson = "All";
+
+  tabsEl.innerHTML = names.map(name =>
+    `<button class="debt-chip${insightsUI.selectedPerson === name ? " active" : ""}" data-person="${escapeAttr(name)}">${escapeAttr(name)}</button>`
+  ).join("");
+  tabsEl.querySelectorAll(".debt-chip").forEach(btn => {
+    btn.addEventListener("click", () => { insightsUI.selectedPerson = btn.dataset.person; renderInsightsPersonView(); });
+  });
+
+  const hasEstimated = persons.some(p => [...p.equity.holdings, ...p.mf.holdings, ...p.gold.holdings].some(h => h.estimated));
+  const estimatedNote = hasEstimated ? `<p class="insights-person-est-note">* Held jointly with another account — split evenly since the import file only gives a combined total for shared holdings, not the exact per-account amount.</p>` : "";
+
+  if (insightsUI.selectedPerson === "All") {
+    bodyEl.innerHTML = `
+      <div class="insights-person-grid">
+        ${persons.map(p => `
+          <div class="insights-person-summary-card" data-person="${escapeAttr(p.person)}">
+            <div class="insights-person-name">${escapeAttr(p.person)}</div>
+            <div class="insights-person-stats">
+              <div><div class="debt-holding-label">Portfolio Value</div><div class="debt-holding-val">${fmtINR(p.current)}</div></div>
+              <div><div class="debt-holding-label">Invested</div><div class="debt-holding-val">${fmtINR(p.invested)}</div></div>
+              <div><div class="debt-holding-label">P&amp;L</div><div class="debt-holding-val ${plClass(p.pl)}">${fmtINRCompactSigned(p.pl, 2)} (${fmtNum(p.plPct, 1)}%)</div></div>
+            </div>
+          </div>
+        `).join("")}
+      </div>
+      ${estimatedNote}
+    `;
+    bodyEl.querySelectorAll(".insights-person-summary-card").forEach(card => {
+      card.addEventListener("click", () => { insightsUI.selectedPerson = card.dataset.person; renderInsightsPersonView(); });
+    });
+  } else {
+    const p = persons.find(x => x.person === insightsUI.selectedPerson);
+    if (!p) return;
+    bodyEl.innerHTML = `
+      <div class="insights-person-detail-stats">
+        <div><div class="debt-holding-label">Portfolio Value</div><div class="debt-holding-val" style="font-size:16px;">${fmtINR(p.current)}</div></div>
+        <div><div class="debt-holding-label">Invested</div><div class="debt-holding-val" style="font-size:16px;">${fmtINR(p.invested)}</div></div>
+        <div><div class="debt-holding-label">P&amp;L</div><div class="debt-holding-val ${plClass(p.pl)}" style="font-size:16px;">${fmtINRCompactSigned(p.pl, 2)} (${fmtNum(p.plPct, 1)}%)</div></div>
+      </div>
+      <div class="insights-person-alloc">
+        <div class="debt-holding-label" style="margin-bottom:8px;">Asset Allocation</div>
+        ${personAllocationBarsHTML(p)}
+      </div>
+      <div class="insights-person-holdings-grid">
+        ${personHoldingsListHTML("Equity Holdings", p.equity)}
+        ${personHoldingsListHTML("Mutual Funds", p.mf)}
+        ${personHoldingsListHTML("Gold", p.gold)}
+      </div>
+      ${estimatedNote}
+    `;
+  }
+}
+
 function renderInsights() {
   // Chart.js can't size a canvas inside a display:none panel, so skip
   // all chart work until the Insights tab is actually the active one.
@@ -7307,6 +7529,8 @@ function renderInsights() {
   // re-invoke this once it's visible, so nothing here goes stale.
   const panel = document.getElementById("panel-insights");
   if (!panel || !panel.classList.contains("active")) return;
+
+  renderInsightsPersonView();
 
   const { positives, negatives } = computeEquityPerformers();
   renderPerformersList("insightsTopPerformers", positives, "No profitable Equity positions yet.");
@@ -10024,7 +10248,13 @@ function buildZerodhaImportGroups(parsed) {
   ];
 }
 
-// "Import Investments" (Settings) -> choose Local files or Google Drive.
+// SUPERSEDED — "Import Investments" (Settings) now runs the
+// Consolidated Holdings pipeline below (openConsolidatedImportChooser
+// and friends). This whole raw-per-account-Zerodha-file pipeline
+// (openImportChooser through runDriveImportPicker) is kept as-is,
+// unused, rather than deleted — nothing currently calls it, but it's
+// proven code and low-risk to leave in place in case a raw-file import
+// path is ever wanted again.
 function openImportChooser() {
   openModal(
     "Import Investments",
@@ -10062,8 +10292,11 @@ async function handleLocalZerodhaFiles(fileList) {
   runCombinedImportPreview(buildZerodhaImportGroups(merged), noteHTML);
 }
 
+// Wired to the Consolidated Holdings pipeline (see that section below)
+// rather than handleLocalZerodhaFiles — "Import Investments" now
+// expects one consolidated workbook, not several raw per-account files.
 document.getElementById("importInvestmentsFile").addEventListener("change", async (e) => {
-  await handleLocalZerodhaFiles(e.target.files);
+  await handleLocalConsolidatedFile(e.target.files);
   e.target.value = "";
 });
 
@@ -10249,6 +10482,665 @@ async function runDriveImportPicker() {
   const sourceLabel = files.map(f => f.name).join(", ");
   const noteHTML = `<p class="settings-note">Source: Google Drive — ${escapeAttr(sourceLabel)}${merged.clientIds.length ? " — Client ID(s): " + escapeAttr(merged.clientIds.join(", ")) : ""}</p>`;
   runCombinedImportPreview(buildZerodhaImportGroups(merged), noteHTML);
+}
+
+
+/* ============================================================
+   CONSOLIDATED HOLDINGS IMPORT — "Import Investments" (Settings)
+   ------------------------------------------------------------
+   This is the current, primary import pipeline for Equity, Mutual
+   Funds and Gold. It reads ONE consolidated workbook (already
+   combining however many brokerage/demat accounts across however
+   many family members) rather than several raw per-account files.
+
+   Pipeline (identical whether the file comes from Local Upload or
+   Google Drive — both paths converge at parseConsolidatedWorkbook,
+   see runConsolidatedImportPipeline below):
+
+     File bytes
+       -> parseConsolidatedWorkbook()      validate + parse sheets
+       -> buildConsolidatedImportPreview() plan vs existing holdings,
+                                            detect accounts, validate
+                                            against the Summary sheet
+       -> openConsolidatedImportPreview()  show preview modal
+       -> applyConsolidatedImportPlans()   update state.equity/mf/gold
+       -> renderAll()                      refresh every tab
+
+   Source data vs calculated data (see field comments below): every
+   holding's Quantity/Units, Invested Value and account list come
+   straight from the workbook. Current Value, P&L, allocation % etc.
+   are never stored here — they're left to the existing
+   equityDerived()/mfDerived()/goldDerived() + live-price refresh,
+   exactly like the older Zerodha import above, so there is only ever
+   one place P&L is calculated.
+
+   ACCOUNT -> PERSON OWNERSHIP
+   Each holding's workbook "Accounts" column (e.g. "QM8317, RNN177")
+   is resolved through state.accountOwners (Settings -> People) into
+   a `sourceAccounts` array on the row:
+     [{ accountCode, personName, qty, invested, estimated }, ...]
+   accountCode is always kept (never replaced by the person's name).
+   A holding held by exactly one account gets that account's exact
+   qty/invested. A holding shared by more than one account has no
+   per-account breakdown in this workbook format (only the combined
+   total + which accounts hold it) — per Ganesh's explicit choice,
+   those are split EVENLY across the co-owning accounts and flagged
+   `estimated: true`, so Insights can show every person a number while
+   still being honest that it's a split, not the broker's real
+   per-account figures. Debt and Cash have no per-account data source
+   at all (Debt is manually entered with no account field; Cash is a
+   single household number) — Insights' person view is scoped to
+   Equity/MF/Gold for that reason, called out explicitly rather than
+   inventing a per-person Debt/Cash split.
+
+   REPLACE VS UPDATE
+   A row is only ever auto-removed if it already carries
+   `sourceAccounts` (i.e. it came from a previous consolidated import)
+   and its key (ISIN, falling back to Symbol/Scheme) is missing from
+   the new workbook — meaning that holding was fully exited. Rows
+   without `sourceAccounts` (anything added by hand, or left over from
+   the older raw-file importer) are matched/updated by the same key if
+   present, but are never silently deleted — only this pipeline's own
+   previously-imported rows are treated as a full snapshot.
+   ============================================================ */
+
+// Scans raw rows (array-of-arrays, e.g. from XLSX.utils.sheet_to_json
+// with header:1) for the row that contains ALL of requiredSubstrings
+// (case-insensitive substring match) somewhere among its cells —
+// exactly how the sheet's real header row is identified regardless of
+// how many title/blank rows sit above it. Returns { headerRow, headers }
+// (headers = that row's trimmed cell text) or null if no row matches.
+function findConsolidatedHeaderRow(rawRows, requiredSubstrings) {
+  for (let i = 0; i < rawRows.length; i++) {
+    const cells = (rawRows[i] || []).map(c => String(c ?? "").trim());
+    const lower = cells.map(c => c.toLowerCase());
+    const allFound = requiredSubstrings.every(req => lower.some(c => c.includes(req)));
+    if (allFound) return { headerRow: i, headers: cells };
+  }
+  return null;
+}
+
+// Turns the rows below a header row into objects keyed by that row's
+// header text, stopping at the first fully-blank row — same "table
+// ends at the first blank row" convention as extractZerodhaSheetObjects.
+function consolidatedRowsToObjects(rawRows, headerRow, headers) {
+  const objects = [];
+  for (let i = headerRow + 1; i < rawRows.length; i++) {
+    const r = rawRows[i];
+    if (!r || r.every(c => c === undefined || c === null || String(c).trim() === "")) break;
+    const obj = {};
+    headers.forEach((h, idx) => { if (h) obj[h] = r[idx]; });
+    objects.push(obj);
+  }
+  return objects;
+}
+
+// Finds a sheet whose header row matches requiredHeaderSubstrings,
+// searching sheets whose NAME hints at the right one first (so two
+// sheets that happen to share a column name are disambiguated), then
+// falling back to every other sheet — since section 4 of the brief is
+// explicit that sheet ORDER/position must never be assumed. If a
+// name-hinted sheet exists but its headers don't match, that sheet is
+// still returned (with headerRow -1) so the caller can raise a
+// specific, actionable error naming it — rather than reporting the
+// column as simply "not found anywhere".
+function findConsolidatedSheet(wb, nameHints, requiredHeaderSubstrings) {
+  const hinted = wb.SheetNames.filter(n => nameHints.some(h => n.toLowerCase().includes(h)));
+  const rest = wb.SheetNames.filter(n => !hinted.includes(n));
+  for (const name of [...hinted, ...rest]) {
+    const rawRows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: "" });
+    const found = findConsolidatedHeaderRow(rawRows, requiredHeaderSubstrings);
+    if (found) return { sheetName: name, rawRows, headerRow: found.headerRow, headers: found.headers };
+  }
+  if (hinted.length > 0) {
+    const name = hinted[0];
+    const rawRows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: "" });
+    return { sheetName: name, rawRows, headerRow: -1, headers: [] };
+  }
+  return null;
+}
+
+// Case-insensitive, flexible header lookup on one row-object — same
+// convention used throughout the app's other imports (parseDebtSheetRows,
+// toHoldingRecord).
+function consolidatedFindVal(obj, candidates) {
+  const keys = Object.keys(obj);
+  const k = keys.find(k => candidates.some(c => c.toLowerCase() === k.trim().toLowerCase()));
+  return k !== undefined ? obj[k] : undefined;
+}
+
+// Splits a workbook "Accounts" cell ("QM8317" or "QM8317, RNN177") into
+// trimmed, non-empty account codes.
+function parseConsolidatedAccountsCell(v) {
+  return String(v || "").split(",").map(s => s.trim()).filter(Boolean);
+}
+
+function parseConsolidatedEquityObjects(objects) {
+  const records = [];
+  objects.forEach(obj => {
+    const symbol = String(consolidatedFindVal(obj, ["Symbol"]) ?? "").replace(/ /g, "").trim();
+    if (!symbol) return;
+    const isin = String(consolidatedFindVal(obj, ["ISIN"]) ?? "").trim();
+    const sector = String(consolidatedFindVal(obj, ["Sector"]) ?? "").trim();
+    const qty = parseIndianNumber(consolidatedFindVal(obj, ["Total Quantity"])) ?? 0;
+    const avgPrice = parseIndianNumber(consolidatedFindVal(obj, ["Weighted Avg Price", "Weighted Average Price"])) ?? 0;
+    const investedRaw = parseIndianNumber(consolidatedFindVal(obj, ["Invested Value"]));
+    const invested = investedRaw !== null ? investedRaw : qty * avgPrice;
+    const accountCodes = parseConsolidatedAccountsCell(consolidatedFindVal(obj, ["Accounts"]));
+    records.push({
+      key: (isin || symbol).toUpperCase(), displayName: symbol, isin, sector,
+      qty, avgPrice, invested, accountCodes
+    });
+  });
+  return records;
+}
+
+function parseConsolidatedMFObjects(objects) {
+  const records = [];
+  objects.forEach(obj => {
+    const scheme = String(consolidatedFindVal(obj, ["Scheme"]) ?? "").trim();
+    if (!scheme) return;
+    const isin = String(consolidatedFindVal(obj, ["ISIN"]) ?? "").trim();
+    const category = String(consolidatedFindVal(obj, ["Instrument Type"]) ?? "").trim();
+    const units = parseIndianNumber(consolidatedFindVal(obj, ["Total Units"])) ?? 0;
+    const avgNav = parseIndianNumber(consolidatedFindVal(obj, ["Weighted Avg NAV (Cost)", "Weighted Avg NAV"])) ?? 0;
+    const investedRaw = parseIndianNumber(consolidatedFindVal(obj, ["Invested Value"]));
+    const invested = investedRaw !== null ? investedRaw : units * avgNav;
+    const accountCodes = parseConsolidatedAccountsCell(consolidatedFindVal(obj, ["Accounts"]));
+    records.push({
+      key: (isin || scheme).toUpperCase(), displayName: scheme, isin, category,
+      units, avgNav, invested, accountCodes
+    });
+  });
+  return records;
+}
+
+// Locates a future dedicated Gold source sheet, IF one exists — unlike
+// findConsolidatedSheet() (used for Equity/MF), this deliberately never
+// falls back to scanning every sheet's headers: a generic word like
+// "weight" is very likely to also appear inside an unrelated column
+// (e.g. "Weighted Avg Price" on the Equity sheet), and matching that
+// would silently mis-parse the Equity/MF sheets as bogus Gold rows.
+// So Gold detection ONLY ever looks at a sheet whose NAME actually
+// hints at Gold — if none exists (as in the current workbook), Gold
+// import relies entirely on the isGoldSymbol() routing off the Equity
+// sheet, exactly like the older Zerodha importer.
+function findConsolidatedGoldSheet(wb) {
+  const hinted = wb.SheetNames.filter(n => n.toLowerCase().includes("gold"));
+  for (const name of hinted) {
+    const rawRows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: "" });
+    const found = findConsolidatedHeaderRow(rawRows, ["weight"]);
+    if (found) return { sheetName: name, rawRows, headerRow: found.headerRow, headers: found.headers };
+  }
+  if (hinted.length > 0) {
+    const name = hinted[0];
+    const rawRows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: "" });
+    return { sheetName: name, rawRows, headerRow: -1, headers: [] };
+  }
+  return null;
+}
+
+// Best-effort parser for a future dedicated Gold source sheet (none
+// exists in the current workbook — Gold ETFs are pulled off the
+// Consolidated Equity sheet instead, same as the older Zerodha
+// importer's isGoldSymbol() routing). Written now, per section 7 of
+// the brief, purely so adding a Gold sheet later doesn't require
+// touching the pipeline — tries the same header-flexible approach with
+// the field names most likely to appear (Symbol/Name, Form, a
+// Weight/Quantity column, a Rate/Price column, Invested Value,
+// Accounts). Silently returns [] if the essential Weight and Invested
+// Value fields aren't usable, rather than guessing.
+function parseConsolidatedGoldObjects(objects) {
+  const records = [];
+  objects.forEach(obj => {
+    const name = String(consolidatedFindVal(obj, ["Symbol", "Name"]) ?? "").trim();
+    if (!name) return;
+    const isin = String(consolidatedFindVal(obj, ["ISIN"]) ?? "").trim();
+    const form = String(consolidatedFindVal(obj, ["Form"]) ?? "").trim();
+    const qty = parseIndianNumber(consolidatedFindVal(obj, ["Total Weight", "Weight", "Total Quantity", "Quantity"]));
+    if (qty === null) return;
+    const avgPrice = parseIndianNumber(consolidatedFindVal(obj, ["Weighted Avg Rate", "Purchase Rate", "Weighted Avg Price"])) ?? 0;
+    const investedRaw = parseIndianNumber(consolidatedFindVal(obj, ["Invested Value"]));
+    const invested = investedRaw !== null ? investedRaw : qty * avgPrice;
+    const accountCodes = parseConsolidatedAccountsCell(consolidatedFindVal(obj, ["Accounts"]));
+    records.push({
+      key: (isin || name).toUpperCase(), displayName: name, isin, form: form || "ETF",
+      qty, avgPrice, invested, accountCodes
+    });
+  });
+  return records;
+}
+
+// Parses the Summary sheet's per-account and GRAND TOTAL rows, used
+// ONLY for the validation cross-check below — never as the source of
+// actual holdings (see section 8/9 of the brief: the Summary is for
+// validation, the detailed sheets are the real source).
+function parseConsolidatedSummary(wb) {
+  const found = findConsolidatedSheet(wb, ["summary"], ["account", "total invested"]);
+  if (!found || found.headerRow === -1) return null;
+  const objects = consolidatedRowsToObjects(found.rawRows, found.headerRow, found.headers);
+  const byAccount = {};
+  let grandTotal = null;
+  objects.forEach(obj => {
+    const label = String(consolidatedFindVal(obj, ["Account / Total", "Account"]) ?? "").trim();
+    if (!label) return;
+    const rec = {
+      investedEquity: parseIndianNumber(consolidatedFindVal(obj, ["Invested Value (Equity)"])),
+      investedMF: parseIndianNumber(consolidatedFindVal(obj, ["Invested Value (MF)"])),
+      totalInvested: parseIndianNumber(consolidatedFindVal(obj, ["Total Invested Value"])),
+      totalPresent: parseIndianNumber(consolidatedFindVal(obj, ["Total Present Value"]))
+    };
+    if (label.toUpperCase() === "GRAND TOTAL") grandTotal = rec;
+    else byAccount[label] = rec;
+  });
+  return { byAccount, grandTotal };
+}
+
+// Top-level parse: bytes -> validated, normalized records. Throws a
+// short, beginner-friendly Error (never a raw stack trace) when the
+// workbook doesn't look usable at all — callers show err.message
+// directly in an alert(). See findConsolidatedSheet() for why a
+// name-hinted-but-header-mismatched sheet gets a specific message
+// instead of a generic "not found".
+function parseConsolidatedWorkbook(wbData) {
+  let wb;
+  try {
+    wb = XLSX.read(wbData, { type: "array", cellDates: true });
+  } catch (e) {
+    throw new Error("Import couldn't be completed because this file isn't a readable Excel workbook (.xlsx).");
+  }
+  if (!wb.SheetNames || wb.SheetNames.length === 0) {
+    throw new Error("Import couldn't be completed because the workbook is empty.");
+  }
+
+  const eqSheet = findConsolidatedSheet(wb, ["equity", "stock"], ["symbol", "total quantity"]);
+  if (eqSheet && eqSheet.headerRow === -1) {
+    throw new Error(`Import couldn't be completed because the "${eqSheet.sheetName}" sheet is missing required columns (Symbol, Total Quantity).`);
+  }
+  const mfSheetFound = findConsolidatedSheet(wb, ["mutual", "mf"], ["scheme", "total units"]);
+  if (mfSheetFound && mfSheetFound.headerRow === -1) {
+    throw new Error(`Import couldn't be completed because the "${mfSheetFound.sheetName}" sheet is missing required columns (Scheme, Total Units).`);
+  }
+  const goldSheetFound = findConsolidatedGoldSheet(wb);
+
+  const equityAll = eqSheet ? parseConsolidatedEquityObjects(consolidatedRowsToObjects(eqSheet.rawRows, eqSheet.headerRow, eqSheet.headers)) : [];
+  const mf = mfSheetFound ? parseConsolidatedMFObjects(consolidatedRowsToObjects(mfSheetFound.rawRows, mfSheetFound.headerRow, mfSheetFound.headers)) : [];
+  const goldFromOwnSheet = (goldSheetFound && goldSheetFound.headerRow !== -1)
+    ? parseConsolidatedGoldObjects(consolidatedRowsToObjects(goldSheetFound.rawRows, goldSheetFound.headerRow, goldSheetFound.headers))
+    : [];
+
+  // Gold ETFs live on the Equity sheet (same convention as the older
+  // Zerodha importer) — split them out by symbol before the rest of
+  // the pipeline ever sees them as "Equity".
+  const equity = [], goldFromEquity = [];
+  equityAll.forEach(r => (isGoldSymbol(r.displayName) ? goldFromEquity : equity).push(r));
+  const gold = [...goldFromEquity.map(r => ({ ...r, form: "ETF" })), ...goldSheetFound ? goldFromOwnSheet : []];
+
+  if (equity.length === 0 && mf.length === 0 && gold.length === 0) {
+    throw new Error("Import couldn't be completed because no recognizable Equity, Mutual Fund or Gold holdings were found in this workbook.");
+  }
+
+  const accountsDetected = new Set();
+  [...equity, ...mf, ...gold].forEach(r => r.accountCodes.forEach(c => accountsDetected.add(c)));
+
+  const summary = parseConsolidatedSummary(wb);
+
+  // The workbook's own Summary sheet computes "Invested Value (Equity)"
+  // by summing the Consolidated Equity sheet's Invested Value column
+  // as-is — it has no idea we then split Gold ETFs (e.g. GOLDBEES-E)
+  // out of that sheet into `gold`. So a straight compare of our
+  // (Gold-ETF-excluded) equity total against the Summary's equity
+  // total would always show a false "mismatch" equal to the Gold ETF
+  // amount. Carrying that amount alongside lets the validator add it
+  // back before comparing, without ever double-counting it in the
+  // actual `equity`/`gold` arrays or in `state`.
+  const goldFromEquityInvested = goldFromEquity.reduce((s, r) => s + (Number(r.invested) || 0), 0);
+
+  return { equity, mf, gold, goldFromEquityInvested, accountsDetected: [...accountsDetected].sort(), summary };
+}
+
+// Builds sourceAccounts[] for one holding. A single-account holding
+// gets its account's exact qty/invested; a holding shared by more than
+// one account has no per-account breakdown in this workbook (only the
+// combined total + the list of accounts), so — per Ganesh's choice —
+// it's split evenly across the co-owning accounts and flagged
+// `estimated: true`.
+function buildSourceAccounts(accountCodes, totalQty, totalInvested, accountOwners) {
+  const codes = accountCodes.length ? accountCodes : ["(unknown account)"];
+  const n = codes.length;
+  const estimated = n > 1;
+  return codes.map(code => ({
+    accountCode: code,
+    personName: accountOwners[code] || null,
+    qty: totalQty / n,
+    invested: totalInvested / n,
+    estimated
+  }));
+}
+
+// The matching key for an EXISTING row — mirrors how `rec.key` is
+// built during parsing (ISIN when known, else the display name/symbol
+// uppercased) so a holding already on file can be found regardless of
+// whether it was added by hand, by the older Zerodha importer, or by
+// a previous consolidated import.
+function consolidatedRowKey(row) {
+  const isin = String(row.isin || "").trim().toUpperCase();
+  if (isin) return isin;
+  return String(row.name || "").trim().toUpperCase();
+}
+
+// Builds the match/add/remove plan for one asset class's imported
+// records against its existing tracker rows. See the big comment
+// block above this section for the remove rule (only a row that
+// already carries sourceAccounts, i.e. came from a prior consolidated
+// import, is ever auto-removed for having dropped out of the file).
+function buildConsolidatedMergePlan(records, existingArray) {
+  const seenKeys = new Set(records.map(r => r.key));
+  const matched = [], added = [];
+  records.forEach(rec => {
+    const existing = existingArray.find(row => consolidatedRowKey(row) === rec.key);
+    if (existing) matched.push({ existing, rec }); else added.push(rec);
+  });
+  const removed = existingArray.filter(row => row.sourceAccounts && !seenKeys.has(consolidatedRowKey(row)));
+  return { matched, added, removed };
+}
+
+function applyConsolidatedEquityPlan(plan, accountOwners) {
+  const addedNames = [];
+  plan.matched.forEach(({ existing, rec }) => {
+    existing.units = rec.qty;
+    existing.invested = rec.invested;
+    if (rec.sector) existing.sector = rec.sector;
+    if (rec.isin) existing.isin = rec.isin;
+    existing.sourceAccounts = buildSourceAccounts(rec.accountCodes, rec.qty, rec.invested, accountOwners);
+  });
+  plan.added.forEach(rec => {
+    const row = {
+      id: uid(), name: rec.displayName, invested: rec.invested, units: rec.qty, ltp: 0,
+      sector: rec.sector || "", isin: rec.isin || "", livePricePending: true,
+      sourceAccounts: buildSourceAccounts(rec.accountCodes, rec.qty, rec.invested, accountOwners)
+    };
+    state.equity.push(row);
+    addedNames.push(rec.displayName);
+  });
+  if (plan.removed.length) {
+    const removeIds = new Set(plan.removed.map(r => r.id));
+    state.equity = state.equity.filter(r => !removeIds.has(r.id));
+  }
+  return { added: addedNames, removed: plan.removed.map(r => r.name) };
+}
+
+function applyConsolidatedMFPlan(plan, accountOwners) {
+  const addedNames = [];
+  plan.matched.forEach(({ existing, rec }) => {
+    existing.units = rec.units;
+    existing.invested = rec.invested;
+    if (rec.category) existing.category = rec.category;
+    if (rec.isin) existing.isin = rec.isin;
+    existing.sourceAccounts = buildSourceAccounts(rec.accountCodes, rec.units, rec.invested, accountOwners);
+  });
+  plan.added.forEach(rec => {
+    const row = {
+      id: uid(), name: rec.displayName, symbol: "", category: rec.category || "",
+      invested: rec.invested, units: rec.units, unitPrice: 0, remarks: "",
+      isin: rec.isin || "", livePricePending: true,
+      sourceAccounts: buildSourceAccounts(rec.accountCodes, rec.units, rec.invested, accountOwners)
+    };
+    state.mf.push(row);
+    addedNames.push(rec.displayName);
+  });
+  if (plan.removed.length) {
+    const removeIds = new Set(plan.removed.map(r => r.id));
+    state.mf = state.mf.filter(r => !removeIds.has(r.id));
+  }
+  return { added: addedNames, removed: plan.removed.map(r => r.name) };
+}
+
+function applyConsolidatedGoldPlan(plan, accountOwners) {
+  const addedNames = [];
+  plan.matched.forEach(({ existing, rec }) => {
+    existing.weight = rec.qty;
+    existing.invested = rec.invested;
+    existing.purchaseRate = rec.qty > 0 ? rec.invested / rec.qty : existing.purchaseRate;
+    if (rec.isin) existing.isin = rec.isin;
+    existing.sourceAccounts = buildSourceAccounts(rec.accountCodes, rec.qty, rec.invested, accountOwners);
+  });
+  plan.added.forEach(rec => {
+    const row = {
+      id: uid(), name: rec.displayName, form: rec.form || "ETF", weight: rec.qty,
+      purchaseRate: rec.avgPrice || (rec.qty > 0 ? rec.invested / rec.qty : 0),
+      invested: rec.invested, currentRate: 0, notes: "", isin: rec.isin || "", livePricePending: true,
+      sourceAccounts: buildSourceAccounts(rec.accountCodes, rec.qty, rec.invested, accountOwners)
+    };
+    state.gold.push(row);
+    addedNames.push(rec.displayName);
+  });
+  if (plan.removed.length) {
+    const removeIds = new Set(plan.removed.map(r => r.id));
+    state.gold = state.gold.filter(r => !removeIds.has(r.id));
+  }
+  return { added: addedNames, removed: plan.removed.map(r => r.name) };
+}
+
+// Grand-total cross-check against the Summary sheet (section 31). Only
+// checked at the whole-portfolio level, deliberately NOT per-account —
+// a shared holding is split evenly across its accounts (see
+// buildSourceAccounts), which on its own would make any single
+// account's total disagree with the Summary's real (broker-exact)
+// per-account figure even though nothing is actually wrong. Summed
+// across every account that difference cancels out, so the grand
+// total is still a meaningful check for an actual parsing problem.
+function validateConsolidatedAgainstSummary(parsed) {
+  const warnings = [];
+  if (!parsed.summary || !parsed.summary.grandTotal) return warnings;
+  const g = parsed.summary.grandTotal;
+  const sum = (arr) => arr.reduce((s, r) => s + (Number(r.invested) || 0), 0);
+  // Add Gold-ETF-invested back in for the equity comparison only — see
+  // the comment on `goldFromEquityInvested` in parseConsolidatedWorkbook.
+  // The Summary sheet counts those rows as Equity (they live on the
+  // Equity sheet); we've already moved them into `gold` for the rest
+  // of the app, so comparing raw `eqInvested` to the Summary would flag
+  // a false mismatch every time the workbook contains a Gold ETF.
+  const eqInvested = sum(parsed.equity) + (Number(parsed.goldFromEquityInvested) || 0);
+  const mfInvested = sum(parsed.mf);
+  const goldInvested = sum(parsed.gold);
+  const totalInvested = sum(parsed.equity) + mfInvested + goldInvested;
+  const tol = (base) => Math.max(1, Math.abs(base) * 0.001);
+  if (g.investedEquity !== null && Math.abs(eqInvested - g.investedEquity) > tol(g.investedEquity)) {
+    warnings.push(`Equity invested total (${fmtINR(eqInvested)}) differs from the workbook's Summary sheet (${fmtINR(g.investedEquity)}).`);
+  }
+  if (g.investedMF !== null && Math.abs(mfInvested - g.investedMF) > tol(g.investedMF)) {
+    warnings.push(`Mutual Fund invested total (${fmtINR(mfInvested)}) differs from the workbook's Summary sheet (${fmtINR(g.investedMF)}).`);
+  }
+  if (g.totalInvested !== null && Math.abs(totalInvested - g.totalInvested) > tol(g.totalInvested)) {
+    warnings.push(`Total invested (${fmtINR(totalInvested)}) differs from the workbook's Summary GRAND TOTAL (${fmtINR(g.totalInvested)}).`);
+  }
+  return warnings;
+}
+
+// Builds everything the preview modal needs: per-asset merge plans,
+// which accounts were detected (and which aren't mapped to a person
+// yet), and the Summary validation warnings — all computed up front,
+// without touching `state`, so Cancel is always a true no-op.
+function buildConsolidatedImportPreview(parsed) {
+  const equityPlan = buildConsolidatedMergePlan(parsed.equity, state.equity);
+  const mfPlan = buildConsolidatedMergePlan(parsed.mf, state.mf);
+  const goldPlan = buildConsolidatedMergePlan(parsed.gold, state.gold);
+  const unmappedAccounts = parsed.accountsDetected.filter(code => !state.accountOwners[code]);
+  const warnings = validateConsolidatedAgainstSummary(parsed);
+  return { parsed, equityPlan, mfPlan, goldPlan, unmappedAccounts, warnings };
+}
+
+// Shows the simple, non-technical preview (section 10 of the brief) —
+// accounts detected (with an inline "Assign Person" box for any
+// unmapped ones), holding counts, and any validation warnings — then
+// applies all three asset classes together on confirm. Any account
+// names typed into the unmapped-account boxes are saved to
+// state.accountOwners the moment Import is confirmed, so they're used
+// immediately for this same import's ownership split.
+function openConsolidatedImportPreview(preview, sourceMeta) {
+  const { parsed, equityPlan, mfPlan, goldPlan, unmappedAccounts, warnings } = preview;
+  const mappedAccounts = parsed.accountsDetected.filter(code => state.accountOwners[code]);
+
+  const countRow = (label, plan) => plan.matched.length + plan.added.length + plan.removed.length === 0
+    ? ""
+    : `<div class="import-stat"><div class="n">${plan.matched.length + plan.added.length}</div><div class="l">${escapeAttr(label)}</div></div>`;
+
+  const accountRows = mappedAccounts.map(code =>
+    `<li><b>${escapeAttr(state.accountOwners[code])}</b> — ${escapeAttr(code)}</li>`
+  ).join("");
+
+  const unmappedRows = unmappedAccounts.map(code => `
+    <li class="warn">
+      <b>${escapeAttr(code)}</b> — not mapped to a person yet.
+      <input type="text" class="consolidated-assign-input" data-account="${escapeAttr(code)}" placeholder="Assign a name (optional)" style="margin-left:8px;width:180px;">
+    </li>
+  `).join("");
+
+  const html = `
+    <p class="settings-note" style="margin-top:0">Source: ${escapeAttr(sourceMeta.sourceLabel)}${sourceMeta.fileName ? ` — ${escapeAttr(sourceMeta.fileName)}` : ""}</p>
+    <h4>Accounts detected</h4>
+    <ul>${accountRows}${unmappedRows}</ul>
+    ${unmappedAccounts.length ? `<p class="settings-note">${unmappedAccounts.length} account${unmappedAccounts.length === 1 ? " is" : "s are"} not mapped to a person. You can type a name above, or leave it blank and those holdings will import as "Unassigned" — nothing is lost either way, and you can map it later from Settings → People.</p>` : ""}
+
+    <h4>Data found</h4>
+    <div class="import-stat-row">
+      ${countRow("Equity Holdings", equityPlan)}
+      ${countRow("Mutual Funds", mfPlan)}
+      ${countRow("Gold Holdings", goldPlan)}
+    </div>
+    ${(equityPlan.removed.length || mfPlan.removed.length || goldPlan.removed.length)
+      ? `<p class="settings-note warn">No longer in this file, so will be removed as exited: ${[...equityPlan.removed, ...mfPlan.removed, ...goldPlan.removed].map(escapeAttr).join(", ")}</p>`
+      : ""}
+    ${warnings.length ? `<p class="settings-note warn">${warnings.map(escapeAttr).join("<br>")}</p>` : ""}
+    <p class="settings-note">Quantity, Units and Invested Value come straight from this workbook. Current Value, P&amp;L and allocation % continue to be calculated live in-app, exactly as before.</p>
+  `;
+
+  openModal("Import Investments — Preview", html, [
+    { label: "Cancel", onClick: closeModal },
+    {
+      label: "Import & Update Portfolio", primary: true, onClick: () => {
+        modalBodyEl.querySelectorAll(".consolidated-assign-input").forEach(input => {
+          const name = input.value.trim();
+          if (name) state.accountOwners[input.dataset.account] = name;
+        });
+        const eqResult = applyConsolidatedEquityPlan(equityPlan, state.accountOwners);
+        const mfResult = applyConsolidatedMFPlan(mfPlan, state.accountOwners);
+        const goldResult = applyConsolidatedGoldPlan(goldPlan, state.accountOwners);
+
+        state.lastImport = {
+          fileName: sourceMeta.fileName || "", importedAt: new Date().toISOString(), source: sourceMeta.source,
+          accounts: parsed.accountsDetected.map(code => ({ code, person: state.accountOwners[code] || null })),
+          counts: { equity: equityPlan.matched.length + equityPlan.added.length, mf: mfPlan.matched.length + mfPlan.added.length, gold: goldPlan.matched.length + goldPlan.added.length },
+          totals: {
+            invested: equityTotals().invested + mfTotals().invested + goldTotals().invested,
+          },
+          unmappedAccounts: unmappedAccounts.filter(code => !state.accountOwners[code]),
+          warnings
+        };
+        saveState();
+        renderAll();
+        closeModal();
+
+        const newNames = [...eqResult.added, ...mfResult.added, ...goldResult.added];
+        const removedNames = [...eqResult.removed, ...mfResult.removed, ...goldResult.removed];
+        openModal(
+          "Import successful",
+          `<div class="import-stat-row">
+             <div class="import-stat"><div class="n">${parsed.accountsDetected.length}</div><div class="l">Accounts</div></div>
+             <div class="import-stat"><div class="n">${equityPlan.matched.length + equityPlan.added.length}</div><div class="l">Equity Holdings</div></div>
+             <div class="import-stat"><div class="n">${mfPlan.matched.length + mfPlan.added.length}</div><div class="l">Mutual Funds</div></div>
+             <div class="import-stat"><div class="n">${goldPlan.matched.length + goldPlan.added.length}</div><div class="l">Gold Holdings</div></div>
+           </div>
+           <p>Total invested: ${fmtINR(equityTotals().invested + mfTotals().invested + goldTotals().invested)}</p>
+           ${newNames.length ? `<p class="settings-note">New: ${newNames.map(escapeAttr).join(", ")}</p>` : ""}
+           ${removedNames.length ? `<p class="settings-note">Removed (no longer in this file): ${removedNames.map(escapeAttr).join(", ")}</p>` : ""}
+           <p class="settings-note">New holdings show live price as "Pending" until the next automatic price refresh picks them up.</p>`,
+          [{ label: "Got it", primary: true, onClick: () => { closeModal(); openSettingsModal(); } }]
+        );
+      }
+    }
+  ]);
+}
+
+// Runs the shared pipeline on already-obtained workbook bytes — the
+// one place Local Upload and Google Drive converge, per the brief's
+// explicit requirement that both sources use the exact same
+// processing. Errors are shown as a plain alert() (parseConsolidatedWorkbook
+// only ever throws short, human-readable messages, never a raw stack trace).
+function runConsolidatedImportPipeline(arrayBuffer, sourceMeta) {
+  let parsed;
+  try {
+    parsed = parseConsolidatedWorkbook(arrayBuffer);
+  } catch (err) {
+    alert(err && err.message ? err.message : "Import couldn't be completed — this file doesn't look like a valid consolidated holdings workbook.");
+    return;
+  }
+  const preview = buildConsolidatedImportPreview(parsed);
+  openConsolidatedImportPreview(preview, sourceMeta);
+}
+
+async function handleLocalConsolidatedFile(fileList) {
+  const statusEl = document.getElementById("investmentsImportStatus");
+  const file = (fileList || [])[0];
+  if (!file) return;
+  if (statusEl) statusEl.textContent = `Reading "${file.name}"...`;
+  let arrayBuffer;
+  try {
+    arrayBuffer = await file.arrayBuffer();
+  } catch (err) {
+    if (statusEl) statusEl.textContent = "";
+    alert("Could not read that file.");
+    return;
+  }
+  if (statusEl) statusEl.textContent = "";
+  runConsolidatedImportPipeline(arrayBuffer, { sourceLabel: "Local Upload", fileName: file.name, source: "Local" });
+}
+
+async function runConsolidatedDriveImport() {
+  const statusEl = document.getElementById("investmentsImportStatus");
+  if (!state.googleDriveClientId || !state.googleDriveApiKey) {
+    alert('Google Drive import needs a one-time setup: add a "Google Drive Client ID" and "Google Drive API Key" in Settings. See the note there for how to create them in Google Cloud Console.');
+    return;
+  }
+  if (statusEl) statusEl.textContent = "Opening Google Drive...";
+  let files, accessToken;
+  try {
+    await ensurePickerLoaded();
+    await ensureGisLoaded();
+    accessToken = await requestDriveAccessToken();
+    files = await openDrivePicker(accessToken, { multiSelect: false });
+  } catch (err) {
+    if (statusEl) statusEl.textContent = "";
+    alert("Could not open Google Drive: " + (err && err.message ? err.message : "unknown error"));
+    return;
+  }
+  if (!files || files.length === 0) { if (statusEl) statusEl.textContent = ""; return; } // person cancelled the picker
+  const file = files[0];
+  let arrayBuffer;
+  try {
+    if (statusEl) statusEl.textContent = `Downloading "${file.name}"...`;
+    arrayBuffer = await downloadDriveFileAsArrayBuffer(file, accessToken);
+  } catch (err) {
+    if (statusEl) statusEl.textContent = "";
+    alert(err && err.message ? err.message : "Could not download that file from Drive.");
+    return;
+  }
+  if (statusEl) statusEl.textContent = "";
+  runConsolidatedImportPipeline(arrayBuffer, { sourceLabel: "Google Drive", fileName: file.name, source: "Google Drive" });
+}
+
+// "Import Investments" (Settings) -> choose Local Upload or Google Drive.
+function openConsolidatedImportChooser() {
+  openModal(
+    "Import Investments",
+    `<p>Update your Equity, Mutual Fund and Gold holdings from your latest consolidated holdings workbook (Summary + Consolidated Equity + Consolidated Mutual Funds sheets). Local Upload and Google Drive both run through the exact same validation and preview.</p>
+     <p class="settings-note">This replaces the current snapshot with what's in the file: holdings still present are updated, new ones are added, and any that have disappeared from the file are removed as exited. You'll see a full preview — nothing changes until you confirm.</p>`,
+    [
+      { label: "Local Upload", onClick: () => { closeModal(); document.getElementById("importInvestmentsFile").click(); } },
+      { label: "Fetch from Google Drive", primary: true, onClick: () => { closeModal(); runConsolidatedDriveImport(); } }
+    ]
+  );
 }
 
 
@@ -11197,6 +12089,39 @@ function renderBrand() {
    openModal() runs rather than once at page load.
    ============================================================ */
 
+// One editable row per known account code, rebuilt fresh each time the
+// Settings modal opens (see openSettingsModal). Uses the same
+// add/remove-row convention as the rest of the modal — collected back
+// into state.accountOwners on Save.
+function accountOwnersRowsHTML() {
+  return Object.entries(state.accountOwners).map(([code, name]) => `
+    <div class="settings-field acct-owner-row" style="display:flex;gap:8px;align-items:center;">
+      <input type="text" class="acct-owner-code" value="${escapeAttr(code)}" placeholder="Account code" style="width:140px;">
+      <input type="text" class="acct-owner-name" value="${escapeAttr(name)}" placeholder="Person name" style="flex:1;">
+      <button type="button" class="icon-btn acct-owner-remove" title="Remove">✕</button>
+    </div>
+  `).join("");
+}
+
+// Compact "Last Import" status (section 37 of the Consolidated
+// Holdings brief) — shown right under the Import Investments button.
+function lastImportStatusHTML() {
+  const li = state.lastImport;
+  if (!li) return `<p class="settings-note" style="margin-top:0">No import yet.</p>`;
+  const when = new Date(li.importedAt);
+  const whenText = isNaN(when.getTime()) ? "" : `${when.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}, ${when.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", hour12: true })}`;
+  const accountsText = (li.accounts || []).map(a => a.person ? `${a.person} (${a.code})` : `${a.code} (unassigned)`).join(", ") || "—";
+  const issues = [
+    ...((li.unmappedAccounts || []).map(c => `${c} not mapped to a person`)),
+    ...(li.warnings || [])
+  ];
+  return `
+    <p class="settings-note" style="margin-top:0"><b>Last imported:</b> ${escapeAttr(whenText)} · Source: ${escapeAttr(li.source || "")} · File: ${escapeAttr(li.fileName || "")}</p>
+    <p class="settings-note" style="margin-top:0">${li.counts.equity} Equity · ${li.counts.mf} Mutual Funds · ${li.counts.gold} Gold · Total invested ${fmtINR(li.totals.invested)} · Accounts: ${escapeAttr(accountsText)}</p>
+    <p class="settings-note ${issues.length ? "warn" : ""}" style="margin-top:0">${issues.length ? "⚠ " + escapeAttr(issues.join(" · ")) : "✓ Up to date"}</p>
+  `;
+}
+
 function openSettingsModal() {
   const tbByAccount = {};
   tradeBook.trades.forEach(t => { tbByAccount[t.accountId || "(unlabeled)"] = (tbByAccount[t.accountId || "(unlabeled)"] || 0) + 1; });
@@ -11287,13 +12212,21 @@ function openSettingsModal() {
       <input type="text" id="settingsGoogleDriveApiKey" placeholder="AIza..." value="${escapeAttr(state.googleDriveApiKey || DEFAULT_GOOGLE_DRIVE_API_KEY)}">
     </div>
 
+    <h4>People</h4>
+    <p class="settings-note" style="margin-top:0">Maps each account code in your consolidated holdings workbook to a person, so Insights can show who owns what. The account code itself is always kept in the imported data — never replaced by the name. Add a row for each new account/family member; leaving the name blank on an account leaves it "Unassigned" in Insights.</p>
+    <div id="accountOwnersList">${accountOwnersRowsHTML()}</div>
+    <div class="settings-actions">
+      <button class="btn btn-ghost" type="button" id="btnAddAccountOwner">+ Add Account</button>
+    </div>
+
     <h4>Imports</h4>
     <p class="settings-note" style="margin-top:0">Every "bring in fresh data" action, in one place — Screener fundamentals (Stock Analysis) and the Debt Google Sheet import (Debt tab) now live here too instead of on their own tabs.</p>
-    <p class="settings-note" style="margin-top:0"><b>Investments</b> — Zerodha Holdings for Equity, Mutual Funds and Gold together in one step. Local file selection supports choosing several files at once (one per Zerodha account); matching holdings across files are combined automatically and you'll see a full preview before anything is applied.</p>
+    <p class="settings-note" style="margin-top:0"><b>Investments</b> — Equity, Mutual Funds and Gold together in one step, from your consolidated holdings workbook (Summary + Consolidated Equity + Consolidated Mutual Funds sheets). Local Upload and Fetch from Google Drive both run the same validation and preview; importing updates the current snapshot (existing holdings updated, new ones added, anything no longer in the file removed as exited) rather than piling up duplicates.</p>
     <div class="settings-actions">
       <button class="btn" id="settingsBtnImportInvestments">Import Investments</button>
       <span class="status-tag" id="investmentsImportStatus"></span>
     </div>
+    ${lastImportStatusHTML()}
 
     <p class="settings-note"><b>Screener Data</b> — fundamentals (PE, ROE, growth, etc.) for the Stock Analysis tab, matched to your Equity holdings by Symbol. Re-importing replaces the whole Screener dataset.</p>
     <div class="settings-actions">
@@ -11371,6 +12304,13 @@ function openSettingsModal() {
           midCap: parseLimit("settingsMfTargetMid", DEFAULT_MF_CATEGORY_TARGETS.midCap),
           smallCap: parseLimit("settingsMfTargetSmall", DEFAULT_MF_CATEGORY_TARGETS.smallCap)
         };
+        const newOwners = {};
+        modalBodyEl.querySelectorAll("#accountOwnersList .acct-owner-row").forEach(row => {
+          const code = row.querySelector(".acct-owner-code").value.trim();
+          const name = row.querySelector(".acct-owner-name").value.trim();
+          if (code) newOwners[code] = name; // blank name kept as "" -> Unassigned, code preserved
+        });
+        state.accountOwners = newOwners;
         saveState();
         renderBrand();
         renderEquity();
@@ -11388,7 +12328,27 @@ function openSettingsModal() {
   document.getElementById("settingsBtnExportJSON").addEventListener("click", runJsonExport);
   document.getElementById("settingsBtnImportInvestments").addEventListener("click", () => {
     closeModal();
-    openImportChooser();
+    openConsolidatedImportChooser();
+  });
+  document.getElementById("btnAddAccountOwner").addEventListener("click", () => {
+    const list = document.getElementById("accountOwnersList");
+    const row = document.createElement("div");
+    row.className = "settings-field acct-owner-row";
+    row.style.cssText = "display:flex;gap:8px;align-items:center;";
+    row.innerHTML = `
+      <input type="text" class="acct-owner-code" placeholder="Account code" style="width:140px;">
+      <input type="text" class="acct-owner-name" placeholder="Person name" style="flex:1;">
+      <button type="button" class="icon-btn acct-owner-remove" title="Remove">✕</button>
+    `;
+    list.appendChild(row);
+    row.querySelector(".acct-owner-code").focus();
+  });
+  // Event delegation so a row added after the modal opened (via the
+  // button above) is removable too, without re-wiring anything.
+  document.getElementById("accountOwnersList").addEventListener("click", (e) => {
+    if (e.target.classList.contains("acct-owner-remove")) {
+      e.target.closest(".acct-owner-row")?.remove();
+    }
   });
   document.getElementById("settingsBtnImportScreener").addEventListener("click", openScreenerImportChooser);
   document.getElementById("settingsBtnImportDebtSheet").addEventListener("click", async () => {

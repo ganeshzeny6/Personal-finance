@@ -1862,6 +1862,30 @@
   .import-stat .n{font-family:var(--font-mono);font-size:18px;font-weight:600;color:var(--text);}
   .import-stat .l{font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;}
   .import-stat.warn .n{color:var(--negative);}
+  /* Consolidated Holdings import (Settings -> Imports): reused for any
+     warning/attention line — unmapped accounts, Summary-sheet mismatch
+     warnings, holdings removed as exited. */
+  .settings-note.warn, li.warn{color:var(--warning);}
+
+  /* Insights -> "Who owns what" (person view). Reuses .dash-alloc-*,
+     .debt-chip* and .debt-holding-label/-val elsewhere for the
+     allocation bars, person selector and stat pairs — these are just
+     the layout containers specific to this section. */
+  .insights-person-card{margin-bottom:16px;}
+  .insights-person-header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:14px;}
+  .insights-person-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;}
+  .insights-person-summary-card{background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:14px 16px;cursor:pointer;}
+  .insights-person-summary-card:hover{border-color:var(--gold-soft);}
+  .insights-person-name{font-weight:600;font-size:14px;margin-bottom:10px;}
+  .insights-person-stats{display:flex;flex-wrap:wrap;gap:14px;}
+  .insights-person-detail-stats{display:flex;flex-wrap:wrap;gap:26px;margin-bottom:18px;}
+  .insights-person-alloc{margin-bottom:18px;}
+  .insights-person-holdings-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px;}
+  .insights-person-holding-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--border);font-size:12.5px;}
+  .insights-person-holding-row:first-child{border-top:none;}
+  .insights-person-holding-name{color:var(--text);}
+  .insights-person-holding-val{font-family:var(--font-mono);color:var(--text);white-space:nowrap;}
+  .insights-person-est-note{font-size:10.5px;color:var(--text-faint);margin-top:10px;}
   .modal-footer{padding:14px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;}
 
   footer.app-footer{text-align:center;color:var(--text-faint);font-size:11px;padding:20px;}
@@ -2423,7 +2447,7 @@
     </header>
 
     <input type="file" id="importFile" accept="application/json" style="display:none">
-    <input type="file" id="importInvestmentsFile" accept=".xlsx,.xls" multiple style="display:none">
+    <input type="file" id="importInvestmentsFile" accept=".xlsx,.xls" style="display:none">
 
     <main>
 
@@ -3112,6 +3136,17 @@
   <section class="panel" id="panel-insights">
     <h2 class="section-title">Insights</h2>
     <p class="section-sub">A closer look at what's driving your Equity and Mutual Fund allocations — computed from the same figures as their tabs, nothing recalculated differently.</p>
+
+    <div class="card insights-person-card">
+      <div class="insights-person-header">
+        <div>
+          <h3 style="margin-bottom:2px;">Who owns what</h3>
+          <p class="section-sub" style="margin:0;">Equity, Mutual Funds and Gold, by person — from your consolidated holdings import. Debt and Cash are household-level and aren't split by person.</p>
+        </div>
+        <div class="debt-chip-group" id="insightsPersonTabs"></div>
+      </div>
+      <div id="insightsPersonBody"></div>
+    </div>
 
     <div class="insights-grid">
       <div class="card">
