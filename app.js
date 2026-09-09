@@ -10628,12 +10628,7 @@ function parseConsolidatedEquityObjects(objects) {
     const invested = investedRaw !== null ? investedRaw : qty * avgPrice;
     const accountCodes = parseConsolidatedAccountsCell(consolidatedFindVal(obj, ["Accounts"]));
     records.push({
-      // Keyed by Symbol, NOT ISIN — see the comment on consolidatedRowKey()
-      // below for why: nothing else in the app (manual entries, the older
-      // Zerodha importer, Screener import) ever stores an ISIN on a
-      // holding, so an ISIN-first key would never match an existing row
-      // and would silently create a duplicate on every import.
-      key: symbol.toUpperCase(), displayName: symbol, isin, sector,
+      displayName: symbol, isin, sector,
       qty, avgPrice, invested, accountCodes
     });
   });
@@ -10653,8 +10648,7 @@ function parseConsolidatedMFObjects(objects) {
     const invested = investedRaw !== null ? investedRaw : units * avgNav;
     const accountCodes = parseConsolidatedAccountsCell(consolidatedFindVal(obj, ["Accounts"]));
     records.push({
-      // Keyed by Scheme name, NOT ISIN — see consolidatedRowKey() below.
-      key: scheme.toUpperCase(), displayName: scheme, isin, category,
+      displayName: scheme, isin, category,
       units, avgNav, invested, accountCodes
     });
   });
@@ -10710,8 +10704,7 @@ function parseConsolidatedGoldObjects(objects) {
     const invested = investedRaw !== null ? investedRaw : qty * avgPrice;
     const accountCodes = parseConsolidatedAccountsCell(consolidatedFindVal(obj, ["Accounts"]));
     records.push({
-      // Keyed by name, NOT ISIN — see consolidatedRowKey() below.
-      key: name.toUpperCase(), displayName: name, isin, form: form || "ETF",
+      displayName: name, isin, form: form || "ETF",
       qty, avgPrice, invested, accountCodes
     });
   });
@@ -10825,116 +10818,128 @@ function buildSourceAccounts(accountCodes, totalQty, totalInvested, accountOwner
   }));
 }
 
-// The matching key for an EXISTING row — the uppercased Symbol/Scheme
-// name (row.name), mirroring `rec.key` from parsing above. Deliberately
-// NOT ISIN-based, even though each holding's ISIN is also known and
-// stored: nothing else in the app ever writes an ISIN onto a
-// state.equity/mf/gold row (not manual entry, not the older Zerodha
-// importer, not Screener import — grep for `.isin =` and the only
-// writers are this consolidated-import pipeline itself and the
-// unrelated Trade Book CSV parser). So a holding added before this
-// feature existed always has isin === "", and an ISIN-first key would
-// compare that "" against the freshly-parsed workbook's real ISIN,
-// never match, and create a duplicate row on every single import
-// instead of updating the existing one. Name/Symbol is the one
-// identifier every equity/MF/gold row has always had, so it's the only
-// safe match key here — exactly what the older Zerodha importer's own
-// matchFn already uses (see EQUITY_ZERODHA_IMPORT_KINDS above).
-function consolidatedRowKey(row) {
-  return String(row.name || "").trim().toUpperCase();
+// Builds a name -> row lookup over an existing asset-class array, used
+// ONLY to carry forward per-holding data the workbook itself doesn't
+// know about (an already-fetched live price, a manually-entered ATH
+// price, hand-typed remarks/notes, the Screener-matched `symbol` field
+// used for logos/fundamentals) across an import. This is enrichment
+// only — it is NEVER used to decide whether a holding is "the same" as
+// an existing one.
+//
+// That's deliberate, and it's the fix for two rounds of real duplicate
+// bugs: first an ISIN-first match key (existing rows never had an ISIN
+// stored, so it never matched anything pre-existing), then a
+// Symbol/name-first key (which still failed for holdings whose name
+// didn't line up byte-for-byte with the workbook — e.g. leftover rows
+// from the older Zerodha importer, or hand entry). Both were "try to
+// match, fall back to adding a new row" — and any matching miss, for
+// any reason, silently created a duplicate instead of updating.
+//
+// So there is no more matching-based merge at all. Every "Import
+// Investments" run fully REPLACES state.equity/mf/gold with fresh rows
+// built straight from the workbook — see applyConsolidatedEquityPlan
+// etc. below. A holding that's genuinely still there gets its live
+// price/ATH/remarks carried forward by name (best-effort, cosmetic
+// only); a holding whose name doesn't carry forward just starts fresh,
+// exactly like a brand-new holding would. Either way there is no
+// possible path to a duplicate, because nothing is ever appended to
+// what's already there — the whole array is replaced.
+function consolidatedCarryForwardMap(existingArray) {
+  const byName = new Map();
+  (existingArray || []).forEach(row => {
+    const key = String(row.name || "").trim().toUpperCase();
+    if (!key) return;
+    const existing = byName.get(key);
+    // If the same name shows up more than once — exactly the leftover
+    // state from the duplicate-import bugs this replaced — don't just
+    // take whichever copy happens to come last in the array. Prefer
+    // whichever copy already has a real live price fetched, so a
+    // still-"Pending" duplicate can never clobber a copy that already
+    // has good data.
+    if (!existing || (existing.livePricePending && !row.livePricePending)) {
+      byName.set(key, row);
+    }
+  });
+  return byName;
 }
 
-// Builds the match/add/remove plan for one asset class's imported
-// records against its existing tracker rows. See the big comment
-// block above this section for the remove rule (only a row that
-// already carries sourceAccounts, i.e. came from a prior consolidated
-// import, is ever auto-removed for having dropped out of the file).
-function buildConsolidatedMergePlan(records, existingArray) {
-  const seenKeys = new Set(records.map(r => r.key));
-  const matched = [], added = [];
-  records.forEach(rec => {
-    const existing = existingArray.find(row => consolidatedRowKey(row) === rec.key);
-    if (existing) matched.push({ existing, rec }); else added.push(rec);
-  });
-  const removed = existingArray.filter(row => row.sourceAccounts && !seenKeys.has(consolidatedRowKey(row)));
-  return { matched, added, removed };
-}
-
-function applyConsolidatedEquityPlan(plan, accountOwners) {
-  const addedNames = [];
-  plan.matched.forEach(({ existing, rec }) => {
-    existing.units = rec.qty;
-    existing.invested = rec.invested;
-    if (rec.sector) existing.sector = rec.sector;
-    if (rec.isin) existing.isin = rec.isin;
-    existing.sourceAccounts = buildSourceAccounts(rec.accountCodes, rec.qty, rec.invested, accountOwners);
-  });
-  plan.added.forEach(rec => {
+// FULL OVERWRITE (see consolidatedCarryForwardMap above for why): the
+// workbook is the sole source of truth for Equity on every import.
+// Anything not in the file — including a stray duplicate from an
+// earlier buggy import, or a holding you've since sold — is gone after
+// import; everything in the file is there with this file's numbers.
+// Note this also means a stock you track by hand outside these 3
+// accounts would be removed too — there's currently no "leave this one
+// alone" flag, so hand-tracked positions unrelated to this workbook
+// shouldn't be kept in the same Equity list this import writes to.
+function applyConsolidatedEquityPlan(records, accountOwners) {
+  const prevByName = consolidatedCarryForwardMap(state.equity);
+  const newRows = records.map(rec => {
+    const prev = prevByName.get(rec.displayName.toUpperCase());
     const row = {
-      id: uid(), name: rec.displayName, invested: rec.invested, units: rec.qty, ltp: 0,
-      sector: rec.sector || "", isin: rec.isin || "", livePricePending: true,
+      id: uid(), name: rec.displayName, invested: rec.invested, units: rec.qty,
+      ltp: (prev && prev.ltp) || 0,
+      sector: rec.sector || (prev && prev.sector) || "",
+      isin: rec.isin || (prev && prev.isin) || "",
+      livePricePending: !(prev && prev.ltp),
       sourceAccounts: buildSourceAccounts(rec.accountCodes, rec.qty, rec.invested, accountOwners)
     };
-    state.equity.push(row);
-    addedNames.push(rec.displayName);
+    if (prev && prev.symbol) row.symbol = prev.symbol;
+    if (prev && prev.athPrice != null) row.athPrice = prev.athPrice;
+    return row;
   });
-  if (plan.removed.length) {
-    const removeIds = new Set(plan.removed.map(r => r.id));
-    state.equity = state.equity.filter(r => !removeIds.has(r.id));
-  }
-  return { added: addedNames, removed: plan.removed.map(r => r.name) };
+  const newNameSet = new Set(records.map(r => r.displayName.toUpperCase()));
+  const addedNames = records.filter(rec => !prevByName.has(rec.displayName.toUpperCase())).map(r => r.displayName);
+  const removedNames = (state.equity || []).filter(r => !newNameSet.has(String(r.name || "").trim().toUpperCase())).map(r => r.name);
+  state.equity = newRows;
+  return { added: addedNames, removed: removedNames };
 }
 
-function applyConsolidatedMFPlan(plan, accountOwners) {
-  const addedNames = [];
-  plan.matched.forEach(({ existing, rec }) => {
-    existing.units = rec.units;
-    existing.invested = rec.invested;
-    if (rec.category) existing.category = rec.category;
-    if (rec.isin) existing.isin = rec.isin;
-    existing.sourceAccounts = buildSourceAccounts(rec.accountCodes, rec.units, rec.invested, accountOwners);
-  });
-  plan.added.forEach(rec => {
-    const row = {
-      id: uid(), name: rec.displayName, symbol: "", category: rec.category || "",
-      invested: rec.invested, units: rec.units, unitPrice: 0, remarks: "",
-      isin: rec.isin || "", livePricePending: true,
+// Same full-overwrite semantics as Equity above, for Mutual Funds.
+function applyConsolidatedMFPlan(records, accountOwners) {
+  const prevByName = consolidatedCarryForwardMap(state.mf);
+  const newRows = records.map(rec => {
+    const prev = prevByName.get(rec.displayName.toUpperCase());
+    return {
+      id: uid(), name: rec.displayName, symbol: (prev && prev.symbol) || "",
+      category: rec.category || (prev && prev.category) || "",
+      invested: rec.invested, units: rec.units,
+      unitPrice: (prev && prev.unitPrice) || 0,
+      remarks: (prev && prev.remarks) || "",
+      isin: rec.isin || (prev && prev.isin) || "",
+      livePricePending: !(prev && prev.unitPrice),
       sourceAccounts: buildSourceAccounts(rec.accountCodes, rec.units, rec.invested, accountOwners)
     };
-    state.mf.push(row);
-    addedNames.push(rec.displayName);
   });
-  if (plan.removed.length) {
-    const removeIds = new Set(plan.removed.map(r => r.id));
-    state.mf = state.mf.filter(r => !removeIds.has(r.id));
-  }
-  return { added: addedNames, removed: plan.removed.map(r => r.name) };
+  const newNameSet = new Set(records.map(r => r.displayName.toUpperCase()));
+  const addedNames = records.filter(rec => !prevByName.has(rec.displayName.toUpperCase())).map(r => r.displayName);
+  const removedNames = (state.mf || []).filter(r => !newNameSet.has(String(r.name || "").trim().toUpperCase())).map(r => r.name);
+  state.mf = newRows;
+  return { added: addedNames, removed: removedNames };
 }
 
-function applyConsolidatedGoldPlan(plan, accountOwners) {
-  const addedNames = [];
-  plan.matched.forEach(({ existing, rec }) => {
-    existing.weight = rec.qty;
-    existing.invested = rec.invested;
-    existing.purchaseRate = rec.qty > 0 ? rec.invested / rec.qty : existing.purchaseRate;
-    if (rec.isin) existing.isin = rec.isin;
-    existing.sourceAccounts = buildSourceAccounts(rec.accountCodes, rec.qty, rec.invested, accountOwners);
-  });
-  plan.added.forEach(rec => {
-    const row = {
-      id: uid(), name: rec.displayName, form: rec.form || "ETF", weight: rec.qty,
+// Same full-overwrite semantics as Equity above, for Gold.
+function applyConsolidatedGoldPlan(records, accountOwners) {
+  const prevByName = consolidatedCarryForwardMap(state.gold);
+  const newRows = records.map(rec => {
+    const prev = prevByName.get(rec.displayName.toUpperCase());
+    return {
+      id: uid(), name: rec.displayName, form: rec.form || (prev && prev.form) || "ETF",
+      weight: rec.qty,
       purchaseRate: rec.avgPrice || (rec.qty > 0 ? rec.invested / rec.qty : 0),
-      invested: rec.invested, currentRate: 0, notes: "", isin: rec.isin || "", livePricePending: true,
+      invested: rec.invested,
+      currentRate: (prev && prev.currentRate) || 0,
+      notes: (prev && prev.notes) || "",
+      isin: rec.isin || (prev && prev.isin) || "",
+      livePricePending: !(prev && prev.currentRate),
       sourceAccounts: buildSourceAccounts(rec.accountCodes, rec.qty, rec.invested, accountOwners)
     };
-    state.gold.push(row);
-    addedNames.push(rec.displayName);
   });
-  if (plan.removed.length) {
-    const removeIds = new Set(plan.removed.map(r => r.id));
-    state.gold = state.gold.filter(r => !removeIds.has(r.id));
-  }
-  return { added: addedNames, removed: plan.removed.map(r => r.name) };
+  const newNameSet = new Set(records.map(r => r.displayName.toUpperCase()));
+  const addedNames = records.filter(rec => !prevByName.has(rec.displayName.toUpperCase())).map(r => r.displayName);
+  const removedNames = (state.gold || []).filter(r => !newNameSet.has(String(r.name || "").trim().toUpperCase())).map(r => r.name);
+  state.gold = newRows;
+  return { added: addedNames, removed: removedNames };
 }
 
 // Grand-total cross-check against the Summary sheet (section 31). Only
@@ -10973,17 +10978,21 @@ function validateConsolidatedAgainstSummary(parsed) {
   return warnings;
 }
 
-// Builds everything the preview modal needs: per-asset merge plans,
-// which accounts were detected (and which aren't mapped to a person
-// yet), and the Summary validation warnings — all computed up front,
-// without touching `state`, so Cancel is always a true no-op.
+// Builds everything the preview modal needs: how many Equity/MF/Gold
+// holdings exist right now (so the preview can say plainly that import
+// replaces them), which accounts were detected (and which aren't
+// mapped to a person yet), and the Summary validation warnings — all
+// computed up front, without touching `state`, so Cancel is always a
+// true no-op.
 function buildConsolidatedImportPreview(parsed) {
-  const equityPlan = buildConsolidatedMergePlan(parsed.equity, state.equity);
-  const mfPlan = buildConsolidatedMergePlan(parsed.mf, state.mf);
-  const goldPlan = buildConsolidatedMergePlan(parsed.gold, state.gold);
+  const existingCounts = {
+    equity: (state.equity || []).length,
+    mf: (state.mf || []).length,
+    gold: (state.gold || []).length
+  };
   const unmappedAccounts = parsed.accountsDetected.filter(code => !state.accountOwners[code]);
   const warnings = validateConsolidatedAgainstSummary(parsed);
-  return { parsed, equityPlan, mfPlan, goldPlan, unmappedAccounts, warnings };
+  return { parsed, existingCounts, unmappedAccounts, warnings };
 }
 
 // Shows the simple, non-technical preview (section 10 of the brief) —
@@ -10994,12 +11003,12 @@ function buildConsolidatedImportPreview(parsed) {
 // state.accountOwners the moment Import is confirmed, so they're used
 // immediately for this same import's ownership split.
 function openConsolidatedImportPreview(preview, sourceMeta) {
-  const { parsed, equityPlan, mfPlan, goldPlan, unmappedAccounts, warnings } = preview;
+  const { parsed, existingCounts, unmappedAccounts, warnings } = preview;
   const mappedAccounts = parsed.accountsDetected.filter(code => state.accountOwners[code]);
 
-  const countRow = (label, plan) => plan.matched.length + plan.added.length + plan.removed.length === 0
+  const countRow = (label, n) => n === 0
     ? ""
-    : `<div class="import-stat"><div class="n">${plan.matched.length + plan.added.length}</div><div class="l">${escapeAttr(label)}</div></div>`;
+    : `<div class="import-stat"><div class="n">${n}</div><div class="l">${escapeAttr(label)}</div></div>`;
 
   const accountRows = mappedAccounts.map(code =>
     `<li><b>${escapeAttr(state.accountOwners[code])}</b> — ${escapeAttr(code)}</li>`
@@ -11012,6 +11021,8 @@ function openConsolidatedImportPreview(preview, sourceMeta) {
     </li>
   `).join("");
 
+  const hasExisting = existingCounts.equity + existingCounts.mf + existingCounts.gold > 0;
+
   const html = `
     <p class="settings-note" style="margin-top:0">Source: ${escapeAttr(sourceMeta.sourceLabel)}${sourceMeta.fileName ? ` — ${escapeAttr(sourceMeta.fileName)}` : ""}</p>
     <h4>Accounts detected</h4>
@@ -11020,15 +11031,12 @@ function openConsolidatedImportPreview(preview, sourceMeta) {
 
     <h4>Data found</h4>
     <div class="import-stat-row">
-      ${countRow("Equity Holdings", equityPlan)}
-      ${countRow("Mutual Funds", mfPlan)}
-      ${countRow("Gold Holdings", goldPlan)}
+      ${countRow("Equity Holdings", parsed.equity.length)}
+      ${countRow("Mutual Funds", parsed.mf.length)}
+      ${countRow("Gold Holdings", parsed.gold.length)}
     </div>
-    ${(equityPlan.removed.length || mfPlan.removed.length || goldPlan.removed.length)
-      ? `<p class="settings-note warn">No longer in this file, so will be removed as exited: ${[...equityPlan.removed, ...mfPlan.removed, ...goldPlan.removed].map(escapeAttr).join(", ")}</p>`
-      : ""}
     ${warnings.length ? `<p class="settings-note warn">${warnings.map(escapeAttr).join("<br>")}</p>` : ""}
-    <p class="settings-note">Quantity, Units and Invested Value come straight from this workbook. Current Value, P&amp;L and allocation % continue to be calculated live in-app, exactly as before.</p>
+    <p class="settings-note">${hasExisting ? `This <b>replaces</b> your current ${existingCounts.equity} Equity, ${existingCounts.mf} Mutual Fund and ${existingCounts.gold} Gold holding${(existingCounts.equity + existingCounts.mf + existingCounts.gold) === 1 ? "" : "s"} entirely with what's in this file — nothing is matched up or merged, so this can never create a duplicate. ` : ""}Quantity, Units and Invested Value come straight from this workbook. Current Value, P&amp;L and allocation % continue to be calculated live in-app, exactly as before; an already-fetched live price is kept for a holding still in the file.</p>
   `;
 
   openModal("Import Investments — Preview", html, [
@@ -11039,14 +11047,14 @@ function openConsolidatedImportPreview(preview, sourceMeta) {
           const name = input.value.trim();
           if (name) state.accountOwners[input.dataset.account] = name;
         });
-        const eqResult = applyConsolidatedEquityPlan(equityPlan, state.accountOwners);
-        const mfResult = applyConsolidatedMFPlan(mfPlan, state.accountOwners);
-        const goldResult = applyConsolidatedGoldPlan(goldPlan, state.accountOwners);
+        const eqResult = applyConsolidatedEquityPlan(parsed.equity, state.accountOwners);
+        const mfResult = applyConsolidatedMFPlan(parsed.mf, state.accountOwners);
+        const goldResult = applyConsolidatedGoldPlan(parsed.gold, state.accountOwners);
 
         state.lastImport = {
           fileName: sourceMeta.fileName || "", importedAt: new Date().toISOString(), source: sourceMeta.source,
           accounts: parsed.accountsDetected.map(code => ({ code, person: state.accountOwners[code] || null })),
-          counts: { equity: equityPlan.matched.length + equityPlan.added.length, mf: mfPlan.matched.length + mfPlan.added.length, gold: goldPlan.matched.length + goldPlan.added.length },
+          counts: { equity: parsed.equity.length, mf: parsed.mf.length, gold: parsed.gold.length },
           totals: {
             invested: equityTotals().invested + mfTotals().invested + goldTotals().invested,
           },
@@ -11063,9 +11071,9 @@ function openConsolidatedImportPreview(preview, sourceMeta) {
           "Import successful",
           `<div class="import-stat-row">
              <div class="import-stat"><div class="n">${parsed.accountsDetected.length}</div><div class="l">Accounts</div></div>
-             <div class="import-stat"><div class="n">${equityPlan.matched.length + equityPlan.added.length}</div><div class="l">Equity Holdings</div></div>
-             <div class="import-stat"><div class="n">${mfPlan.matched.length + mfPlan.added.length}</div><div class="l">Mutual Funds</div></div>
-             <div class="import-stat"><div class="n">${goldPlan.matched.length + goldPlan.added.length}</div><div class="l">Gold Holdings</div></div>
+             <div class="import-stat"><div class="n">${parsed.equity.length}</div><div class="l">Equity Holdings</div></div>
+             <div class="import-stat"><div class="n">${parsed.mf.length}</div><div class="l">Mutual Funds</div></div>
+             <div class="import-stat"><div class="n">${parsed.gold.length}</div><div class="l">Gold Holdings</div></div>
            </div>
            <p>Total invested: ${fmtINR(equityTotals().invested + mfTotals().invested + goldTotals().invested)}</p>
            ${newNames.length ? `<p class="settings-note">New: ${newNames.map(escapeAttr).join(", ")}</p>` : ""}
@@ -11149,8 +11157,8 @@ async function runConsolidatedDriveImport() {
 function openConsolidatedImportChooser() {
   openModal(
     "Import Investments",
-    `<p>Update your Equity, Mutual Fund and Gold holdings from your latest consolidated holdings workbook (Summary + Consolidated Equity + Consolidated Mutual Funds sheets). Local Upload and Google Drive both run through the exact same validation and preview.</p>
-     <p class="settings-note">This replaces the current snapshot with what's in the file: holdings still present are updated, new ones are added, and any that have disappeared from the file are removed as exited. You'll see a full preview — nothing changes until you confirm.</p>`,
+    `<p>Replace your Equity, Mutual Fund and Gold holdings with your latest consolidated holdings workbook (Summary + Consolidated Equity + Consolidated Mutual Funds sheets). Local Upload and Google Drive both run through the exact same validation and preview.</p>
+     <p class="settings-note">Every import fully replaces what's there with exactly what's in the file — nothing is matched up or merged with what you had before, so it can never create a duplicate. Already-fetched live prices are kept where a holding is still in the file. You'll see a full preview — nothing changes until you confirm.</p>`,
     [
       { label: "Local Upload", onClick: () => { closeModal(); document.getElementById("importInvestmentsFile").click(); } },
       { label: "Fetch from Google Drive", primary: true, onClick: () => { closeModal(); runConsolidatedDriveImport(); } }
@@ -12236,7 +12244,7 @@ function openSettingsModal() {
 
     <h4>Imports</h4>
     <p class="settings-note" style="margin-top:0">Every "bring in fresh data" action, in one place — Screener fundamentals (Stock Analysis) and the Debt Google Sheet import (Debt tab) now live here too instead of on their own tabs.</p>
-    <p class="settings-note" style="margin-top:0"><b>Investments</b> — Equity, Mutual Funds and Gold together in one step, from your consolidated holdings workbook (Summary + Consolidated Equity + Consolidated Mutual Funds sheets). Local Upload and Fetch from Google Drive both run the same validation and preview; importing updates the current snapshot (existing holdings updated, new ones added, anything no longer in the file removed as exited) rather than piling up duplicates.</p>
+    <p class="settings-note" style="margin-top:0"><b>Investments</b> — Equity, Mutual Funds and Gold together in one step, from your consolidated holdings workbook (Summary + Consolidated Equity + Consolidated Mutual Funds sheets). Local Upload and Fetch from Google Drive both run the same validation and preview; every import fully replaces your current Equity/Mutual Fund/Gold holdings with exactly what's in the file — it's never merged or matched up with what was there before, so it can never pile up duplicates.</p>
     <div class="settings-actions">
       <button class="btn" id="settingsBtnImportInvestments">Import Investments</button>
       <span class="status-tag" id="investmentsImportStatus"></span>
