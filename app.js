@@ -10628,7 +10628,12 @@ function parseConsolidatedEquityObjects(objects) {
     const invested = investedRaw !== null ? investedRaw : qty * avgPrice;
     const accountCodes = parseConsolidatedAccountsCell(consolidatedFindVal(obj, ["Accounts"]));
     records.push({
-      key: (isin || symbol).toUpperCase(), displayName: symbol, isin, sector,
+      // Keyed by Symbol, NOT ISIN — see the comment on consolidatedRowKey()
+      // below for why: nothing else in the app (manual entries, the older
+      // Zerodha importer, Screener import) ever stores an ISIN on a
+      // holding, so an ISIN-first key would never match an existing row
+      // and would silently create a duplicate on every import.
+      key: symbol.toUpperCase(), displayName: symbol, isin, sector,
       qty, avgPrice, invested, accountCodes
     });
   });
@@ -10648,7 +10653,8 @@ function parseConsolidatedMFObjects(objects) {
     const invested = investedRaw !== null ? investedRaw : units * avgNav;
     const accountCodes = parseConsolidatedAccountsCell(consolidatedFindVal(obj, ["Accounts"]));
     records.push({
-      key: (isin || scheme).toUpperCase(), displayName: scheme, isin, category,
+      // Keyed by Scheme name, NOT ISIN — see consolidatedRowKey() below.
+      key: scheme.toUpperCase(), displayName: scheme, isin, category,
       units, avgNav, invested, accountCodes
     });
   });
@@ -10704,7 +10710,8 @@ function parseConsolidatedGoldObjects(objects) {
     const invested = investedRaw !== null ? investedRaw : qty * avgPrice;
     const accountCodes = parseConsolidatedAccountsCell(consolidatedFindVal(obj, ["Accounts"]));
     records.push({
-      key: (isin || name).toUpperCase(), displayName: name, isin, form: form || "ETF",
+      // Keyed by name, NOT ISIN — see consolidatedRowKey() below.
+      key: name.toUpperCase(), displayName: name, isin, form: form || "ETF",
       qty, avgPrice, invested, accountCodes
     });
   });
@@ -10818,14 +10825,22 @@ function buildSourceAccounts(accountCodes, totalQty, totalInvested, accountOwner
   }));
 }
 
-// The matching key for an EXISTING row — mirrors how `rec.key` is
-// built during parsing (ISIN when known, else the display name/symbol
-// uppercased) so a holding already on file can be found regardless of
-// whether it was added by hand, by the older Zerodha importer, or by
-// a previous consolidated import.
+// The matching key for an EXISTING row — the uppercased Symbol/Scheme
+// name (row.name), mirroring `rec.key` from parsing above. Deliberately
+// NOT ISIN-based, even though each holding's ISIN is also known and
+// stored: nothing else in the app ever writes an ISIN onto a
+// state.equity/mf/gold row (not manual entry, not the older Zerodha
+// importer, not Screener import — grep for `.isin =` and the only
+// writers are this consolidated-import pipeline itself and the
+// unrelated Trade Book CSV parser). So a holding added before this
+// feature existed always has isin === "", and an ISIN-first key would
+// compare that "" against the freshly-parsed workbook's real ISIN,
+// never match, and create a duplicate row on every single import
+// instead of updating the existing one. Name/Symbol is the one
+// identifier every equity/MF/gold row has always had, so it's the only
+// safe match key here — exactly what the older Zerodha importer's own
+// matchFn already uses (see EQUITY_ZERODHA_IMPORT_KINDS above).
 function consolidatedRowKey(row) {
-  const isin = String(row.isin || "").trim().toUpperCase();
-  if (isin) return isin;
   return String(row.name || "").trim().toUpperCase();
 }
 
