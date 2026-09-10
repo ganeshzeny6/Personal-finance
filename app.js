@@ -5924,7 +5924,8 @@ function renderDashAllocation() {
         </td>
         <td data-label="Current">
           <div class="dash-alloc-current-wrap">
-            <div class="dash-alloc-current-val">${fmtNum(r.currentPct, 1)}%</div>
+            <div class="dash-alloc-current-val">${fmtINRCompact(r.current, 1)}</div>
+            <div class="dash-alloc-current-pct">${fmtNum(r.currentPct, 1)}%</div>
             <div class="dash-alloc-current-track"><div class="dash-alloc-current-fill" style="width:${Math.max(0, Math.min(100, r.currentPct))}%;background:${ASSET_COLORS[r.key]}"></div></div>
           </div>
         </td>
