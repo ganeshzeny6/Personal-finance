@@ -341,7 +341,25 @@ function blankState() {
     // ("Local"|"Google Drive"), accounts: [{code, person}], counts:
     // {equity, mf, gold}, totals: {invested, current, pl},
     // unmappedAccounts: [code, ...], mismatches: [text, ...] }.
-    lastImport: null
+    lastImport: null,
+    // Consolidated Holdings auto-sync (weekly, Google Drive) — see the
+    // "Consolidated Holdings auto-sync" block near syncTradeBookFromDrive.
+    // Empty/null until "Settings -> Investments -> Connect Google Drive"
+    // is used once. Unlike Trade Book's drive fields (which live outside
+    // `state`, per-browser only), these live in `state` so the connected
+    // file and auto-sync status follow Ganesh across devices via the
+    // same Firestore sync as the rest of the portfolio.
+    investmentsDriveFileId: "",
+    investmentsDriveFileName: "",
+    investmentsDriveFileMimeType: "",
+    investmentsLastAutoSyncAt: null,
+    investmentsAutoSyncStatus: "", // "" | "ok" | "error" | "needs-reconnect"
+    investmentsAutoSyncError: "",
+    // The most recent Sunday (YYYY-MM-DD, local date) that has already
+    // been auto-synced — see mostRecentSundayKey(). Prevents re-running
+    // the (full-overwrite) auto-sync on every page load; it only fires
+    // again once a new calendar week has started.
+    investmentsAutoSyncWeekKey: ""
   };
 }
 
@@ -11154,6 +11172,162 @@ async function runConsolidatedDriveImport() {
   runConsolidatedImportPipeline(arrayBuffer, { sourceLabel: "Google Drive", fileName: file.name, source: "Google Drive" });
 }
 
+// ---- Consolidated Holdings auto-sync (Google Drive, weekly) ----
+// Once a file is connected (Settings -> Investments -> Connect Google
+// Drive), the app automatically re-runs this same import against that
+// file once a week — checked on the first page load on/after each
+// Sunday (see mostRecentSundayKey() below) — so there's no need to
+// manually click Import Investments -> Fetch from Google Drive every
+// time the workbook is updated.
+//
+// This deliberately does NOT re-run on every page load the way Trade
+// Book's sync does. Trade Book's sync is purely additive (only ever
+// adds new trades; anything that conflicts with existing data is left
+// untouched and flagged), so re-running it on every reload is safe.
+// This Consolidated Holdings import fully REPLACES Equity/Mutual
+// Funds/Gold on every run (see applyConsolidatedEquityPlan/MFPlan/
+// GoldPlan above) — appropriate once a week when the workbook has
+// actually changed, but not something that should happen every single
+// time a tab happens to reload.
+//
+// Same drive.file-scoped OAuth + silent-token-first pattern as Trade
+// Book: `interactive` is true only for a user-initiated click
+// (Connect / Sync Now in Settings), false for the automatic on-load
+// check, so a reload never pops a Google consent dialog on its own —
+// it just leaves investmentsAutoSyncStatus as "needs-reconnect".
+
+// The most recent Sunday on/before `d` (default: now), as a
+// YYYY-MM-DD local-date string — used as a simple "which calendar
+// week is this" key so the auto-sync runs at most once per week.
+function mostRecentSundayKey(d) {
+  d = d || new Date();
+  const sunday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - d.getDay());
+  return `${sunday.getFullYear()}-${String(sunday.getMonth() + 1).padStart(2, "0")}-${String(sunday.getDate()).padStart(2, "0")}`;
+}
+
+async function runConsolidatedAutoSyncFromDrive(interactive) {
+  if (!state.investmentsDriveFileId) return;
+  if (!state.googleDriveClientId || !state.googleDriveApiKey) return;
+  const statusEl = document.getElementById("investmentsAutoSyncStatus");
+  try {
+    await ensureGisLoaded();
+    let token;
+    try {
+      token = await requestDriveAccessTokenSilent();
+    } catch (silentErr) {
+      if (!interactive) {
+        state.investmentsAutoSyncStatus = "needs-reconnect";
+        saveState();
+        return;
+      }
+      token = await requestDriveAccessToken(); // user already clicked something, so a popup here is fine
+    }
+    if (statusEl) statusEl.textContent = "Checking Google Drive for updated holdings...";
+    const file = { id: state.investmentsDriveFileId, name: state.investmentsDriveFileName, mimeType: state.investmentsDriveFileMimeType || "" };
+    const arrayBuffer = await downloadDriveFileAsArrayBuffer(file, token);
+
+    let parsed;
+    try {
+      parsed = parseConsolidatedWorkbook(arrayBuffer);
+    } catch (err) {
+      // A bad/unreadable workbook won't fix itself on the next reload
+      // this same week — mark the week done anyway so this doesn't
+      // silently retry (and fail) on every subsequent page load until
+      // Ganesh notices; "Sync Now" in Settings retries on demand.
+      state.investmentsAutoSyncStatus = "error";
+      state.investmentsAutoSyncError = err && err.message ? err.message : "Could not read the workbook.";
+      state.investmentsAutoSyncWeekKey = mostRecentSundayKey();
+      saveState();
+      if (statusEl) statusEl.textContent = "Auto-sync failed — see note below.";
+      return;
+    }
+
+    const warnings = validateConsolidatedAgainstSummary(parsed);
+    const eqResult = applyConsolidatedEquityPlan(parsed.equity, state.accountOwners);
+    const mfResult = applyConsolidatedMFPlan(parsed.mf, state.accountOwners);
+    const goldResult = applyConsolidatedGoldPlan(parsed.gold, state.accountOwners);
+    // Unmapped accounts import as "Unassigned" (personName: null) —
+    // same as a manual import with the preview's assign-a-name boxes
+    // left blank — since there's no interactive UI to ask during an
+    // automatic run. They're still surfaced below via lastImport.
+    const unmappedAccounts = parsed.accountsDetected.filter(code => !state.accountOwners[code]);
+
+    state.lastImport = {
+      fileName: state.investmentsDriveFileName || "", importedAt: new Date().toISOString(), source: "Google Drive (auto)",
+      accounts: parsed.accountsDetected.map(code => ({ code, person: state.accountOwners[code] || null })),
+      counts: { equity: parsed.equity.length, mf: parsed.mf.length, gold: parsed.gold.length },
+      totals: { invested: equityTotals().invested + mfTotals().invested + goldTotals().invested },
+      unmappedAccounts,
+      warnings
+    };
+    state.investmentsAutoSyncStatus = "ok";
+    state.investmentsAutoSyncError = "";
+    state.investmentsLastAutoSyncAt = new Date().toISOString();
+    state.investmentsAutoSyncWeekKey = mostRecentSundayKey();
+    saveState();
+    renderAll();
+    if (statusEl) {
+      const changed = eqResult.added.length + eqResult.removed.length + mfResult.added.length + mfResult.removed.length + goldResult.added.length + goldResult.removed.length;
+      statusEl.textContent = changed ? "Auto-synced from Google Drive — holdings updated." : "Auto-synced from Google Drive — no changes.";
+    }
+  } catch (err) {
+    // Network/token error — don't mark the week as done, so a later
+    // page load this same week gets another chance once whatever
+    // failed (offline, Drive hiccup) has cleared up.
+    state.investmentsAutoSyncStatus = "error";
+    state.investmentsAutoSyncError = err && err.message ? err.message : "Unknown error";
+    saveState();
+    if (statusEl) statusEl.textContent = "Auto-sync failed — see note below.";
+  }
+}
+
+// Opens the Picker (single-select, Excel/Sheets only) so Ganesh picks
+// the exact consolidated holdings workbook once — this is what grants
+// the app's drive.file-scoped token access to that file's bytes.
+// Picking again later (e.g. a new workbook each year) reconnects to
+// the new file and immediately runs a sync against it.
+async function connectInvestmentsAutoSyncDrive() {
+  if (!state.googleDriveClientId || !state.googleDriveApiKey) {
+    alert('Google Drive sync needs a one-time setup: add a "Google Drive Client ID" and "Google Drive API Key" in Settings.');
+    return;
+  }
+  const statusEl = document.getElementById("investmentsAutoSyncStatus");
+  if (statusEl) statusEl.textContent = "Opening Google Drive...";
+  let files, accessToken;
+  try {
+    await ensurePickerLoaded();
+    await ensureGisLoaded();
+    accessToken = await requestDriveAccessToken();
+    files = await openDrivePicker(accessToken, { multiSelect: false });
+  } catch (err) {
+    if (statusEl) statusEl.textContent = "";
+    alert("Could not open Google Drive: " + (err && err.message ? err.message : "unknown error"));
+    return;
+  }
+  if (!files || files.length === 0) { if (statusEl) statusEl.textContent = ""; return; } // person cancelled the picker
+  const file = files[0];
+  state.investmentsDriveFileId = file.id;
+  state.investmentsDriveFileName = file.name;
+  state.investmentsDriveFileMimeType = file.mimeType || "";
+  state.investmentsAutoSyncWeekKey = ""; // force an immediate sync below, regardless of the weekly gate
+  saveState();
+  await runConsolidatedAutoSyncFromDrive(true);
+  openSettingsModal(); // refresh the modal so it shows the newly-connected file + sync result
+}
+
+function disconnectInvestmentsAutoSyncDrive() {
+  const ok = confirm("Stop automatically syncing Investments from Google Drive every week? Your existing Equity/Mutual Fund/Gold holdings are unaffected — this only turns off the weekly auto-import, the same as it never having been connected.");
+  if (!ok) return;
+  state.investmentsDriveFileId = "";
+  state.investmentsDriveFileName = "";
+  state.investmentsDriveFileMimeType = "";
+  state.investmentsAutoSyncStatus = "";
+  state.investmentsAutoSyncError = "";
+  state.investmentsAutoSyncWeekKey = "";
+  saveState();
+  openSettingsModal();
+}
+
 // "Import Investments" (Settings) -> choose Local Upload or Google Drive.
 function openConsolidatedImportChooser() {
   openModal(
@@ -12252,6 +12426,20 @@ function openSettingsModal() {
     </div>
     ${lastImportStatusHTML()}
 
+    <p class="settings-note" style="margin-top:0"><b>Auto-sync from Google Drive (weekly)</b> — connect one Drive file below and this same Import runs automatically, checked the first time you open this page on or after each Sunday, no manual click needed. It fully replaces Equity/Mutual Fund/Gold with what's in the file at that point, exactly like a manual import.</p>
+    <p class="settings-note" style="margin-top:0">${state.investmentsDriveFileId
+      ? `Connected to <b>${escapeAttr(state.investmentsDriveFileName || "")}</b>.`
+      : "Not connected yet — click Connect Google Drive and pick your consolidated holdings workbook."}</p>
+    <div class="settings-actions">
+      <button class="btn" id="settingsBtnConnectInvestmentsDrive">${state.investmentsDriveFileId ? "Change File" : "Connect Google Drive"}</button>
+      ${state.investmentsDriveFileId ? `<button class="btn btn-ghost" id="settingsBtnSyncInvestmentsNow">Sync Now</button>` : ""}
+      <span class="status-tag" id="investmentsAutoSyncStatus"></span>
+      ${state.investmentsDriveFileId ? `<button class="btn btn-ghost" id="settingsBtnDisconnectInvestmentsDrive">Disconnect</button>` : ""}
+    </div>
+    <p class="settings-note">${state.investmentsLastAutoSyncAt ? `Last auto-synced ${new Date(state.investmentsLastAutoSyncAt).toLocaleString()}.` : (state.investmentsDriveFileId ? "Hasn't auto-synced yet — will run next time this page loads." : "")}</p>
+    ${state.investmentsAutoSyncStatus === "error" ? `<p class="settings-note" style="color:var(--negative)">Last auto-sync failed: ${escapeAttr(state.investmentsAutoSyncError || "unknown error")}</p>` : ""}
+    ${state.investmentsAutoSyncStatus === "needs-reconnect" ? `<p class="settings-note" style="color:var(--warning)">Google Drive access needs to be refreshed — click Sync Now or Change File above.</p>` : ""}
+
     <p class="settings-note"><b>Screener Data</b> — fundamentals (PE, ROE, growth, etc.) for the Stock Analysis tab, matched to your Equity holdings by Symbol. Re-importing replaces the whole Screener dataset.</p>
     <div class="settings-actions">
       <button class="btn" id="settingsBtnImportScreener">Import Screener Data</button>
@@ -12374,6 +12562,17 @@ function openSettingsModal() {
       e.target.closest(".acct-owner-row")?.remove();
     }
   });
+  document.getElementById("settingsBtnConnectInvestmentsDrive").addEventListener("click", () => {
+    connectInvestmentsAutoSyncDrive();
+  });
+  const syncInvestmentsNowBtn = document.getElementById("settingsBtnSyncInvestmentsNow");
+  if (syncInvestmentsNowBtn) {
+    syncInvestmentsNowBtn.addEventListener("click", () => runConsolidatedAutoSyncFromDrive(true));
+  }
+  const disconnectInvestmentsDriveBtn = document.getElementById("settingsBtnDisconnectInvestmentsDrive");
+  if (disconnectInvestmentsDriveBtn) {
+    disconnectInvestmentsDriveBtn.addEventListener("click", disconnectInvestmentsAutoSyncDrive);
+  }
   document.getElementById("settingsBtnImportScreener").addEventListener("click", openScreenerImportChooser);
   document.getElementById("settingsBtnImportDebtSheet").addEventListener("click", async () => {
     const statusEl = document.getElementById("settingsDebtSheetImportStatus");
@@ -12664,4 +12863,14 @@ runAllLiveRefreshes();
 // syncTradeBookFromDrive's `interactive` flag). There's no manual
 // "Import Trade Book" step anymore.
 syncTradeBookFromDrive(false);
+
+// Investments: once connected (Settings -> Investments -> Connect
+// Google Drive), automatically re-imports from that same Drive file
+// once a week, checked the first time this page loads on/after each
+// Sunday — see the "Consolidated Holdings auto-sync" block above for
+// why this is gated weekly rather than run on every reload like Trade
+// Book above.
+if (state.investmentsDriveFileId && state.investmentsAutoSyncWeekKey !== mostRecentSundayKey()) {
+  runConsolidatedAutoSyncFromDrive(false);
+}
 setInterval(runAllLiveRefreshes, LIVE_REFRESH_INTERVAL_MS);
