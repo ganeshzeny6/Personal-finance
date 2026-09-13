@@ -262,13 +262,38 @@ function blankState() {
     debt: [],
     mf: [],
     gold: [],
-    // Watchlist tab: a personal shortlist of stocks/mutual funds, each
-    // { id, type: "stock"|"mf", name, symbol, note, addedAt }. Items
-    // are matched to a live Equity/MF holding by name at render time
-    // (see watchlistFindHoldingRow()) rather than stored by row id, so
-    // this never goes stale if a holding is renamed or removed — it
-    // just shows "Not currently held" until/unless the name matches
-    // again. Can include names you don't currently hold at all.
+    // Watchlist tab: MULTIPLE named lists — { id, name, items: [...] }.
+    // Each item keeps the original shape: { id, type: "stock"|"mf",
+    // name, symbol, note, addedAt, quote }, matched to a live Equity/MF
+    // holding by name at render time (see watchlistFindHoldingRow())
+    // rather than stored by row id, so this never goes stale if a
+    // holding is renamed or removed — it just shows "Not currently
+    // held" until/unless the name matches again. Can include names you
+    // don't currently hold at all. Populated/migrated lazily by
+    // ensureWatchlists() — never read/write this directly, always go
+    // through getActiveWatchlist()/activeWatchlistItems().
+    watchlists: [],
+    // Which named list (by id, into watchlists[] above) is currently
+    // shown/edited on the Watchlist tab and refreshed by the on-demand
+    // quote interval. Kept in `state` (not browser-only) so it syncs
+    // across devices like everything else.
+    activeWatchlistId: "",
+    // Watchlist desktop table: which of Last/Change/Change %/Return
+    // columns show, and how the symbol cell displays (logo+symbol /
+    // symbol only / company name) — see openWatchlistColumnsModal().
+    // No Volume/Extended Hours toggle: neither the Price API sheet nor
+    // the on-demand lookup returns that data, so offering a toggle for
+    // it would just show a column of dashes forever. Return only ever
+    // shows a value for a stock you actually hold (there's no cost
+    // basis for one you don't) — it's not part of the original
+    // TradingView-style reference, but was kept as an extra optional
+    // column so the P&L visibility this tab already had isn't quietly
+    // dropped by the redesign.
+    watchlistColumnPrefs: { showLast: true, showChange: true, showChangePct: true, showReturn: true, symbolDisplay: "logo" },
+    // Legacy single flat watchlist array, from before multiple named
+    // lists existed. Only ever read once, by ensureWatchlists(), to
+    // migrate an old saved blob's items into a first "My Watchlist"
+    // entry in `watchlists` above — never written to again.
     watchlist: [],
     // Stock Analysis tab: one row per imported Screener export, keyed
     // for lookup by `symbol` (uppercased at import time). Values are
@@ -2250,7 +2275,7 @@ function eqDrawerBodyHTML(row) {
         <div class="sa-detail-section-title">Stock Details</div>
         <div class="sa-detail-row"><span class="k">Units</span><span class="v">${fmtNum(row.units, 2)}</span></div>
         <div class="sa-detail-row"><span class="k">Avg Price</span><span class="v">${fmtNum(d.avgPrice)}</span></div>
-        <div class="sa-detail-row"><span class="k">LTP</span><span class="v">${fmtNum(row.ltp)}${row.livePricePending ? ' <span class="pending-badge">Pending</span>' : ""}</span></div>
+        <div class="sa-detail-row"><span class="k">LTP</span><span class="v">${fmtNum(row.ltp)}${row.livePricePending ? ' <span class="pending-badge">Pending</span>' : ""}${!row.livePricePending && row.livePriceFallback ? ` <span class="fallback-badge" title="Fetched live from NSE directly — this stock isn't in your Price API sheet yet">Live·NSE</span>` : ""}</span></div>
         <div class="sa-detail-row"><span class="k">Day Change</span><span class="v">${chgHTML}</span></div>
         <div class="sa-detail-row"><span class="k">Prev Close</span><span class="v">${row.prevClose != null ? fmtNum(row.prevClose, 2) : "—"}</span></div>
         <div class="sa-detail-row"><span class="k">Day Range</span><span class="v">${row.dayLow != null && row.dayHigh != null ? `${fmtNum(row.dayLow, 2)} – ${fmtNum(row.dayHigh, 2)}` : "—"}</span></div>
@@ -2454,6 +2479,9 @@ function renderEquity() {
       : "Import Screener Data to classify this stock's cap category and see its allocation limit";
     const allocLimitNote = allocMax !== null ? `<span class="alloc-limit-note">/ ${allocMax}%</span>` : "";
     const pendingBadge = row.livePricePending ? ' <span class="pending-badge">Pending</span>' : "";
+    const fallbackBadge = (!row.livePricePending && row.livePriceFallback)
+      ? ` <span class="fallback-badge" title="Fetched live from NSE directly — this stock isn't in your Price API sheet yet">Live·NSE</span>`
+      : "";
     const chg = dayChangePct(row.ltp, row.prevClose);
     const chgChip = chg === null
       ? ""
@@ -2476,7 +2504,7 @@ function renderEquity() {
         <div class="eq-ltp-val">${row.ltp ? fmtNum(row.ltp) : "—"}</div>
         ${chgChip}
       </td>
-      <td data-label="Current Value">${fmtINR(d.currentValue)}${pendingBadge}</td>
+      <td data-label="Current Value">${fmtINR(d.currentValue)}${pendingBadge}${fallbackBadge}</td>
       <td class="${plClass(d.pl)}" data-label="P&amp;L">${fmtINRCompactSigned(d.pl)}</td>
       <td class="${plClass(d.pl)}" data-label="Return %">${fmtPct(d.plPct)}</td>
       <td data-label="Allocation" title="${escapeAttr(allocTitle)}">
@@ -2877,11 +2905,68 @@ function renderFailPanel(panelId, assetType, failedRows) {
   `;
 }
 
+// A stock you actually hold, but that has no row in the Price API
+// sheet's Stocks tab yet — most commonly one bought after the sheet
+// was last updated. Rather than leaving it on "Pending" until Ganesh
+// remembers to add it to the sheet, this reuses the exact same
+// on-demand Google Finance lookup built for the Watchlist (see
+// fetchOnDemandQuote() above) to fetch a live price directly. Runs
+// through the same shared queue/Apps Script lock as the Watchlist
+// lookups, since both hit the same scratch cell.
+//
+// Uses row.symbol if one's been set, otherwise falls back to the
+// holding's name (uppercased, spaces stripped) the same way the
+// Watchlist's freeform-add does — GOOGLEFINANCE needs a ticker, not a
+// company name, so this is a best-effort guess when no explicit
+// symbol is on file.
+//
+// Returns true if a live price was fetched, false otherwise (network
+// issue, bad symbol, Google Finance not resolving it) — the row is
+// left as still-pending in that case, same as before this feature.
+async function refreshEquityRowOnDemand(row) {
+  const symbol = (row.symbol || row.name || "").trim().toUpperCase().replace(/\s+/g, "");
+  if (!symbol) return false;
+  return queueOnDemandQuoteFetch(async () => {
+    // Re-find by id: the row may have been edited/removed by the time
+    // this lookup's turn comes up in the shared queue.
+    const live = state.equity.find(e => e.id === row.id);
+    if (!live) return false;
+    try {
+      const q = await fetchOnDemandQuote(symbol);
+      live.ltp = q.price;
+      live.livePricePending = false;
+      // Flags that THIS cycle's price came from the on-demand lookup,
+      // not a matched row in the sheet — cleared the moment the sheet
+      // catches up and the normal batch match succeeds again (see
+      // refreshEquityPrices() below).
+      live.livePriceFallback = true;
+      live.livePriceFallbackError = null;
+      // Google Finance's changepct gives us Previous Close indirectly
+      // (price / (1 + changePct/100)) — filled in on a best-effort
+      // basis; 52-week high/low aren't available from this endpoint,
+      // so marketDataStale stays true for a fallback-priced row.
+      if (typeof q.changePct === "number" && !isNaN(q.changePct)) {
+        live.prevClose = q.price / (1 + q.changePct / 100);
+      }
+      if (typeof q.open === "number") live.openPrice = q.open;
+      if (typeof q.high === "number") live.dayHigh = q.high;
+      if (typeof q.low === "number") live.dayLow = q.low;
+      live.marketDataStale = true;
+      return true;
+    } catch (err) {
+      live.livePriceFallbackError = err && err.message ? err.message : "Could not fetch a price.";
+      return false;
+    }
+  });
+}
+
 // Shared worker: fetches prices and applies them to state.equity.
-// Returns { ok, fail, failedRows } so both the button handler and
-// the on-load auto-refresh can use the same logic and reporting.
+// Returns { ok, fail, failedRows, fallbackRows } so both the button
+// handler and the on-load auto-refresh can use the same logic and
+// reporting. fallbackRows lists holdings priced via the on-demand
+// lookup above (not in the sheet yet, but not stuck either).
 async function refreshEquityPrices() {
-  if (state.equity.length === 0) return { ok: 0, fail: 0, failedRows: [], skipped: true };
+  if (state.equity.length === 0) return { ok: 0, fail: 0, failedRows: [], fallbackRows: [], skipped: true };
   const data = await fetchPriceData();
   const priceMap = buildPriceMap(data.stocks, ["Stock Name", "Symbol"], ["Live Price", "Price"]);
   // Same data.stocks payload, same identifier columns — just reading the
@@ -2890,11 +2975,17 @@ async function refreshEquityPrices() {
   const marketDataMap = buildMarketDataMap(data.stocks, ["Stock Name", "Symbol"]);
   let ok = 0;
   const failedRows = [];
+  const missingFromSheet = [];
   state.equity.forEach(row => {
     const key = (row.name || "").trim().toUpperCase();
     if (key && priceMap.has(key)) {
       row.ltp = priceMap.get(key);
       row.livePricePending = false;
+      // The sheet has caught up with this holding — drop any leftover
+      // fallback flag/error from an earlier cycle so the UI goes back
+      // to showing it exactly like every other sheet-matched row.
+      row.livePriceFallback = false;
+      row.livePriceFallbackError = null;
       const md = marketDataMap.get(key);
       // Only overwrite a field when this refresh actually returned a
       // usable number for it — an individually blank/unparseable column
@@ -2916,10 +3007,31 @@ async function refreshEquityPrices() {
       }
       ok++;
     } else {
-      failedRows.push({ name: row.name || "(unnamed)", key });
       row.marketDataStale = true;
+      missingFromSheet.push({ row, name: row.name || "(unnamed)", key });
     }
   });
+
+  // Holdings not in the sheet fall back to the same on-demand lookup
+  // the Watchlist uses (see refreshEquityRowOnDemand() above), on the
+  // SAME 30-second cadence as the batch refresh above — per Ganesh's
+  // call, even though that means a slower, serialized lookup for every
+  // still-missing holding adds to how long this cycle takes. They're
+  // fired together; the shared queue/Apps Script lock still runs them
+  // one at a time under the hood.
+  const fallbackRows = [];
+  if (missingFromSheet.length > 0) {
+    await Promise.all(missingFromSheet.map(async ({ row, name, key }) => {
+      const gotLive = await refreshEquityRowOnDemand(row);
+      if (gotLive) {
+        ok++;
+        fallbackRows.push({ name, key });
+      } else {
+        failedRows.push({ name, key });
+      }
+    }));
+  }
+
   // Distinct from state.lastSaved (which just tracks the last write to
   // localStorage/Firestore for ANY reason) — this specifically marks
   // when live prices last actually refreshed, so the Stock Analysis
@@ -2927,7 +3039,7 @@ async function refreshEquityPrices() {
   // than a hardcoded "just now" that would keep saying that forever.
   state.lastPriceRefreshAt = new Date().toISOString();
   saveState();
-  return { ok, fail: failedRows.length, failedRows };
+  return { ok, fail: failedRows.length, failedRows, fallbackRows };
 }
 
 // Plain LTP cell used on the Equity tab — just the price input + a
@@ -2936,9 +3048,12 @@ async function refreshEquityPrices() {
 // underneath the price input.
 function renderEquityPriceCellHTML(row) {
   const pendingBadge = row.livePricePending ? '<span class="pending-badge">Pending</span>' : "";
+  const fallbackBadge = (!row.livePricePending && row.livePriceFallback)
+    ? `<span class="fallback-badge" title="Fetched live from NSE directly — this stock isn't in your Price API sheet yet">Live·NSE</span>`
+    : "";
   return `
     <div class="price-cell">
-      <input type="number" step="any" value="${roundedInputValue(row.ltp)}" data-field="ltp" disabled>${pendingBadge}
+      <input type="number" step="any" value="${roundedInputValue(row.ltp)}" data-field="ltp" disabled>${pendingBadge}${fallbackBadge}
     </div>
   `;
 }
@@ -3011,7 +3126,10 @@ async function runEquityRefresh(statusEl) {
   renderEquity();
   renderDashboard();
   renderFailPanel("equityFailPanel", "Equity", result.failedRows);
-  statusEl.textContent = `Updated ${result.ok} of ${result.ok + result.fail}.` +
+  const fallbackNote = result.fallbackRows && result.fallbackRows.length > 0
+    ? ` (${result.fallbackRows.length} via live NSE lookup — not in your sheet yet)`
+    : "";
+  statusEl.textContent = `Updated ${result.ok} of ${result.ok + result.fail}.${fallbackNote}` +
     (result.fail > 0 ? " See details below." : "");
 }
 
@@ -5481,13 +5599,17 @@ function renderRebalance() {
 
 /* ============================================================
    WATCHLIST
-   A personal shortlist of stocks and mutual funds — added from a
-   star toggle on the Equity, Mutual Funds or Stock Analysis rows
-   (state.watchlist entries matching a current holding by name stay
-   live-synced with that holding's price/return, since Equity/MF
+   Multiple NAMED shortlists of stocks and mutual funds (state.
+   watchlists[] — see ensureWatchlists()/getActiveWatchlist() right
+   below), each populated by a star toggle on the Equity, Mutual Funds
+   or Stock Analysis rows (an item matching a current holding by name
+   stays live-synced with that holding's price/return, since Equity/MF
    holdings are import-only and this app has no other way to look up
-   a live quote), or typed in directly here for something not
-   currently held (e.g. a stock you're considering buying).
+   a live quote), or typed in directly on the Watchlist tab for
+   something not currently held (e.g. a stock you're considering
+   buying). The star toggle and "isWatchlisted" always act on whichever
+   list is currently ACTIVE — switching lists changes what the star
+   means, by design, rather than opening a "which list?" picker.
 
    A stock entry that ISN'T currently held still gets a live price —
    just not a return/P&L, since there's no cost basis for something
@@ -5504,6 +5626,94 @@ function renderRebalance() {
    reference behind.
    ============================================================ */
 
+// Lazily migrates the old single flat `state.watchlist` array (from
+// before multiple named lists existed) into `state.watchlists[]` the
+// first time anything touches the Watchlist tab after this feature
+// shipped, and otherwise just makes sure `activeWatchlistId` still
+// points at a real list (e.g. after the active one was deleted, or on
+// a state blob saved by an older version). Called defensively at the
+// top of getActiveWatchlist() — every watchlist function goes through
+// that — rather than once at load, so it self-heals no matter which
+// path state came from (localStorage, a Firestore pull, a JSON
+// restore, exiting demo mode).
+function ensureWatchlists() {
+  if (!Array.isArray(state.watchlists) || state.watchlists.length === 0) {
+    const legacyItems = Array.isArray(state.watchlist) ? state.watchlist : [];
+    const group = { id: uid(), name: "My Watchlist", items: legacyItems };
+    state.watchlists = [group];
+    state.activeWatchlistId = group.id;
+  } else if (!state.watchlists.some(g => g.id === state.activeWatchlistId)) {
+    state.activeWatchlistId = state.watchlists[0].id;
+  }
+  if (!state.watchlistColumnPrefs) {
+    state.watchlistColumnPrefs = { showLast: true, showChange: true, showChangePct: true, showReturn: true, symbolDisplay: "logo" };
+  }
+}
+
+function getActiveWatchlist() {
+  ensureWatchlists();
+  return state.watchlists.find(g => g.id === state.activeWatchlistId) || state.watchlists[0];
+}
+
+// The single place every watchlist read/mutation goes through instead
+// of touching state.watchlist directly.
+function activeWatchlistItems() {
+  return getActiveWatchlist().items;
+}
+
+function createWatchlist(rawName) {
+  ensureWatchlists();
+  const name = (rawName || "").trim() || `Watchlist ${state.watchlists.length + 1}`;
+  const group = { id: uid(), name, items: [] };
+  state.watchlists.push(group);
+  state.activeWatchlistId = group.id;
+  saveState();
+  renderWatchlist();
+  return group;
+}
+
+function renameWatchlist(id, rawName) {
+  ensureWatchlists();
+  const group = state.watchlists.find(g => g.id === id);
+  const name = (rawName || "").trim();
+  if (!group || !name) return;
+  group.name = name;
+  saveState();
+  renderWatchlist();
+}
+
+// Always leaves at least one list behind — there's nowhere for the
+// Watchlist tab to point otherwise. Deleting the active list falls
+// back to whichever list is now first.
+function deleteWatchlist(id) {
+  ensureWatchlists();
+  if (state.watchlists.length <= 1) {
+    alert("You need at least one watchlist — rename this one instead of deleting it.");
+    return;
+  }
+  const group = state.watchlists.find(g => g.id === id);
+  if (!group) return;
+  const ok = confirm(`Delete the watchlist "${group.name}" and everything in it? This can't be undone.`);
+  if (!ok) return;
+  state.watchlists = state.watchlists.filter(g => g.id !== id);
+  if (state.activeWatchlistId === id) state.activeWatchlistId = state.watchlists[0].id;
+  saveState();
+  renderWatchlist();
+}
+
+function switchActiveWatchlist(id) {
+  ensureWatchlists();
+  if (!state.watchlists.some(g => g.id === id) || state.activeWatchlistId === id) return;
+  state.activeWatchlistId = id;
+  saveState();
+  renderWatchlist();
+  // A newly-switched-to list may have unheld stocks that haven't been
+  // priced yet this session (e.g. it was never the active list while
+  // the periodic refresh was running) — refresh it immediately rather
+  // than waiting up to 90s.
+  refreshUnheldWatchlistQuotes();
+}
+
 function watchlistFindHoldingRow(type, name) {
   const key = (name || "").trim().toUpperCase();
   if (!key) return null;
@@ -5513,20 +5723,20 @@ function watchlistFindHoldingRow(type, name) {
 
 function isWatchlisted(type, name) {
   const key = (name || "").trim().toUpperCase();
-  return (state.watchlist || []).some(w => w.type === type && w.name.trim().toUpperCase() === key);
+  return activeWatchlistItems().some(w => w.type === type && w.name.trim().toUpperCase() === key);
 }
 
 // Used by the star toggle on Equity/Mutual Funds/Stock Analysis rows —
 // those always refer to a holding that already exists, so name +
-// symbol are known.
+// symbol are known. Always acts on the currently ACTIVE watchlist.
 function toggleWatchlistFromHolding(type, name, symbol) {
-  if (!state.watchlist) state.watchlist = [];
+  const items = activeWatchlistItems();
   const key = (name || "").trim().toUpperCase();
-  const idx = state.watchlist.findIndex(w => w.type === type && w.name.trim().toUpperCase() === key);
+  const idx = items.findIndex(w => w.type === type && w.name.trim().toUpperCase() === key);
   if (idx >= 0) {
-    state.watchlist.splice(idx, 1);
+    items.splice(idx, 1);
   } else {
-    state.watchlist.push({ id: uid(), type, name: (name || "").trim(), symbol: symbol || "", note: "", addedAt: new Date().toISOString() });
+    items.push({ id: uid(), type, name: (name || "").trim(), symbol: symbol || "", note: "", addedAt: new Date().toISOString() });
   }
   saveState();
   renderWatchlist();
@@ -5538,6 +5748,7 @@ function toggleWatchlistFromHolding(type, name, symbol) {
 // match any current holding at all. `symbolOverride` is passed when
 // the name came from picking a typeahead suggestion (see
 // setupWatchlistAddRow() below) rather than being typed free-hand.
+// Always adds to the currently ACTIVE watchlist.
 //
 // For a stock with no matching holding and no suggestion picked (i.e.
 // someone typed a name that isn't in the bundled NIFTY 500 list and
@@ -5550,16 +5761,22 @@ function toggleWatchlistFromHolding(type, name, symbol) {
 // correctly; a genuine full company name won't resolve, and the card
 // will show a "couldn't find a price — check the symbol" state they
 // can fix by editing/re-adding with the real ticker.
-function addFreeformWatchlistItem(type, rawName, symbolOverride) {
+//
+// `opts.skipImmediateFetch` is used by the bulk .txt import below —
+// importing many symbols at once still queues every fetch (see
+// importWatchlistFromLines()), just not one at a time as each line is
+// added, so the queue order matches the file's order rather than
+// racing with per-item immediate fetches.
+function addFreeformWatchlistItem(type, rawName, symbolOverride, opts) {
   const name = (rawName || "").trim();
-  if (!name) return;
-  if (isWatchlisted(type, name)) return;
-  if (!state.watchlist) state.watchlist = [];
+  if (!name) return null;
+  if (isWatchlisted(type, name)) return null;
+  const items = activeWatchlistItems();
   const holding = watchlistFindHoldingRow(type, name);
   const symbol = symbolOverride || (holding ? (holding.symbol || "") : "") ||
     (type === "stock" ? name.toUpperCase().replace(/\s+/g, "") : "");
   const item = { id: uid(), type, name, symbol, note: "", addedAt: new Date().toISOString() };
-  state.watchlist.push(item);
+  items.push(item);
   saveState();
   renderWatchlist();
   if (type === "stock") { renderEquity(); renderStockAnalysis(); }
@@ -5568,15 +5785,17 @@ function addFreeformWatchlistItem(type, rawName, symbolOverride) {
   // price lookup rather than waiting for the next tab-open/interval
   // refresh, so the card doesn't sit on "Fetching price..." any longer
   // than it has to.
-  if (type === "stock" && item.symbol && !holding) {
+  if (!opts?.skipImmediateFetch && type === "stock" && item.symbol && !holding) {
     refreshWatchlistItemQuote(item);
   }
+  return item;
 }
 
 function removeWatchlistItem(id) {
-  if (!state.watchlist) return;
-  const item = state.watchlist.find(w => w.id === id);
-  state.watchlist = state.watchlist.filter(w => w.id !== id);
+  const items = activeWatchlistItems();
+  const item = items.find(w => w.id === id);
+  const group = getActiveWatchlist();
+  group.items = items.filter(w => w.id !== id);
   saveState();
   renderWatchlist();
   if (item && item.type === "stock") { renderEquity(); renderStockAnalysis(); }
@@ -5584,7 +5803,7 @@ function removeWatchlistItem(id) {
 }
 
 function updateWatchlistNote(id, note) {
-  const item = (state.watchlist || []).find(w => w.id === id);
+  const item = activeWatchlistItems().find(w => w.id === id);
   if (!item) return;
   item.note = note;
   saveState();
@@ -5603,21 +5822,42 @@ function updateWatchlistNote(id, note) {
 // are always sent one at a time, never in parallel — the Apps Script
 // side does its lookup by writing into a scratch cell and reading the
 // result back, and firing several of those at once from here would
-// risk them clobbering each other's in-flight formula.
-let watchlistQuoteQueue = Promise.resolve();
-function queueWatchlistQuoteFetch(fn) {
+// risk them clobbering each other's in-flight formula. This queue is
+// shared with the Equity tab's own on-demand fallback (see
+// refreshEquityRowOnDemand() near refreshEquityPrices()) for the same
+// reason — both features hit the exact same scratch cell, so a
+// Watchlist lookup and an Equity fallback lookup must never overlap
+// either.
+let onDemandQuoteQueue = Promise.resolve();
+function queueOnDemandQuoteFetch(fn) {
   const run = () => Promise.resolve().then(fn).catch(() => {});
-  watchlistQuoteQueue = watchlistQuoteQueue.then(run, run);
-  return watchlistQuoteQueue;
+  onDemandQuoteQueue = onDemandQuoteQueue.then(run, run);
+  return onDemandQuoteQueue;
+}
+
+// Searches every named watchlist (not just the active one) for an
+// item by id. Used when applying an on-demand quote result: the fetch
+// may have been queued while a different list was active, and the
+// person could have switched lists again by the time it resolves — the
+// result is still for a real item somewhere and should still be
+// applied there, not silently dropped just because it's not the list
+// currently on screen.
+function findWatchlistItemById(id) {
+  ensureWatchlists();
+  for (const group of state.watchlists) {
+    const item = group.items.find(w => w.id === id);
+    if (item) return item;
+  }
+  return null;
 }
 
 async function refreshWatchlistItemQuote(item) {
   if (!item || item.type !== "stock" || !item.symbol) return;
-  return queueWatchlistQuoteFetch(async () => {
+  return queueOnDemandQuoteFetch(async () => {
     // Re-fetch the live item by id — it may have been removed, or this
     // call may be sitting behind others in the queue, by the time its
     // turn actually comes up.
-    const live = (state.watchlist || []).find(w => w.id === item.id);
+    const live = findWatchlistItemById(item.id);
     if (!live) return;
     live.quote = { ...(live.quote || {}), status: "pending" };
     renderWatchlist();
@@ -5642,7 +5882,11 @@ async function refreshWatchlistItemQuote(item) {
 let watchlistBatchRefreshInFlight = false;
 async function refreshUnheldWatchlistQuotes() {
   if (watchlistBatchRefreshInFlight) return; // a tab-click and the periodic interval can overlap otherwise
-  const targets = (state.watchlist || []).filter(w => w.type === "stock" && w.symbol && !watchlistFindHoldingRow("stock", w.name));
+  // Only the currently ACTIVE list — no point spending Apps Script
+  // lookups keeping a list current when it's not the one on screen;
+  // switching to another list refreshes it immediately instead (see
+  // switchActiveWatchlist()).
+  const targets = activeWatchlistItems().filter(w => w.type === "stock" && w.symbol && !watchlistFindHoldingRow("stock", w.name));
   if (targets.length === 0) return;
   watchlistBatchRefreshInFlight = true;
   try {
@@ -5770,10 +6014,17 @@ function watchlistEmptyStateHTML(type) {
   `;
 }
 
+// Only used for Mutual Funds now — the Stocks section has its own
+// responsive table/mobile-row renderer below (renderWatchlistStockSection),
+// since that's the part redesigned to the TradingView-style compact
+// table (desktop/tablet) + two-line rows (mobile). Mutual Funds keep
+// the original card-grid layout: there's no on-demand NAV lookup for
+// funds, so a dense market-data table has nothing extra to show for
+// an unheld fund anyway.
 function renderWatchlistSection(type, gridId) {
   const grid = document.getElementById(gridId);
   if (!grid) return;
-  const items = (state.watchlist || []).filter(w => w.type === type)
+  const items = activeWatchlistItems().filter(w => w.type === type)
     .sort((a, b) => new Date(b.addedAt || 0) - new Date(a.addedAt || 0));
   if (items.length === 0) {
     grid.innerHTML = watchlistEmptyStateHTML(type);
@@ -5788,21 +6039,478 @@ function renderWatchlistSection(type, gridId) {
     // click to retry immediately rather than waiting for the next
     // tab-open/interval refresh.
     card.querySelector('[data-act="retry-quote"]')?.addEventListener("click", () => {
-      const item = (state.watchlist || []).find(w => w.id === id);
+      const item = findWatchlistItemById(id);
       if (item) refreshWatchlistItemQuote(item);
     });
   });
 }
 
+/* ---- Stocks section: responsive TradingView-style table/rows ----
+   Desktop/tablet (>=700px, matching the same breakpoint the Equity
+   tab's own table/mobile-card switch already uses): a dense table —
+   Symbol/Name, Last, Change, Change %, Return, with a "Columns"
+   picker (openWatchlistColumnsModal) controlling which of those show
+   and how the symbol cell displays. Mobile (<700px): purpose-built
+   two-line rows (logo+symbol+name on the left, price+change stacked
+   right), not a shrunk table. Both are always rendered from the same
+   item list; CSS (.wl-table-wrap / .wl-mobile-rows) decides which one
+   is visible at the current width — same pattern as
+   .table-scroll/.eq-mobile-list on the Equity tab. */
+
+function watchlistStockRowData(item) {
+  const row = watchlistFindHoldingRow("stock", item.name);
+  const symbolLabel = item.symbol || item.name;
+  // Prefer showing the real company name as the secondary label
+  // whenever it's actually distinct from the symbol (true for an item
+  // added via a suggestion pick, e.g. "TCS" / "Tata Consultancy
+  // Services") — falls back to sector (held) or "NSE: SYM"/"Not
+  // currently held" when name and symbol are the same string (true
+  // for most freeform-typed or held entries, since this app doesn't
+  // track a separate ticker field on Equity holdings).
+  let subLabel;
+  if (item.name && item.symbol && item.name.trim().toUpperCase() !== item.symbol.trim().toUpperCase()) {
+    subLabel = item.name;
+  } else if (row) {
+    subLabel = row.sector || "Stock";
+  } else if (item.symbol) {
+    subLabel = `NSE: ${item.symbol}`;
+  } else {
+    subLabel = "Not currently held";
+  }
+  const data = {
+    item, row, symbolLabel, subLabel,
+    avatarHTML: watchlistAvatarHTML("stock", item.name),
+    status: "none", price: null, changeAbs: null, changePct: null, changeState: "muted",
+    returnPct: null, returnClass: "muted", errorMsg: "", stale: false
+  };
+  if (row) {
+    data.status = "held";
+    data.price = row.ltp || null;
+    const chg = dayChangePct(row.ltp, row.prevClose);
+    data.changePct = chg;
+    data.changeAbs = (row.ltp != null && row.prevClose != null) ? (row.ltp - row.prevClose) : null;
+    data.changeState = chg === null ? "muted" : (chg > 0 ? "pos" : chg < 0 ? "neg" : "muted");
+    const d = equityDerived(row);
+    data.returnPct = d.plPct;
+    data.returnClass = plClass(d.pl);
+    return data;
+  }
+  if (!item.symbol) return data; // status stays "none" -- nothing to look up
+  const q = item.quote;
+  if (!q || q.status === "pending") { data.status = "fetching"; return data; }
+  if (q.status === "error" && q.price === undefined) {
+    data.status = "error"; data.errorMsg = q.error || ""; return data;
+  }
+  data.status = "ok";
+  data.stale = q.status === "error";
+  data.errorMsg = q.error || "";
+  data.price = q.price;
+  data.changePct = (typeof q.changePct === "number") ? q.changePct : null;
+  // The on-demand endpoint gives price + day-change% directly, not a
+  // separate absolute change — derived here (price / (1+chg%) = prev
+  // close) purely for display, same math used in the Equity fallback.
+  if (typeof q.changePct === "number" && q.price != null) {
+    const prevClose = q.price / (1 + q.changePct / 100);
+    data.changeAbs = q.price - prevClose;
+  }
+  data.changeState = data.changePct === null ? "muted" : (data.changePct > 0 ? "pos" : data.changePct < 0 ? "neg" : "muted");
+  return data;
+}
+
+function watchlistTableHeadHTML() {
+  const p = state.watchlistColumnPrefs;
+  return `
+    <th class="left">Symbol</th>
+    ${p.showLast ? `<th>Last</th>` : ""}
+    ${p.showChange ? `<th>Change</th>` : ""}
+    ${p.showChangePct ? `<th>Change %</th>` : ""}
+    ${p.showReturn ? `<th>Return</th>` : ""}
+    <th></th>
+  `;
+}
+
+function watchlistStockTableRowHTML(item) {
+  const d = watchlistStockRowData(item);
+  const p = state.watchlistColumnPrefs;
+  const symDisplay = p.symbolDisplay || "logo";
+  const avatar = symDisplay === "symbol" ? "" : d.avatarHTML;
+  const primaryLabel = symDisplay === "name" ? (item.name || d.symbolLabel) : d.symbolLabel;
+  const liveTag = d.status === "ok" ? `<span class="wl-live-tag">NSE</span>` : "";
+  let priceCell = "—", changeCell = "—", changePctCell = "—";
+  if (d.status === "fetching") {
+    priceCell = `<span class="wl-fetching">Fetching...</span>`;
+  } else if (d.status === "error") {
+    priceCell = `<span class="wl-quote-error" data-act="retry-quote" title="${escapeAttr(d.errorMsg)} — click to retry">Couldn't fetch</span>`;
+  } else if (d.status !== "none") {
+    priceCell = `<span class="wl-price-val${d.stale ? " wl-stale" : ""}"${d.stale ? ` title="Last refresh failed — showing the last price fetched. Click to retry." data-act="retry-quote"` : ""}>${fmtNum(d.price)}</span>`;
+    changeCell = d.changeAbs === null ? "—" : `<span class="${d.changeState}">${d.changeAbs >= 0 ? "+" : ""}${fmtNum(d.changeAbs, 2)}</span>`;
+    changePctCell = d.changePct === null ? "—" : `<span class="${d.changeState}">${d.changePct >= 0 ? "+" : ""}${fmtNum(d.changePct, 2)}%</span>`;
+  }
+  const returnCell = (d.status === "held" && d.returnPct !== null) ? `<span class="${d.returnClass}">${d.returnPct >= 0 ? "+" : ""}${fmtPct(d.returnPct)}</span>` : `<span class="muted">—</span>`;
+  return `
+    <tr class="wl-table-row" data-id="${item.id}">
+      <td class="left">
+        <div class="wl-table-name-cell">
+          ${avatar}
+          <span class="wl-table-symbol" title="${escapeAttr(item.name)}">${escapeAttr(primaryLabel)}</span>
+          ${liveTag}
+        </div>
+      </td>
+      ${p.showLast ? `<td class="wl-col-last">${priceCell}</td>` : ""}
+      ${p.showChange ? `<td class="wl-col-change">${changeCell}</td>` : ""}
+      ${p.showChangePct ? `<td class="wl-col-changepct">${changePctCell}</td>` : ""}
+      ${p.showReturn ? `<td class="wl-col-return">${returnCell}</td>` : ""}
+      <td class="row-actions"><button type="button" class="mf-menu-btn wl-row-menu-btn" title="Actions" aria-label="Actions">${icon("more-vertical", 16)}</button></td>
+    </tr>
+  `;
+}
+
+function watchlistStockMobileRowHTML(item) {
+  const d = watchlistStockRowData(item);
+  const p = state.watchlistColumnPrefs;
+  const symDisplay = p.symbolDisplay || "logo";
+  const avatarHTML = symDisplay === "symbol" ? "" : `<div class="wlm-avatar">${d.avatarHTML}</div>`;
+  const primaryLabel = symDisplay === "name" ? (item.name || d.symbolLabel) : d.symbolLabel;
+  let rightHTML;
+  if (d.status === "fetching") {
+    rightHTML = `<div class="wlm-price muted">···</div><div class="wlm-change muted">Fetching</div>`;
+  } else if (d.status === "error") {
+    rightHTML = `<div class="wlm-price muted">—</div><div class="wlm-change wl-quote-error">Couldn't fetch</div>`;
+  } else if (d.status === "none") {
+    rightHTML = `<div class="wlm-price muted">—</div><div class="wlm-change muted">Not held</div>`;
+  } else {
+    const showChg = p.showChange || p.showChangePct;
+    const chgAbsStr = (p.showChange && d.changeAbs !== null) ? `${d.changeAbs >= 0 ? "+" : ""}${fmtNum(d.changeAbs, 2)}` : "";
+    const chgPctStr = (p.showChangePct && d.changePct !== null) ? `${d.changePct >= 0 ? "+" : ""}${fmtNum(d.changePct, 2)}%` : "";
+    rightHTML = `
+      <div class="wlm-price${d.stale ? " wl-stale" : ""}">${fmtNum(d.price)}</div>
+      ${showChg ? `<div class="wlm-change ${d.changeState}">${[chgAbsStr, chgPctStr].filter(Boolean).join("   ")}</div>` : ""}
+    `;
+  }
+  return `
+    <div class="wlm-row${d.status === "error" ? " wl-quote-error-row" : ""}" data-id="${item.id}">
+      ${avatarHTML}
+      <div class="wlm-mid">
+        <div class="wlm-symbol">${escapeAttr(primaryLabel)}</div>
+        <div class="wlm-name" title="${escapeAttr(d.subLabel)}">${escapeAttr(d.subLabel)}</div>
+      </div>
+      <div class="wlm-right">${rightHTML}</div>
+      <button type="button" class="mf-menu-btn wl-row-menu-btn" title="Actions" aria-label="Actions">${icon("more-vertical", 16)}</button>
+    </div>
+  `;
+}
+
+function wireWatchlistStockRowEvents(container) {
+  if (!container) return;
+  container.querySelectorAll("[data-id]").forEach(rowEl => {
+    const id = rowEl.dataset.id;
+    rowEl.querySelector('[data-act="retry-quote"]')?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const item = findWatchlistItemById(id);
+      if (item) refreshWatchlistItemQuote(item);
+    });
+    rowEl.querySelector(".wl-row-menu-btn")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openWlRowMenu(e.currentTarget, id);
+    });
+  });
+}
+
+function renderWatchlistStockSection() {
+  const tableHead = document.getElementById("wlStockTableHead");
+  const tableBody = document.getElementById("wlStockTableBody");
+  const mobileWrap = document.getElementById("wlStockMobileRows");
+  if (!tableBody || !mobileWrap) return;
+  if (tableHead) tableHead.innerHTML = watchlistTableHeadHTML();
+  const items = activeWatchlistItems().filter(w => w.type === "stock")
+    .sort((a, b) => new Date(b.addedAt || 0) - new Date(a.addedAt || 0));
+  if (items.length === 0) {
+    tableBody.innerHTML = `<tr class="empty-row"><td colspan="8">${watchlistEmptyStateHTML("stock")}</td></tr>`;
+    mobileWrap.innerHTML = watchlistEmptyStateHTML("stock");
+    return;
+  }
+  tableBody.innerHTML = items.map(watchlistStockTableRowHTML).join("");
+  mobileWrap.innerHTML = items.map(watchlistStockMobileRowHTML).join("");
+  wireWatchlistStockRowEvents(tableBody);
+  wireWatchlistStockRowEvents(mobileWrap);
+}
+
+/* ---- Watchlist switcher: multiple named lists ---- */
+
+function renderWatchlistSwitcher() {
+  ensureWatchlists();
+  const nameEl = document.getElementById("wlActiveName");
+  if (nameEl) nameEl.textContent = getActiveWatchlist().name;
+
+  const menu = document.getElementById("wlSwitcherMenu");
+  if (menu) {
+    menu.innerHTML = state.watchlists.map(g => `
+      <div class="wl-switcher-menu-row${g.id === state.activeWatchlistId ? " active" : ""}" data-id="${g.id}">
+        <button type="button" class="wl-switcher-menu-name" data-act="switch">${escapeAttr(g.name)}</button>
+        <button type="button" class="wl-switcher-menu-icon-btn" data-act="rename" title="Rename">${icon("edit-3", 13)}</button>
+        <button type="button" class="wl-switcher-menu-icon-btn" data-act="delete" title="Delete">${icon("trash-2", 13)}</button>
+      </div>
+    `).join("") + `
+      <button type="button" class="wl-switcher-menu-new" id="wlSwitcherNewBtn">+ New watchlist</button>
+    `;
+    menu.querySelectorAll(".wl-switcher-menu-row").forEach(rowEl => {
+      const id = rowEl.dataset.id;
+      rowEl.querySelector('[data-act="switch"]').addEventListener("click", () => {
+        switchActiveWatchlist(id);
+        closeWlSwitcherMenu();
+      });
+      rowEl.querySelector('[data-act="rename"]').addEventListener("click", (e) => {
+        e.stopPropagation();
+        const group = state.watchlists.find(g => g.id === id);
+        const name = prompt("Rename watchlist", group ? group.name : "");
+        if (name !== null) renameWatchlist(id, name);
+      });
+      rowEl.querySelector('[data-act="delete"]').addEventListener("click", (e) => {
+        e.stopPropagation();
+        deleteWatchlist(id);
+        closeWlSwitcherMenu();
+      });
+    });
+    menu.querySelector("#wlSwitcherNewBtn")?.addEventListener("click", () => {
+      const name = prompt("Name this new watchlist", `Watchlist ${state.watchlists.length + 1}`);
+      if (name !== null) createWatchlist(name);
+      closeWlSwitcherMenu();
+    });
+  }
+
+  const tabsEl = document.getElementById("wlTabsScroll");
+  if (tabsEl) {
+    tabsEl.innerHTML = state.watchlists.map(g => `
+      <button type="button" class="wl-tab-pill${g.id === state.activeWatchlistId ? " active" : ""}" data-id="${g.id}">${escapeAttr(g.name)}</button>
+    `).join("");
+    tabsEl.querySelectorAll(".wl-tab-pill").forEach(btn => {
+      btn.addEventListener("click", () => switchActiveWatchlist(btn.dataset.id));
+    });
+  }
+}
+
+function closeWlSwitcherMenu() {
+  document.getElementById("wlSwitcherMenu")?.classList.remove("open");
+}
+
+function wlSwitcherOutsideHandler(e) {
+  const wrap = document.getElementById("wlSwitcherCurrent");
+  if (wrap && !wrap.contains(e.target)) closeWlSwitcherMenu();
+}
+
+function setupWatchlistSwitcherUI() {
+  const dropdownBtn = document.getElementById("wlSwitcherDropdownBtn");
+  dropdownBtn?.addEventListener("click", () => {
+    const menu = document.getElementById("wlSwitcherMenu");
+    menu?.classList.toggle("open");
+  });
+  document.addEventListener("click", wlSwitcherOutsideHandler, true);
+
+  document.getElementById("wlNewListBtn")?.addEventListener("click", () => {
+    const name = prompt("Name this new watchlist", `Watchlist ${(state.watchlists || []).length + 1}`);
+    if (name !== null) createWatchlist(name);
+  });
+  document.getElementById("wlColumnsBtn")?.addEventListener("click", openWatchlistColumnsModal);
+  document.getElementById("wlImportTxtBtn")?.addEventListener("click", () => {
+    document.getElementById("wlImportTxtInput")?.click();
+  });
+  document.getElementById("wlDownloadTemplateBtn")?.addEventListener("click", (e) => { e.preventDefault(); downloadWatchlistImportTemplate(); });
+  document.getElementById("wlImportTxtInput")?.addEventListener("change", async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ""; // allow re-selecting the same file next time
+    if (file) await importWatchlistFromTxtFile(file);
+  });
+}
+
+/* ---- Columns customize modal (desktop table + mobile rows share the
+   same prefs — see state.watchlistColumnPrefs) ---- */
+function openWatchlistColumnsModal() {
+  const p = state.watchlistColumnPrefs;
+  const body = `
+    <div class="settings-note" style="margin-top:0">Choose what shows in the Watchlist's Stocks table/rows. Volume and Extended Hours aren't offered — neither your Price API sheet nor the on-demand lookup returns that data.</div>
+    <div class="sa-detail-section-title" style="margin-top:14px">Display</div>
+    <label style="display:flex;align-items:center;gap:8px;padding:6px 0;"><input type="checkbox" id="wlColLast" ${p.showLast ? "checked" : ""}> Last</label>
+    <label style="display:flex;align-items:center;gap:8px;padding:6px 0;"><input type="checkbox" id="wlColChange" ${p.showChange ? "checked" : ""}> Change</label>
+    <label style="display:flex;align-items:center;gap:8px;padding:6px 0;"><input type="checkbox" id="wlColChangePct" ${p.showChangePct ? "checked" : ""}> Change %</label>
+    <label style="display:flex;align-items:center;gap:8px;padding:6px 0;"><input type="checkbox" id="wlColReturn" ${p.showReturn ? "checked" : ""}> Return % <span class="hint">(held stocks only)</span></label>
+    <div class="sa-detail-section-title" style="margin-top:14px">Symbol display</div>
+    <label style="display:flex;align-items:center;gap:8px;padding:6px 0;"><input type="radio" name="wlSymDisplay" value="logo" ${p.symbolDisplay === "logo" ? "checked" : ""}> Logo + Symbol</label>
+    <label style="display:flex;align-items:center;gap:8px;padding:6px 0;"><input type="radio" name="wlSymDisplay" value="symbol" ${p.symbolDisplay === "symbol" ? "checked" : ""}> Symbol only</label>
+    <label style="display:flex;align-items:center;gap:8px;padding:6px 0;"><input type="radio" name="wlSymDisplay" value="name" ${p.symbolDisplay === "name" ? "checked" : ""}> Name</label>
+  `;
+  openModal("Customize Watchlist", body, [
+    { label: "Cancel", onClick: closeModal },
+    {
+      label: "Done", primary: true, onClick: () => {
+        p.showLast = document.getElementById("wlColLast").checked;
+        p.showChange = document.getElementById("wlColChange").checked;
+        p.showChangePct = document.getElementById("wlColChangePct").checked;
+        p.showReturn = document.getElementById("wlColReturn").checked;
+        p.symbolDisplay = document.querySelector('input[name="wlSymDisplay"]:checked')?.value || "logo";
+        saveState();
+        closeModal();
+        renderWatchlist();
+      }
+    }
+  ]);
+}
+
+/* ---- Per-row actions menu (Stocks table + mobile rows) — reuses the
+   exact same floating-menu CSS/behavior as the Equity/Mutual Funds
+   row menus (.mf-menu-dropdown), just a separate singleton element. ---- */
+let wlMenuOpenItemId = null;
+function wlMenuOutsideHandler(e) {
+  const el = document.getElementById("wlRowMenu");
+  if (el && !el.contains(e.target)) closeWlRowMenu();
+}
+function closeWlRowMenu() {
+  const el = document.getElementById("wlRowMenu");
+  if (el) el.remove();
+  wlMenuOpenItemId = null;
+  document.removeEventListener("click", wlMenuOutsideHandler, true);
+  window.removeEventListener("resize", closeWlRowMenu);
+  window.removeEventListener("scroll", closeWlRowMenu, true);
+}
+function openWlRowMenu(btn, itemId) {
+  if (wlMenuOpenItemId === itemId) { closeWlRowMenu(); return; }
+  closeWlRowMenu();
+  const item = findWatchlistItemById(itemId);
+  if (!item) return;
+  wlMenuOpenItemId = itemId;
+
+  const canRetry = item.type === "stock" && item.symbol && !watchlistFindHoldingRow("stock", item.name);
+  const menu = document.createElement("div");
+  menu.id = "wlRowMenu";
+  menu.className = "mf-menu-dropdown open";
+  menu.innerHTML = `
+    <button type="button" class="mf-menu-item" data-act="note">${icon("edit-3", 15)} ${item.note ? "Edit Note" : "Add Note"}</button>
+    ${canRetry ? `<button type="button" class="mf-menu-item" data-act="retry">${icon("refresh-cw", 15)} Refresh Price</button>` : ""}
+    <button type="button" class="mf-menu-item danger" data-act="remove">${icon("trash-2", 15)} Remove from Watchlist</button>
+  `;
+  document.body.appendChild(menu);
+
+  const r = btn.getBoundingClientRect();
+  const menuW = menu.offsetWidth || 190;
+  let left = Math.max(8, Math.min(r.right - menuW, window.innerWidth - menuW - 8));
+  menu.style.left = left + "px";
+  menu.style.top = (r.bottom + 6) + "px";
+  requestAnimationFrame(() => {
+    const mh = menu.getBoundingClientRect().height;
+    if (r.bottom + 6 + mh > window.innerHeight - 8) {
+      menu.style.top = Math.max(8, r.top - mh - 6) + "px";
+    }
+  });
+
+  menu.querySelector('[data-act="note"]').addEventListener("click", () => { closeWlRowMenu(); openWatchlistNoteModal(itemId); });
+  menu.querySelector('[data-act="retry"]')?.addEventListener("click", () => { closeWlRowMenu(); refreshWatchlistItemQuote(item); });
+  menu.querySelector('[data-act="remove"]').addEventListener("click", () => { closeWlRowMenu(); removeWatchlistItem(itemId); });
+
+  setTimeout(() => document.addEventListener("click", wlMenuOutsideHandler, true), 0);
+  window.addEventListener("resize", closeWlRowMenu);
+  window.addEventListener("scroll", closeWlRowMenu, true);
+}
+
+function openWatchlistNoteModal(itemId) {
+  const item = findWatchlistItemById(itemId);
+  if (!item) return;
+  const body = `<textarea id="wlNoteModalInput" rows="5" style="width:100%;box-sizing:border-box;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font-body);font-size:13px;padding:8px 10px;" placeholder="Add a note...">${escapeAttr(item.note || "")}</textarea>`;
+  openModal(`Note — ${item.name}`, body, [
+    { label: "Cancel", onClick: closeModal },
+    { label: "Save", primary: true, onClick: () => { updateWatchlistNote(itemId, document.getElementById("wlNoteModalInput").value); closeModal(); } }
+  ]);
+}
+
 function renderWatchlist() {
   if (!document.getElementById("panel-watchlist")) return;
-  const all = state.watchlist || [];
+  ensureWatchlists();
+  renderWatchlistSwitcher();
+  const all = activeWatchlistItems();
   const stockCountEl = document.getElementById("wlStockCount");
   if (stockCountEl) stockCountEl.textContent = `(${all.filter(w => w.type === "stock").length})`;
   const mfCountEl = document.getElementById("wlMfCount");
   if (mfCountEl) mfCountEl.textContent = `(${all.filter(w => w.type === "mf").length})`;
-  renderWatchlistSection("stock", "wlStockGrid");
+  renderWatchlistStockSection();
   renderWatchlistSection("mf", "wlMfGrid");
+}
+
+/* ---- .txt bulk import: one NSE symbol or stock name per line ---- */
+
+// A downloadable example so Ganesh knows the expected shape before
+// building his own list — plain text, one symbol/name per line,
+// blank lines and "#"-prefixed comment lines ignored. Generated
+// client-side (no server round trip) via a Blob download, same as any
+// other in-browser file download.
+function watchlistImportTemplateText() {
+  return [
+    "# Watchlist import — one NSE stock per line.",
+    "# You can use the ticker symbol or the full company name; a plain",
+    "# ticker (like the examples below) resolves fastest and most",
+    "# reliably. Lines starting with # are ignored.",
+    "TCS",
+    "HDFCBANK",
+    "INFY",
+    "RELIANCE",
+    "TATAMOTORS"
+  ].join("\n");
+}
+
+function downloadWatchlistImportTemplate() {
+  const blob = new Blob([watchlistImportTemplateText()], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "watchlist-import-template.txt";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// Adds every non-empty, non-comment line as a stock to the ACTIVE
+// watchlist, then fetches live prices one at a time through the same
+// serialized on-demand queue everything else uses (see
+// queueOnDemandQuoteFetch) — a large file still only ever sends one
+// lookup at a time, it just takes longer overall; a running status
+// line keeps that visible rather than looking stuck.
+async function importWatchlistFromLines(lines, statusEl) {
+  const names = [...new Set(
+    lines.map(l => l.replace(/#.*/, "").trim()).filter(Boolean)
+  )];
+  if (names.length === 0) {
+    if (statusEl) statusEl.textContent = "No stock names found in that file.";
+    return;
+  }
+  const added = [];
+  names.forEach(name => {
+    const item = addFreeformWatchlistItem("stock", name, null, { skipImmediateFetch: true });
+    if (item) added.push(item);
+  });
+  const skipped = names.length - added.length;
+  if (added.length === 0) {
+    if (statusEl) statusEl.textContent = `All ${names.length} name(s) were already on this watchlist — nothing new added.`;
+    return;
+  }
+  let done = 0;
+  const toFetch = added.filter(it => it.symbol && !watchlistFindHoldingRow("stock", it.name));
+  if (statusEl) statusEl.textContent = `Added ${added.length}${skipped ? ` (${skipped} already on this list)` : ""}. Fetching live prices: 0/${toFetch.length}...`;
+  await Promise.all(toFetch.map(item => refreshWatchlistItemQuote(item).finally(() => {
+    done++;
+    if (statusEl) statusEl.textContent = `Added ${added.length}${skipped ? ` (${skipped} already on this list)` : ""}. Fetching live prices: ${done}/${toFetch.length}...`;
+  })));
+  if (statusEl) statusEl.textContent = `Added ${added.length} stock(s)${skipped ? `, ${skipped} already on this list` : ""}. Live prices fetched.`;
+}
+
+async function importWatchlistFromTxtFile(file) {
+  const statusEl = document.getElementById("wlImportStatus");
+  if (statusEl) { statusEl.style.display = ""; statusEl.textContent = `Reading ${file.name}...`; }
+  let text;
+  try {
+    text = await file.text();
+  } catch (e) {
+    if (statusEl) statusEl.textContent = "Couldn't read that file.";
+    return;
+  }
+  await importWatchlistFromLines(text.split(/\r?\n/), statusEl);
 }
 
 // Suggestion pool for the Stock "add" box: the bundled NIFTY 500 list
@@ -5914,6 +6622,7 @@ function setupWatchlistAddRow(inputId, btnId, type, poolFn) {
 }
 setupWatchlistAddRow("wlAddStockName", "wlAddStockBtn", "stock", getStockSuggestionPool);
 setupWatchlistAddRow("wlAddMfName", "wlAddMfBtn", "mf", getFundSuggestionPool);
+setupWatchlistSwitcherUI();
 
 // Portfolio Health — a new composite score (not present before this
 // redesign), built entirely from numbers the app already computes
@@ -12574,7 +13283,7 @@ function openSettingsModal() {
 
     <h4>Data Sources</h4>
     <p class="settings-note" style="margin-top:0">Every API URL and credential the app reads live data from or imports through, in one place.</p>
-    <p class="settings-note" style="margin-top:0"><b>Live Price API</b> — your Google Apps Script Web App URL. Update it here if you ever redeploy and get a new <code>/exec</code> link — no code changes needed. Also used for the Watchlist's on-demand quotes (a stock you don't hold) via a <code>?quote=SYMBOL</code> lookup — see the Watchlist tab for the setup note if that's not returning prices yet.</p>
+    <p class="settings-note" style="margin-top:0"><b>Live Price API</b> — your Google Apps Script Web App URL. Update it here if you ever redeploy and get a new <code>/exec</code> link — no code changes needed. Also used for the same <code>?quote=SYMBOL</code> on-demand lookup in two places: the Watchlist (a stock you don't hold) and the Equity tab (a stock you DO hold but haven't added to the Stocks sheet yet, e.g. right after buying it — it'll show a small "Live·NSE" tag instead of sitting on "Pending" until you update the sheet). See the Watchlist tab for the setup note if these aren't returning prices yet.</p>
     <div class="settings-field">
       <label for="settingsPriceApiUrl">Price API URL (Stocks / Mutual Funds / Gold / Debt)</label>
       <input type="text" id="settingsPriceApiUrl" placeholder="https://script.google.com/macros/s/.../exec" value="${escapeAttr(state.priceApiUrl || "")}">

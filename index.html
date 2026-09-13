@@ -1040,6 +1040,104 @@
     .wl-grid{grid-template-columns:1fr;}
   }
 
+  /* Unscoped versions of a few states originally only styled inside
+     .wl-item-price (the old single-card layout) — the new Stocks
+     table/mobile rows below use these same status spans directly
+     inside a <td>/.wlm-right, not inside a .wl-item-price wrapper. */
+  .wl-fetching{font-family:var(--font-body);font-size:12px;color:var(--text-faint);font-style:italic;}
+  .wl-quote-error{font-family:var(--font-body);font-size:11.5px;color:var(--negative);cursor:pointer;}
+  .wl-quote-error:hover{text-decoration:underline;}
+
+  /* ---------- Watchlist switcher: multiple named lists ---------- */
+  .wl-switcher-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px;}
+  .wl-switcher-current{position:relative;}
+  .wl-switcher-name-btn{
+    display:flex;align-items:center;gap:7px;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:9px;padding:7px 12px;cursor:pointer;color:var(--text);font-family:var(--font-display);
+    font-weight:600;font-size:14px;
+  }
+  .wl-switcher-name-btn:hover{border-color:var(--gold);}
+  .wl-switcher-icon{font-size:13px;}
+  .wl-switcher-chevron{color:var(--text-faint);font-size:11px;}
+  .wl-switcher-actions{display:flex;gap:7px;flex-wrap:wrap;}
+  .wl-switcher-menu{
+    display:none;position:absolute;top:calc(100% + 6px);left:0;min-width:230px;z-index:40;
+    background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);
+    box-shadow:0 8px 24px rgba(0,0,0,.18);padding:6px;
+  }
+  .wl-switcher-menu.open{display:block;}
+  .wl-switcher-menu-row{display:flex;align-items:center;gap:4px;border-radius:8px;padding:2px;}
+  .wl-switcher-menu-row:hover{background:var(--surface);}
+  .wl-switcher-menu-row.active .wl-switcher-menu-name{color:var(--gold);}
+  .wl-switcher-menu-name{
+    flex:1 1 auto;text-align:left;background:none;border:none;cursor:pointer;color:var(--text);
+    font-family:var(--font-body);font-size:13px;padding:7px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .wl-switcher-menu-icon-btn{
+    flex:none;width:26px;height:26px;border-radius:6px;background:transparent;border:none;padding:0;
+    color:var(--text-faint);cursor:pointer;display:flex;align-items:center;justify-content:center;
+  }
+  .wl-switcher-menu-icon-btn:hover{background:var(--negative-soft);color:var(--negative);}
+  .wl-switcher-menu-new{
+    width:100%;margin-top:4px;background:none;border:none;border-top:1px solid var(--border);
+    color:var(--gold);font-family:var(--font-body);font-size:12.5px;font-weight:600;cursor:pointer;
+    padding:8px;text-align:left;
+  }
+  .wl-tabs-scroll{
+    display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;margin-bottom:14px;
+    scrollbar-width:none;
+  }
+  .wl-tabs-scroll::-webkit-scrollbar{display:none;}
+  .wl-tab-pill{
+    flex:none;background:var(--surface-2);border:1px solid var(--border);border-radius:20px;
+    padding:6px 13px;font-family:var(--font-body);font-size:12px;color:var(--text-muted);cursor:pointer;white-space:nowrap;
+  }
+  .wl-tab-pill.active{background:var(--gold-soft);border-color:var(--gold);color:var(--gold);font-weight:600;}
+  .wl-import-status{margin-bottom:14px;}
+
+  /* ---------- Watchlist Stocks: responsive table (desktop/tablet)
+     + purpose-built two-line rows (mobile), replacing what used to be
+     one grid-of-cards layout for every width. Same >=700px breakpoint
+     the Equity tab's own table/mobile-card split already uses. ---- */
+  .wl-table{min-width:560px;}
+  .wl-table th{text-align:right;color:var(--text-faint);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.02em;padding:9px 12px;}
+  .wl-table th.left{text-align:left;}
+  .wl-table td{padding:10px 12px;text-align:right;border-top:1px solid var(--border);vertical-align:middle;}
+  .wl-table td.left{text-align:left;}
+  .wl-table tr.empty-row td{text-align:center;border-top:none;padding:0;}
+  .wl-table-name-cell{display:flex;align-items:center;gap:9px;}
+  .wl-table-symbol{font-family:var(--font-display);font-weight:600;font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .wl-table td.row-actions{width:36px;padding-left:4px;padding-right:8px;}
+  .wl-table .mf-menu-btn{
+    background:none;border:none;color:var(--text-faint);cursor:pointer;padding:4px;border-radius:6px;
+    display:inline-flex;align-items:center;justify-content:center;
+  }
+  .wl-table .mf-menu-btn:hover{background:var(--surface);color:var(--text);}
+
+  .wl-mobile-rows{display:none;flex-direction:column;}
+  @media (max-width:700px){
+    #panel-watchlist .wl-table-wrap .table-scroll{display:none;}
+    .wl-mobile-rows{display:flex;}
+  }
+  .wlm-row{
+    display:flex;align-items:center;gap:11px;padding:13px 4px;border-bottom:1px solid var(--border);
+    min-height:72px;cursor:default;
+  }
+  .wlm-row:last-child{border-bottom:none;}
+  .wlm-avatar{flex:none;}
+  .wlm-mid{flex:1 1 auto;min-width:0;}
+  .wlm-symbol{font-family:var(--font-display);font-weight:700;font-size:15.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .wlm-name{font-size:12.5px;color:var(--text-faint);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .wlm-right{flex:none;text-align:right;font-family:var(--font-mono);}
+  .wlm-price{font-size:16.5px;font-weight:600;color:var(--text);}
+  .wlm-price.wl-stale{color:var(--text-faint);}
+  .wlm-change{font-size:12px;margin-top:2px;white-space:nowrap;}
+  .wlm-row .mf-menu-btn{
+    flex:none;background:none;border:none;color:var(--text-faint);cursor:pointer;padding:4px;border-radius:6px;
+    display:inline-flex;align-items:center;justify-content:center;
+  }
+  .wlm-row .mf-menu-btn:hover{background:var(--surface);color:var(--text);}
+
   /* Target-vs-current comparison row — the one visual pattern used
      consistently across Overall Portfolio, Stock Rebalancing and
      Mutual Fund Rebalancing, per the redesign brief ("use the same
@@ -1813,6 +1911,14 @@
     flex:0 0 auto;font-family:var(--font-body);font-size:9.5px;font-weight:600;
     color:var(--gold);background:var(--gold-soft);border-radius:4px;padding:2px 5px;
     letter-spacing:.02em;white-space:nowrap;
+  }
+  /* Shown on a held stock's LTP when the price came from the on-demand
+     NSE lookup (refreshEquityRowOnDemand() in app.js) because the stock
+     isn't in the Price API sheet yet — e.g. right after buying it. */
+  .fallback-badge{
+    flex:0 0 auto;font-family:var(--font-body);font-size:9.5px;font-weight:600;
+    color:var(--positive);background:var(--positive-soft);border-radius:4px;padding:2px 5px;
+    letter-spacing:.02em;white-space:nowrap;cursor:default;
   }
 
   .fail-panel{
@@ -3357,11 +3463,30 @@
 
   <section class="panel" id="panel-watchlist">
     <h2 class="section-title">Watchlist</h2>
-    <p class="section-sub">Stocks and mutual funds you're keeping an eye on — owned or not — with your own notes on each. Star a row on the Equity, Mutual Funds or Stock Analysis tab to add it here, or add a name directly below.</p>
+    <p class="section-sub">Stocks and mutual funds you're keeping an eye on — owned or not — with your own notes on each. Star a row on the Equity, Mutual Funds or Stock Analysis tab to add it to whichever watchlist is currently active below, or add a name directly.</p>
+
+    <div class="wl-switcher-bar">
+      <div class="wl-switcher-current" id="wlSwitcherCurrent">
+        <button type="button" class="wl-switcher-name-btn" id="wlSwitcherDropdownBtn">
+          <span class="wl-switcher-icon">🔖</span>
+          <span id="wlActiveName">My Watchlist</span>
+          <span class="wl-switcher-chevron">▾</span>
+        </button>
+        <div class="wl-switcher-menu" id="wlSwitcherMenu"></div>
+      </div>
+      <div class="wl-switcher-actions">
+        <button type="button" class="header-pill-btn" id="wlNewListBtn" title="New watchlist">+ New</button>
+        <button type="button" class="header-pill-btn" id="wlImportTxtBtn" title="Import stocks from a .txt file">⇪ Import .txt</button>
+        <button type="button" class="header-pill-btn" id="wlColumnsBtn" title="Customize columns">⚙ Columns</button>
+      </div>
+    </div>
+    <div class="wl-tabs-scroll" id="wlTabsScroll"></div>
+    <input type="file" id="wlImportTxtInput" accept=".txt,text/plain" style="display:none">
+    <div class="settings-note wl-import-status" id="wlImportStatus" style="display:none"></div>
 
     <div class="card rb-section wl-card">
       <h3>Stocks <span class="hint" id="wlStockCount"></span></h3>
-      <p class="settings-note" style="margin-top:0">Pick a suggestion, or type any NSE symbol directly (e.g. <code>TCS</code>, <code>RELIANCE</code>) to track a stock not in the list below — it'll fetch a live price even though you don't hold it.</p>
+      <p class="settings-note" style="margin-top:0">Pick a suggestion, or type any NSE symbol directly (e.g. <code>TCS</code>, <code>RELIANCE</code>) to track a stock not in the list below — it'll fetch a live price even though you don't hold it. Adding a lot at once? Use <b>Import .txt</b> above — <a href="#" id="wlDownloadTemplateBtn">download a sample template</a> first if you're not sure of the format (one symbol or name per line).</p>
       <div class="wl-add-row">
         <div class="wl-suggest-wrap">
           <input type="text" id="wlAddStockName" placeholder="Stock name or NSE symbol (e.g. TCS, HDFC Bank)..." autocomplete="off">
@@ -3369,7 +3494,16 @@
         </div>
         <button type="button" class="btn btn-sm" id="wlAddStockBtn">+ Add to Watchlist</button>
       </div>
-      <div class="wl-grid" id="wlStockGrid"></div>
+
+      <div class="wl-table-wrap">
+        <div class="table-scroll">
+          <table class="wl-table">
+            <thead><tr id="wlStockTableHead"></tr></thead>
+            <tbody id="wlStockTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="wl-mobile-rows" id="wlStockMobileRows"></div>
     </div>
 
     <div class="card rb-section wl-card">
