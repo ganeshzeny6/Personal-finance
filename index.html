@@ -1049,6 +1049,8 @@
   .wl-quote-error:hover{text-decoration:underline;}
 
   /* ---------- Watchlist switcher: multiple named lists ---------- */
+  .wl-card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:2px;}
+  .wl-card-head h3{margin:0;}
   .wl-switcher-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px;}
   .wl-switcher-current{position:relative;}
   .wl-switcher-name-btn{
@@ -3485,8 +3487,25 @@
     <div class="settings-note wl-import-status" id="wlImportStatus" style="display:none"></div>
 
     <div class="card rb-section wl-card">
-      <h3>Stocks <span class="hint" id="wlStockCount"></span></h3>
-      <p class="settings-note" style="margin-top:0">Pick a suggestion, or type any NSE symbol directly (e.g. <code>TCS</code>, <code>RELIANCE</code>) to track a stock not in the list below — it'll fetch a live price even though you don't hold it. Adding a lot at once? Use <b>Import .txt</b> above — <a href="#" id="wlDownloadTemplateBtn">download a sample template</a> first if you're not sure of the format (one symbol or name per line).</p>
+      <div class="wl-card-head">
+        <h3>Stocks <span class="hint" id="wlStockCount"></span></h3>
+        <div class="attn-filter-wrap">
+          <select class="attn-filter-select" id="wlStockSortSelect" title="Sort">
+            <option value="">Recently Added</option>
+            <option value="symbol:1">Symbol: A to Z</option>
+            <option value="symbol:-1">Symbol: Z to A</option>
+            <option value="last:-1">Last Price: High to Low</option>
+            <option value="last:1">Last Price: Low to High</option>
+            <option value="change:-1">Change: High to Low</option>
+            <option value="change:1">Change: Low to High</option>
+            <option value="changePct:-1">Change %: High to Low</option>
+            <option value="changePct:1">Change %: Low to High</option>
+            <option value="return:-1">Return: High to Low</option>
+            <option value="return:1">Return: Low to High</option>
+          </select>
+        </div>
+      </div>
+      <p class="settings-note" style="margin-top:0">Pick a suggestion, or type any NSE symbol directly (e.g. <code>TCS</code>, <code>RELIANCE</code>) to track a stock not in the list below — it'll fetch a live price even though you don't hold it. Adding a lot at once? Use <b>Import .txt</b> above — <a href="#" id="wlDownloadTemplateBtn">download a sample template</a> first if you're not sure of the format (one symbol or name per line). Click any column header, or use the sort dropdown above, to reorder the table.</p>
       <div class="wl-add-row">
         <div class="wl-suggest-wrap">
           <input type="text" id="wlAddStockName" placeholder="Stock name or NSE symbol (e.g. TCS, HDFC Bank)..." autocomplete="off">

@@ -1216,7 +1216,12 @@ const tableUI = {
   // Default matches the old "Sort by: Score" dropdown default (highest
   // fundamental score first) so enabling click-to-sort headers doesn't
   // change what the tab shows on first load.
-  stockanalysis: { sortCol: "score", sortDir: -1, filter: "", page: 1, pageSize: "10" }
+  stockanalysis: { sortCol: "score", sortDir: -1, filter: "", page: 1, pageSize: "10" },
+  // Watchlist Stocks table: sortCol starts null so the table keeps its
+  // original "most recently added first" order until the person clicks
+  // a column header. No `filter` field — the Watchlist toolbar has no
+  // search box, only sorting was asked for.
+  watchlist: { sortCol: null, sortDir: 1 }
 };
 
 // Desktop Stock Analysis table shows tableUI.stockanalysis.pageSize
@@ -6117,16 +6122,83 @@ function watchlistStockRowData(item) {
   return data;
 }
 
+// Every header (including Symbol) is click-to-sort. The head row's
+// innerHTML is fully rebuilt on each render (columns come and go via
+// the Columns modal), so rather than the query-and-toggle-classes
+// approach the static-header tables use, the current sort indicator
+// is just baked directly into the generated markup here.
 function watchlistTableHeadHTML() {
   const p = state.watchlistColumnPrefs;
+  const ui = tableUI.watchlist;
+  const sortClass = (col) => ui.sortCol === col ? (ui.sortDir === 1 ? " sort-asc" : " sort-desc") : "";
   return `
-    <th class="left">Symbol</th>
-    ${p.showLast ? `<th>Last</th>` : ""}
-    ${p.showChange ? `<th>Change</th>` : ""}
-    ${p.showChangePct ? `<th>Change %</th>` : ""}
-    ${p.showReturn ? `<th>Return</th>` : ""}
+    <th class="left sortable${sortClass("symbol")}" data-col="symbol">Symbol</th>
+    ${p.showLast ? `<th class="sortable${sortClass("last")}" data-col="last">Last</th>` : ""}
+    ${p.showChange ? `<th class="sortable${sortClass("change")}" data-col="change">Change</th>` : ""}
+    ${p.showChangePct ? `<th class="sortable${sortClass("changePct")}" data-col="changePct">Change %</th>` : ""}
+    ${p.showReturn ? `<th class="sortable${sortClass("return")}" data-col="return">Return</th>` : ""}
     <th></th>
   `;
+}
+
+// Sort key for a given column, reusing watchlistStockRowData() so the
+// sortable value always matches what's actually displayed (e.g.
+// "Change" sorts on the same computed delta shown in the cell, not a
+// separately re-derived number).
+function watchlistSortValue(item, col) {
+  const d = watchlistStockRowData(item);
+  switch (col) {
+    case "symbol": return (item.symbol || item.name || "").toLowerCase();
+    case "last": return d.price;
+    case "change": return d.changeAbs;
+    case "changePct": return d.changePct;
+    case "return": return d.returnPct;
+    default: return null;
+  }
+}
+
+// Click-to-sort wiring for the Stocks table headers. Attached once,
+// via delegation on the head <tr> itself (id="wlStockTableHead") —
+// that row's *children* are replaced every render (columns can be
+// toggled on/off), but the row element persists, so a single
+// delegated listener keeps working across re-renders without needing
+// to be re-attached each time.
+function setupWatchlistStockSort() {
+  const headRow = document.getElementById("wlStockTableHead");
+  const select = document.getElementById("wlStockSortSelect");
+  if (headRow) {
+    headRow.addEventListener("click", (e) => {
+      const th = e.target.closest("th.sortable");
+      if (!th) return;
+      const col = th.dataset.col;
+      const ui = tableUI.watchlist;
+      if (ui.sortCol === col) {
+        ui.sortDir = -ui.sortDir;
+      } else {
+        ui.sortCol = col;
+        ui.sortDir = 1;
+      }
+      if (select) select.value = `${ui.sortCol}:${ui.sortDir}`;
+      renderWatchlistStockSection();
+    });
+  }
+  // "Sort" dropdown next to the Stocks heading — mutates the same
+  // tableUI.watchlist state a header click does, so it works at every
+  // width (mobile's two-line rows have no clickable headers to tap).
+  if (select) {
+    select.addEventListener("change", () => {
+      const ui = tableUI.watchlist;
+      if (!select.value) {
+        ui.sortCol = null;
+        ui.sortDir = 1;
+      } else {
+        const [col, dir] = select.value.split(":");
+        ui.sortCol = col;
+        ui.sortDir = Number(dir);
+      }
+      renderWatchlistStockSection();
+    });
+  }
 }
 
 function watchlistStockTableRowHTML(item) {
@@ -6222,8 +6294,13 @@ function renderWatchlistStockSection() {
   const mobileWrap = document.getElementById("wlStockMobileRows");
   if (!tableBody || !mobileWrap) return;
   if (tableHead) tableHead.innerHTML = watchlistTableHeadHTML();
-  const items = activeWatchlistItems().filter(w => w.type === "stock")
+  let items = activeWatchlistItems().filter(w => w.type === "stock")
     .sort((a, b) => new Date(b.addedAt || 0) - new Date(a.addedAt || 0));
+  // Column-header sort layers on top of the default "recently added
+  // first" order — applySortFilter() leaves `items` untouched when
+  // tableUI.watchlist.sortCol is still null (nobody's clicked a
+  // header yet), same convention as every other sortable table.
+  items = applySortFilter("watchlist", items, () => "", watchlistSortValue);
   if (items.length === 0) {
     tableBody.innerHTML = `<tr class="empty-row"><td colspan="8">${watchlistEmptyStateHTML("stock")}</td></tr>`;
     mobileWrap.innerHTML = watchlistEmptyStateHTML("stock");
@@ -6623,6 +6700,7 @@ function setupWatchlistAddRow(inputId, btnId, type, poolFn) {
 setupWatchlistAddRow("wlAddStockName", "wlAddStockBtn", "stock", getStockSuggestionPool);
 setupWatchlistAddRow("wlAddMfName", "wlAddMfBtn", "mf", getFundSuggestionPool);
 setupWatchlistSwitcherUI();
+setupWatchlistStockSort();
 
 // Portfolio Health — a new composite score (not present before this
 // redesign), built entirely from numbers the app already computes
