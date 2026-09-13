@@ -1435,7 +1435,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     if (btn.dataset.tab === "insights") renderInsights();
     if (btn.dataset.tab === "stockanalysis") renderStockAnalysis();
     if (btn.dataset.tab === "rebalance") renderRebalance();
-    if (btn.dataset.tab === "watchlist") renderWatchlist();
+    if (btn.dataset.tab === "watchlist") { renderWatchlist(); refreshUnheldWatchlistQuotes(); }
   });
 });
 
@@ -2586,6 +2586,56 @@ async function fetchPriceData() {
     throw e;
   }
   return json;
+}
+
+// On-demand single-symbol quote — for the Watchlist, when someone adds a
+// stock they don't actually hold (e.g. searches "TCS" just to keep an eye
+// on it). fetchPriceData() above only ever returns rows for whatever's
+// already listed in Ganesh's price sheet (his current holdings); this
+// hits the SAME Apps Script deployment with a `?quote=SYMBOL` parameter
+// that a small addition to his doGet() (see the Watchlist Settings note)
+// answers by looking the symbol up on Google Finance right then, rather
+// than reading a pre-listed row — so it works for literally any
+// NSE-listed symbol, not just ones already in the sheet. Mirrors
+// fetchPriceData()'s error-message conventions so failures read the
+// same way elsewhere in Settings/Watchlist.
+async function fetchOnDemandQuote(symbol) {
+  const sym = String(symbol || "").trim().toUpperCase();
+  if (!sym) throw new Error("No symbol given.");
+  if (!state.priceApiUrl) {
+    const e = new Error("No Price API URL configured in Settings.");
+    e.kind = "unset";
+    throw e;
+  }
+  const sep = state.priceApiUrl.includes("?") ? "&" : "?";
+  const url = `${state.priceApiUrl}${sep}quote=${encodeURIComponent(sym)}`;
+  let res;
+  try {
+    res = await fetch(url, { cache: "no-store" });
+  } catch (networkErr) {
+    const e = new Error("Network/CORS: the browser blocked or couldn't complete this request.");
+    e.kind = "network";
+    throw e;
+  }
+  if (!res.ok) {
+    const e = new Error(`Price API returned HTTP ${res.status}.`);
+    e.kind = "http";
+    throw e;
+  }
+  let json;
+  try {
+    json = await res.json();
+  } catch (parseErr) {
+    const e = new Error("The Price API didn't return valid JSON for this quote — check the doGet() script has the on-demand quote addition.");
+    e.kind = "parse";
+    throw e;
+  }
+  if (!json || json.ok === false) {
+    const e = new Error((json && json.error) || `Could not find a live price for "${sym}".`);
+    e.kind = "app";
+    throw e;
+  }
+  return json; // { ok:true, symbol, price, changePct, open, high, low }
 }
 
 // Fetches the Drive-scanned Zerodha Holdings JSON from state.holdingsApiUrl.
@@ -5437,12 +5487,21 @@ function renderRebalance() {
    live-synced with that holding's price/return, since Equity/MF
    holdings are import-only and this app has no other way to look up
    a live quote), or typed in directly here for something not
-   currently held (e.g. a stock you're considering buying — those
-   just show "Not currently held" instead of price/return until you
-   actually hold it, at which point they auto-link by name). Each
-   entry carries a freeform note. Matching is always by trimmed,
-   case-insensitive name — no stored row-id link — so a renamed or
-   removed holding can never leave a stale reference behind.
+   currently held (e.g. a stock you're considering buying).
+
+   A stock entry that ISN'T currently held still gets a live price —
+   just not a return/P&L, since there's no cost basis for something
+   you don't own. That price comes from fetchOnDemandQuote() (see
+   above), a one-off lookup against the same Price API Apps Script,
+   stored right on the watchlist item itself (`item.quote`) so it
+   persists across reloads and survives until the next refresh. Mutual
+   Fund entries not currently held still just show "Not currently
+   held" — there's no equivalent on-demand NAV lookup for MFs.
+
+   Each entry carries a freeform note. Matching to a current holding
+   is always by trimmed, case-insensitive name — no stored row-id
+   link — so a renamed or removed holding can never leave a stale
+   reference behind.
    ============================================================ */
 
 function watchlistFindHoldingRow(type, name) {
@@ -5479,18 +5538,39 @@ function toggleWatchlistFromHolding(type, name, symbol) {
 // match any current holding at all. `symbolOverride` is passed when
 // the name came from picking a typeahead suggestion (see
 // setupWatchlistAddRow() below) rather than being typed free-hand.
+//
+// For a stock with no matching holding and no suggestion picked (i.e.
+// someone typed a name that isn't in the bundled NIFTY 500 list and
+// pressed Enter/Add), there's no known NSE symbol to fetch a price
+// for — free text like "Reliance Industries" isn't a ticker
+// GOOGLEFINANCE can look up. Rather than silently showing "Not
+// currently held" forever, the typed text itself is used AS the
+// symbol (uppercased, spaces stripped) — the common case is someone
+// typing the ticker directly ("TCS", "infy"), which this handles
+// correctly; a genuine full company name won't resolve, and the card
+// will show a "couldn't find a price — check the symbol" state they
+// can fix by editing/re-adding with the real ticker.
 function addFreeformWatchlistItem(type, rawName, symbolOverride) {
   const name = (rawName || "").trim();
   if (!name) return;
   if (isWatchlisted(type, name)) return;
   if (!state.watchlist) state.watchlist = [];
   const holding = watchlistFindHoldingRow(type, name);
-  const symbol = symbolOverride || (holding ? (holding.symbol || "") : "");
-  state.watchlist.push({ id: uid(), type, name, symbol, note: "", addedAt: new Date().toISOString() });
+  const symbol = symbolOverride || (holding ? (holding.symbol || "") : "") ||
+    (type === "stock" ? name.toUpperCase().replace(/\s+/g, "") : "");
+  const item = { id: uid(), type, name, symbol, note: "", addedAt: new Date().toISOString() };
+  state.watchlist.push(item);
   saveState();
   renderWatchlist();
   if (type === "stock") { renderEquity(); renderStockAnalysis(); }
   else { renderMF(); }
+  // Unheld stock with a symbol to try -> kick off an immediate one-off
+  // price lookup rather than waiting for the next tab-open/interval
+  // refresh, so the card doesn't sit on "Fetching price..." any longer
+  // than it has to.
+  if (type === "stock" && item.symbol && !holding) {
+    refreshWatchlistItemQuote(item);
+  }
 }
 
 function removeWatchlistItem(id) {
@@ -5510,6 +5590,70 @@ function updateWatchlistNote(id, note) {
   saveState();
 }
 
+// ---- On-demand live quotes for watchlisted stocks you don't hold ----
+// A held stock's price already comes from the normal 30-second live
+// refresh (state.equity, via fetchPriceData()) — nothing new needed
+// there. An unheld stock's price comes from fetchOnDemandQuote()
+// instead, one symbol at a time, stored on the watchlist item itself
+// as `item.quote = { status, price, changePct, open, high, low,
+// fetchedAt, error }` so it survives a reload and a failed refresh
+// doesn't erase the last good price.
+//
+// Every on-demand lookup goes through one shared queue so requests
+// are always sent one at a time, never in parallel — the Apps Script
+// side does its lookup by writing into a scratch cell and reading the
+// result back, and firing several of those at once from here would
+// risk them clobbering each other's in-flight formula.
+let watchlistQuoteQueue = Promise.resolve();
+function queueWatchlistQuoteFetch(fn) {
+  const run = () => Promise.resolve().then(fn).catch(() => {});
+  watchlistQuoteQueue = watchlistQuoteQueue.then(run, run);
+  return watchlistQuoteQueue;
+}
+
+async function refreshWatchlistItemQuote(item) {
+  if (!item || item.type !== "stock" || !item.symbol) return;
+  return queueWatchlistQuoteFetch(async () => {
+    // Re-fetch the live item by id — it may have been removed, or this
+    // call may be sitting behind others in the queue, by the time its
+    // turn actually comes up.
+    const live = (state.watchlist || []).find(w => w.id === item.id);
+    if (!live) return;
+    live.quote = { ...(live.quote || {}), status: "pending" };
+    renderWatchlist();
+    try {
+      const q = await fetchOnDemandQuote(live.symbol);
+      live.quote = {
+        status: "ok",
+        price: q.price, changePct: q.changePct, open: q.open, high: q.high, low: q.low,
+        fetchedAt: new Date().toISOString()
+      };
+    } catch (err) {
+      // Keep whatever price/change was last fetched successfully (if
+      // any) — only the status/error flip, so a transient failure
+      // doesn't blank out a card that was working a minute ago.
+      live.quote = { ...(live.quote || {}), status: "error", error: err && err.message ? err.message : "Could not fetch a price." };
+    }
+    saveState();
+    renderWatchlist();
+  });
+}
+
+let watchlistBatchRefreshInFlight = false;
+async function refreshUnheldWatchlistQuotes() {
+  if (watchlistBatchRefreshInFlight) return; // a tab-click and the periodic interval can overlap otherwise
+  const targets = (state.watchlist || []).filter(w => w.type === "stock" && w.symbol && !watchlistFindHoldingRow("stock", w.name));
+  if (targets.length === 0) return;
+  watchlistBatchRefreshInFlight = true;
+  try {
+    for (const item of targets) {
+      await refreshWatchlistItemQuote(item);
+    }
+  } finally {
+    watchlistBatchRefreshInFlight = false;
+  }
+}
+
 // Card avatar for one watchlist item — reuses the exact same colored
 // initial-circle component as the Equity/Mutual Funds tables
 // (eqAvatarHTML()/mfAvatarHTML(), including the sector/category color
@@ -5526,30 +5670,65 @@ function watchlistAvatarHTML(type, name) {
   return `<div class="mf-avatar mf-cat-7">${escapeAttr(initial)}</div>`;
 }
 
-// The price/return line shown per watchlist card when the item
-// currently matches a real holding — reuses the exact same
+// The price/return line shown per watchlist card. When the item
+// currently matches a real holding, this reuses the exact same
 // derived-value functions and Day Change chip markup as the Equity/
-// Mutual Funds tables so the numbers are never computed twice.
-function watchlistPriceBlockHTML(type, name) {
+// Mutual Funds tables so the numbers are never computed twice. When
+// it's a stock you don't hold, it instead reflects `item.quote` — the
+// on-demand lookup result (see refreshWatchlistItemQuote above) —
+// showing a live price + day change but no return/P&L badge, since
+// there's no cost basis for something you don't own.
+function watchlistPriceBlockHTML(item) {
+  const { type, name } = item;
   const row = watchlistFindHoldingRow(type, name);
-  if (!row) return `<div class="wl-item-price"><span class="wl-not-held">Not currently held</span></div>`;
-  if (type === "stock") {
-    const d = equityDerived(row);
-    const chg = dayChangePct(row.ltp, row.prevClose);
-    const chgChip = chg === null ? "" : `<span class="dc-chip ${chg > 0 ? "pos" : chg < 0 ? "neg" : "muted"}">${chg > 0 ? "▲" : chg < 0 ? "▼" : "•"} ${chg >= 0 ? "+" : ""}${fmtNum(chg, 2)}%</span>`;
+  if (row) {
+    if (type === "stock") {
+      const d = equityDerived(row);
+      const chg = dayChangePct(row.ltp, row.prevClose);
+      const chgChip = chg === null ? "" : `<span class="dc-chip ${chg > 0 ? "pos" : chg < 0 ? "neg" : "muted"}">${chg > 0 ? "▲" : chg < 0 ? "▼" : "•"} ${chg >= 0 ? "+" : ""}${fmtNum(chg, 2)}%</span>`;
+      return `
+        <div class="wl-item-price">
+          <span class="wl-price-val">${row.ltp ? fmtNum(row.ltp) : "—"}</span>
+          ${chgChip}
+          <span class="wl-return-badge ${plClass(d.pl)}">${d.pl >= 0 ? "+" : ""}${fmtPct(d.plPct)}</span>
+        </div>
+      `;
+    }
+    const d = mfDerived(row);
     return `
       <div class="wl-item-price">
-        <span class="wl-price-val">${row.ltp ? fmtNum(row.ltp) : "—"}</span>
-        ${chgChip}
+        <span class="wl-price-val">${row.unitPrice ? fmtNum(row.unitPrice) : "—"}</span>
         <span class="wl-return-badge ${plClass(d.pl)}">${d.pl >= 0 ? "+" : ""}${fmtPct(d.plPct)}</span>
       </div>
     `;
   }
-  const d = mfDerived(row);
+
+  // Not a current holding. Mutual Funds have no on-demand NAV lookup —
+  // only stocks do (see the Watchlist section comment above).
+  if (type !== "stock" || !item.symbol) {
+    return `<div class="wl-item-price"><span class="wl-not-held">Not currently held</span></div>`;
+  }
+  const q = item.quote;
+  if (!q || q.status === "pending") {
+    return `<div class="wl-item-price"><span class="wl-fetching">Fetching price...</span></div>`;
+  }
+  if (q.status === "error" && q.price === undefined) {
+    // Never successfully fetched anything for this symbol yet.
+    return `
+      <div class="wl-item-price">
+        <span class="wl-quote-error" data-act="retry-quote" title="${escapeAttr(q.error || "")} — click to retry">Couldn't fetch — check symbol</span>
+      </div>
+    `;
+  }
+  const chgChip = (typeof q.changePct === "number")
+    ? `<span class="dc-chip ${q.changePct > 0 ? "pos" : q.changePct < 0 ? "neg" : "muted"}">${q.changePct > 0 ? "▲" : q.changePct < 0 ? "▼" : "•"} ${q.changePct >= 0 ? "+" : ""}${fmtNum(q.changePct, 2)}%</span>`
+    : "";
+  const staleNote = q.status === "error" ? ` title="Last refresh failed (${escapeAttr(q.error || "")}) — showing the last price fetched. Click to retry."` : "";
   return `
-    <div class="wl-item-price">
-      <span class="wl-price-val">${row.unitPrice ? fmtNum(row.unitPrice) : "—"}</span>
-      <span class="wl-return-badge ${plClass(d.pl)}">${d.pl >= 0 ? "+" : ""}${fmtPct(d.plPct)}</span>
+    <div class="wl-item-price"${q.status === "error" ? ` data-act="retry-quote"` : ""}>
+      <span class="wl-price-val${q.status === "error" ? " wl-stale" : ""}"${staleNote}>${fmtNum(q.price)}</span>
+      ${chgChip}
+      <span class="wl-live-tag">NSE · live</span>
     </div>
   `;
 }
@@ -5557,7 +5736,9 @@ function watchlistPriceBlockHTML(type, name) {
 function watchlistCardHTML(item) {
   const addedLabel = item.addedAt ? new Date(item.addedAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "—";
   const row = watchlistFindHoldingRow(item.type, item.name);
-  const subLine = row ? (item.type === "stock" ? (row.sector || "Stock") : (row.category || "Mutual Fund")) : "Not currently held";
+  const subLine = row
+    ? (item.type === "stock" ? (row.sector || "Stock") : (row.category || "Mutual Fund"))
+    : (item.type === "stock" && item.symbol ? `NSE: ${item.symbol}` : "Not currently held");
   return `
     <div class="wl-item-card" data-id="${item.id}">
       <div class="wl-item-top">
@@ -5568,7 +5749,7 @@ function watchlistCardHTML(item) {
         </div>
         <button type="button" class="wl-item-remove" title="Remove from Watchlist" aria-label="Remove from Watchlist">${icon("trash-2", 15)}</button>
       </div>
-      ${watchlistPriceBlockHTML(item.type, item.name)}
+      ${watchlistPriceBlockHTML(item)}
       <div class="wl-item-notes">
         <textarea rows="2" placeholder="Add a note..." data-field="note">${escapeAttr(item.note || "")}</textarea>
       </div>
@@ -5603,6 +5784,13 @@ function renderWatchlistSection(type, gridId) {
     const id = card.dataset.id;
     card.querySelector('[data-field="note"]').addEventListener("change", (e) => updateWatchlistNote(id, e.target.value));
     card.querySelector(".wl-item-remove").addEventListener("click", () => removeWatchlistItem(id));
+    // Unheld-stock price block, when its last on-demand lookup failed —
+    // click to retry immediately rather than waiting for the next
+    // tab-open/interval refresh.
+    card.querySelector('[data-act="retry-quote"]')?.addEventListener("click", () => {
+      const item = (state.watchlist || []).find(w => w.id === id);
+      if (item) refreshWatchlistItemQuote(item);
+    });
   });
 }
 
@@ -12386,7 +12574,7 @@ function openSettingsModal() {
 
     <h4>Data Sources</h4>
     <p class="settings-note" style="margin-top:0">Every API URL and credential the app reads live data from or imports through, in one place.</p>
-    <p class="settings-note" style="margin-top:0"><b>Live Price API</b> — your Google Apps Script Web App URL. Update it here if you ever redeploy and get a new <code>/exec</code> link — no code changes needed.</p>
+    <p class="settings-note" style="margin-top:0"><b>Live Price API</b> — your Google Apps Script Web App URL. Update it here if you ever redeploy and get a new <code>/exec</code> link — no code changes needed. Also used for the Watchlist's on-demand quotes (a stock you don't hold) via a <code>?quote=SYMBOL</code> lookup — see the Watchlist tab for the setup note if that's not returning prices yet.</p>
     <div class="settings-field">
       <label for="settingsPriceApiUrl">Price API URL (Stocks / Mutual Funds / Gold / Debt)</label>
       <input type="text" id="settingsPriceApiUrl" placeholder="https://script.google.com/macros/s/.../exec" value="${escapeAttr(state.priceApiUrl || "")}">
@@ -12874,3 +13062,18 @@ if (state.investmentsDriveFileId && state.investmentsAutoSyncWeekKey !== mostRec
   runConsolidatedAutoSyncFromDrive(false);
 }
 setInterval(runAllLiveRefreshes, LIVE_REFRESH_INTERVAL_MS);
+
+// Watchlist: unheld-stock prices (see refreshUnheldWatchlistQuotes
+// above) are fetched one symbol at a time via a slower on-demand
+// lookup, unlike the batch price-sheet refresh above — so they're
+// refreshed on their own, longer cadence, and ONLY while the
+// Watchlist tab is actually the one on screen (refreshUnheldWatchlistQuotes
+// itself also runs once immediately whenever that tab is opened, via
+// the .tab-btn click handler). No point spending Apps Script lookups
+// keeping a tab's prices current when nobody's looking at it.
+const WATCHLIST_QUOTE_REFRESH_INTERVAL_MS = 90000;
+setInterval(() => {
+  if (document.getElementById("panel-watchlist")?.classList.contains("active")) {
+    refreshUnheldWatchlistQuotes();
+  }
+}, WATCHLIST_QUOTE_REFRESH_INTERVAL_MS);
